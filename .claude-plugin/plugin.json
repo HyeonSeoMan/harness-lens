@@ -1,0 +1,12 @@
+{
+  "name": "harness-lens",
+  "version": "0.0.0",
+  "description": "하네스 구성과 변경의 트레이드오프를 읽기 전용으로 분석해 로컬 HTML 리포트로 보여주는 Skill (pre-alpha)",
+  "author": {
+    "name": "HyeonSeoMan",
+    "url": "https://github.com/HyeonSeoMan"
+  },
+  "homepage": "https://github.com/HyeonSeoMan/harness-lens",
+  "repository": "https://github.com/HyeonSeoMan/harness-lens",
+  "keywords": ["harness", "analysis", "skills", "hooks", "mcp", "tradeoff"]
+}
