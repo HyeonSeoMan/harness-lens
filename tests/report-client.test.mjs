@@ -57,3 +57,17 @@ test('구성 요소 표의 역할(해석) 칸에 interpretation.components의 ro
   const described = new Set(analysis.interpretation.components.map((c) => c.componentId));
   for (const comp of analysis.engine.inventory.components) if (!described.has(comp.id)) assert.equal(byName[comp.name], '—');
 });
+
+test('투자·포기 목록은 실측 축에 구조 예측임과 실측 대역을 함께 적는다', () => {
+  const analysis = JSON.parse(readFileSync(path.join(repoRoot, 'examples/analysis.example.json'), 'utf8'));
+  const root = render(analysis);
+  const block = findAll(root, (n) => n.tag === 'div' && n.children[0]?.tag === 'b' && n.children[0].textContent === '투자한 축')[0];
+  const items = findAll(block, (n) => n.tag === 'li').map((n) => n.textContent);
+  const axes = Object.fromEntries(analysis.engine.axes.map((a) => [a.axis, a]));
+  assert.equal(items.length, analysis.interpretation.currentTradeoffs.investForgo.invested.length);
+  analysis.interpretation.currentTradeoffs.investForgo.invested.forEach((id, i) => {
+    const a = axes[id];
+    if (a.maturity.state === 'measured') assert.match(items[i], new RegExp(`\\(구조 예측\\) · 실측 대역 ${a.measured.band}$`));
+    else assert.doesNotMatch(items[i], /실측 대역/);
+  });
+});
