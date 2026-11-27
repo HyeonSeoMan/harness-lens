@@ -95,10 +95,10 @@
 | # | 결정 | PR |
 |---|---|---|
 | 10 | A: 무관한 프로젝트 세션 제외, 엔진 명세 §8.3을 "불확실한 것만 미귀속"으로. `coverage.sessionsExcluded`·`unrelated_sessions_excluded`로 제외 수 표시. PRD는 위 "PRD 제안"에 개정 문안만 | #12 |
-| 1 | A: LEX-BLOCK 종료 관례·따옴표 없는 키, 상대 import·source 1단계 스캔(이름 import는 표지가 든 export를 호출할 때만) | #13 |
-| 2 | A: `name` 우선, `description`은 부정 절(LEX-NEG) 제외 | #13 |
-| 4 | A: 실측 상태 축은 빈 영역에서 제외, CE-M-01 폐기(`cache_hit_ratio` 참고 지표, CE 실측 불가 `band_metric_undefined`) | #13 |
-| 5 | A: CX-M-02 `context_p90_window_ratio`(모델 창 크기 표, 모르는 모델은 보류) | #13 |
-| 6 | A: `sessions.toolUsage` 도구별 집계, ES-M-02 Bash 제외 오류율, `bash_error_rate` 참고 지표 | #13 |
-| 9 | A: `bot_weighted_share`·`worker_weighted_share` CE 참고 지표 | #13 |
+| 1 | A: LEX-BLOCK 종료 관례·따옴표 없는 키, 상대 import·source 1단계 스캔(이름 import는 표지가 든 export를 호출할 때만) | #15 |
+| 2 | A: `name` 우선, `description`은 부정 절(LEX-NEG) 제외 | #15 |
+| 4 | A: 실측 상태 축은 빈 영역에서 제외, CE-M-01 폐기(`cache_hit_ratio` 참고 지표, CE 실측 불가 `band_metric_undefined`) | #15 |
+| 5 | A: CX-M-02 `context_p90_window_ratio`(모델 창 크기 표, 모르는 모델은 보류) | #15 |
+| 6 | A: `sessions.toolUsage` 도구별 집계, ES-M-02 Bash 제외 오류율, `bash_error_rate` 참고 지표 | #15 |
+| 9 | A: `bot_weighted_share`·`worker_weighted_share` CE 참고 지표 | #15 |
 | 8 | A: 압축 인벤토리 `contentHash`·null 기본값 필드 제거, 근거 `fact` 축별 상위 N개 | #14 |
