@@ -28,11 +28,15 @@ const TABLE = {
 const REF_INPUT = TABLE[REFERENCE_MODEL][0];
 
 // 날짜 접미사(-20251101), 플랫폼 접두사(anthropic., us.anthropic.), 컨텍스트 표기([1m]), @버전을 떼고 찾는다.
-export function priceKey(model) {
+export function modelKey(model) {
   if (typeof model !== 'string') return null;
-  let m = model.toLowerCase().replace(/\[[^\]]*\]$/, '').replace(/@.*$/, '').replace(/^(?:[a-z]{2}\.)?anthropic\./, '');
-  m = m.replace(/-\d{8}$/, '').replace(/-v\d+(?::\d+)?$/, '');
-  return Object.hasOwn(TABLE, m) ? m : null;
+  const m = model.toLowerCase().replace(/\[[^\]]*\]$/, '').replace(/@.*$/, '').replace(/^(?:[a-z]{2}\.)?anthropic\./, '');
+  return m.replace(/-\d{8}$/, '').replace(/-v\d+(?::\d+)?$/, '');
+}
+
+export function priceKey(model) {
+  const m = modelKey(model);
+  return m !== null && Object.hasOwn(TABLE, m) ? m : null;
 }
 
 // bucket: [freshInput, cacheWrite5m, cacheWrite1h, cacheRead, output] (정수). 모르는 모델이면 null.

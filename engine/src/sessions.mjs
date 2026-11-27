@@ -532,7 +532,16 @@ function newFileState(kind) {
     kind, gen: 0, inode: null, size: 0, mtimeMs: 0, offset: 0, fp: null, present: true, session: null, cwdHash: null, cls: null, botMention: false,
     versions: null, firstTs: null, lastTs: null, c: Object.fromEntries(COUNTERS.map((k) => [k, 0])),
     durations: [], gaps: [], openGap: null, pendingError: false,
+    // 도구 분류별 [호출, 오류](메인+서브에이전트). openTools: 결과를 아직 못 본 tool_use(id 해시 → 분류).
+    tools: {}, openTools: {},
   };
+}
+
+// 도구 이름 → 분류(원문 대신 메타데이터 라벨만). 내장 도구는 이름 그대로, MCP 도구는 mcp, 나머지는 other.
+export function toolCategory(name) {
+  if (typeof name !== 'string') return 'other';
+  if (name.startsWith('mcp__')) return 'mcp';
+  return /^[A-Z][A-Za-z]{1,39}$/.test(name) ? name : 'other';
 }
 
 // 문자열 값 어딘가에 R 경로가 경로 경계로 나오는가. 값은 저장하지 않고 불리언만 남긴다.
@@ -659,6 +668,9 @@ class Parser {
         if (!b || b.type !== 'tool_use') continue;
         if (!fs.botMention && fs.cls?.kind === 'bot' && mentionsRoot(b.input, this.env.roots)) fs.botMention = true;
         if (!this.once('tool_use', b.id)) continue;
+        const cat = toolCategory(b.name);
+        (fs.tools[cat] ??= [0, 0])[0]++;
+        if (typeof b.id === 'string' && b.id) fs.openTools[h16(b.id)] = cat;
         if (side) c.subToolUse++;
         else {
           c.toolUse++;
@@ -694,6 +706,10 @@ class Parser {
         if (!b || b.type !== 'tool_result') continue;
         hasResult = true;
         if (!this.once('tool_result', b.tool_use_id)) continue;
+        const idh = typeof b.tool_use_id === 'string' && b.tool_use_id ? h16(b.tool_use_id) : null;
+        const cat = (idh && fs.openTools[idh]) ?? 'unknown';
+        if (idh) delete fs.openTools[idh];
+        if (b.is_error === true) (fs.tools[cat] ??= [0, 0])[1]++;
         if (side) { if (b.is_error === true) c.subToolErrors++; continue; }
         if (b.is_error === true) { c.toolErrors++; fs.pendingError = true; } else if (fs.pendingError) { c.recovered++; fs.pendingError = false; }
       }

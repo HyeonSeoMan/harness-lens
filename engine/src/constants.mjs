@@ -1,11 +1,11 @@
 // 엔진 전역 상수. 버전과 축 정의는 스키마·루브릭 문서와 함께 바꾼다.
 
-export const ENGINE_VERSION = '0.3.0';
-export const VALIDATOR_VERSION = '0.3.0';
+export const ENGINE_VERSION = '0.4.0';
+export const VALIDATOR_VERSION = '0.4.0';
 export const SCHEMA_VERSION = '0.1';
-export const RUBRIC_VERSION = '0.2';
+export const RUBRIC_VERSION = '0.3';
 // 세션 기록 파서 규칙 버전(engine-cli.md §8). 규칙이 바뀌면 올리고, 누적 상태를 처음부터 다시 만든다.
-export const SESSION_PARSER_VERSION = '2';
+export const SESSION_PARSER_VERSION = '3';
 export { PRICING_TABLE_VERSION } from './pricing.mjs';
 
 export const MIN_NODE_MAJOR = 20;
@@ -44,7 +44,8 @@ export const MATURITY_RULES = {
   verification_gate_strength: { measurable: false, blockedReason: 'needs_ci_pr_data' },
   execution_stability: { measurable: true, unit: 'tool_calls', required: 500 },
   throughput: { measurable: true, unit: 'sessions', required: 20 },
-  cost_efficiency: { measurable: true, unit: 'sessions', required: 20 },
+  // 0.3: cache_hit_ratio를 참고 지표로 내렸다(클라이언트 동작 영향이 커서 하네스 축 실측으로 약하다). 대역 지표가 정해질 때까지 예측.
+  cost_efficiency: { measurable: false, blockedReason: 'band_metric_undefined' },
   context_efficiency: { measurable: true, unit: 'sessions', required: 20 },
   autonomy: { measurable: true, unit: 'tool_calls', required: 500 },
   safety_boundary: { measurable: false, blockedReason: 'session_format_unconfirmed' },
