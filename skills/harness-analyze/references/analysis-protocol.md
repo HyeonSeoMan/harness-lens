@@ -66,6 +66,7 @@ LLM은 수준, 범위, 지표, 변경 목록을 만들거나 고치지 않는다
   - `engine` 중 `inventory.components`, `inventory.sources`, `evidence`, `axes`, `tensionCandidates`, `comparison`, `limitations`
   - 세션 요약(`sessions`에서 시계열을 줄인 것)
   - 읽을 지식 베이스 목록(`knowledgeBaseKeys`)
+  - 압축 정보(`compaction`). 값이 `null`이거나 빈 배열인 키는 생략돼 있다(없는 키 = `null` 또는 빈 배열). 구성 요소 `contentHash`는 없다. `compaction.omittedFacts`가 0보다 크면 일부 근거는 `fact` 없이 ID·경로·규칙만 있다. 그 근거가 finding에 꼭 필요하면 아래 규칙대로 원본 파일을 연다
 - 전체 `inventory.json`이나 엔진 내부 파일은 읽지 않는다.
 - `knowledgeBaseKeys`에 있는 `references/knowledge-base/<key>.md`만 읽는다. 없는 항목은 건너뛴다. 존재하지 않는 구성 요소의 항목은 읽지 않는다.
 - 원본 설정 파일은 finding 하나를 쓰는 데 꼭 필요할 때만 연다. 이때 다음을 지킨다.

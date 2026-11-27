@@ -4755,22 +4755,74 @@ function budget(id, observed) {
   const b = BUDGETS[id];
   return { budgetId: id, target: b.target, unit: b.unit, observed, status: observed === null ? "unmeasured" : observed <= b.target ? "within" : "exceeded" };
 }
+var estimateTokens = (text) => Math.ceil(Buffer.byteLength(text, "utf8") / 4);
+var serializeCompact = (obj) => `${JSON.stringify(obj)}
+`;
+function omitEmpty(v) {
+  if (Array.isArray(v)) return v.map(omitEmpty);
+  if (!v || typeof v !== "object") return v;
+  const out = {};
+  for (const [k, x] of Object.entries(v)) {
+    if (x === null || x === void 0 || Array.isArray(x) && x.length === 0) continue;
+    out[k] = omitEmpty(x);
+  }
+  return out;
+}
+function factRanks(evidence, axes) {
+  const decisive = new Map(axes.map((a) => [a.axis, a.source.ruleId]));
+  const level = (e) => Math.max(-1, ...e.ruleIds.map((r) => {
+    var _a;
+    return Number(((_a = /-L([0-3])-/.exec(r)) == null ? void 0 : _a[1]) ?? -1);
+  }));
+  const groups = /* @__PURE__ */ new Map();
+  for (const e of evidence) {
+    const k = e.primaryAxis ?? "";
+    if (!groups.has(k)) groups.set(k, []);
+    groups.get(k).push(e);
+  }
+  const rank = /* @__PURE__ */ new Map();
+  for (const list of groups.values()) {
+    list.map((e) => [e, e.ruleIds.includes(decisive.get(e.primaryAxis)) ? 0 : 1, -level(e)]).sort((x, y) => x[1] - y[1] || x[2] - y[2] || compareCodeUnits(x[0].id, y[0].id)).forEach(([e], i) => rank.set(e.id, i));
+  }
+  return rank;
+}
 function compactInventory(draft, kbKeys) {
   const e = draft.engine;
   const sessions = { ...e.sessions, contextPerTurn: e.sessions.contextPerTurn && { ...e.sessions.contextPerTurn, series: void 0 } };
   if (sessions.tokens) sessions.tokens = { ...sessions.tokens, byModel: void 0 };
-  return {
-    schemaVersion: draft.schemaVersion,
-    rubricVersion: draft.rubricVersion,
-    meta: draft.meta,
-    engine: {
-      ...e,
-      inventory: { ...e.inventory, sources: e.inventory.sources.filter((s) => s.status !== "absent") },
-      sessions,
-      selfCost: { componentId: e.selfCost.componentId, alwaysLoadedTokens: e.selfCost.alwaysLoadedTokens }
-    },
-    knowledgeBaseKeys: kbKeys
+  const build = (factLimit) => {
+    const rank = factLimit === null ? null : factRanks(e.evidence, e.axes);
+    const evidence = e.evidence.map((ev) => rank && rank.get(ev.id) >= factLimit ? { ...ev, fact: void 0 } : ev);
+    const omittedFacts = evidence.filter((ev) => ev.fact === void 0).length;
+    return omitEmpty({
+      schemaVersion: draft.schemaVersion,
+      rubricVersion: draft.rubricVersion,
+      meta: draft.meta,
+      engine: {
+        ...e,
+        inventory: {
+          ...e.inventory,
+          components: e.inventory.components.map(({ contentHash, ...c }) => c),
+          sources: e.inventory.sources.filter((src) => src.status !== "absent")
+        },
+        evidence,
+        sessions,
+        selfCost: { componentId: e.selfCost.componentId, alwaysLoadedTokens: e.selfCost.alwaysLoadedTokens }
+      },
+      knowledgeBaseKeys: kbKeys,
+      compaction: { omitted: ["contentHash", "null_and_empty_array_keys"], factLimitPerAxis: factLimit, omittedFacts }
+    });
   };
+  const target = BUDGETS.llm_input_inventory_tokens.target;
+  let text = serializeCompact(build(null));
+  if (estimateTokens(text) <= target) return text;
+  const counts = /* @__PURE__ */ new Map();
+  for (const ev of e.evidence) counts.set(ev.primaryAxis ?? "", (counts.get(ev.primaryAxis ?? "") ?? 0) + 1);
+  for (let n = Math.max(1, ...counts.values()) - 1; n >= 1; n--) {
+    text = serializeCompact(build(n));
+    if (estimateTokens(text) <= target) return text;
+  }
+  return text;
 }
 function interpretationTemplate(axes, comparison) {
   return {
@@ -4875,9 +4927,8 @@ function cmdPrepare(ctx) {
       rescanWarnings.push(...rescanned.hits);
     }
     finishSelfCost(null);
-    const compact = `${JSON.stringify(compactInventory(draft, c.kbKeys))}
-`;
-    const inventoryTokens = Math.ceil(Buffer.byteLength(compact, "utf8") / 4);
+    const compact = compactInventory(draft, c.kbKeys);
+    const inventoryTokens = estimateTokens(compact);
     finishSelfCost(inventoryTokens);
     const { axes: _ignored, ...engineNoAxes } = draft.engine;
     writeJson(path8.join(dir, "inventory.json"), {
