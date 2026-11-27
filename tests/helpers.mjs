@@ -90,13 +90,24 @@ export function swapFixture(project, fixtureName) {
 
 export const readJson = (file) => JSON.parse(readFileSync(file, 'utf8'));
 
+// 예시 해석의 빈 영역을 이번 run 골격(엔진이 정한 axis·kind)에 맞춘다. 세션 실측으로 빈 영역이 달라지는 테스트용.
+export function alignedInterpretation(file, templatePath) {
+  const interp = readJson(file);
+  const byAxis = new Map(interp.currentTradeoffs.emptyAreas.map((e) => [e.axis, e]));
+  interp.currentTradeoffs.emptyAreas = readJson(templatePath).currentTradeoffs.emptyAreas.map((e) => ({
+    ...e, meaning: byAxis.get(e.axis)?.meaning || '구성 근거가 없다.', howToConfirm: byAxis.get(e.axis)?.howToConfirm || '설정 파일을 확인한다.',
+  }));
+  return JSON.stringify(interp);
+}
+
 // prepare → 예시 해석 복사 → finalize. LLM 없이 전체 흐름을 돈다.
-export function analyze({ project, out, now, interpretation, extra = [], configDir }) {
+export function analyze({ project, out, now, interpretation, extra = [], configDir, align = false }) {
   const opt = configDir ? { configDir } : undefined;
   const prep = engine(['prepare', '--project', project, '--out', out, '--now', now, '--json', ...extra], opt);
   if (prep.code !== 0) return { prep };
   if (interpretation) {
-    const body = typeof interpretation === 'string' ? readFileSync(interpretation, 'utf8') : JSON.stringify(interpretation);
+    const body = typeof interpretation !== 'string' ? JSON.stringify(interpretation)
+      : align ? alignedInterpretation(interpretation, prep.json.interpretationTemplatePath) : readFileSync(interpretation, 'utf8');
     writeFileSync(prep.json.interpretationPath, body);
   }
   const fin = engine(['finalize', '--project', project, '--out', out, '--run', prep.json.runId, '--now', now, '--agent', 'claude-code', '--no-open', '--json'], opt);

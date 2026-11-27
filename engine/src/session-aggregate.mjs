@@ -10,7 +10,7 @@ export function emptySessions(status, reason) {
   return {
     status, reason, clientVersions: null, window: null, coverage: { ...COUNTS0 },
     dedup: { assistantLines: 0, uniqueResponses: 0, excludedSynthetic: 0, excludedApiError: 0 },
-    tokens: null, contextPerTurn: null, axisMetrics: [],
+    tokens: null, contextPerTurn: null, axisMetrics: [], toolUsage: [],
   };
 }
 

@@ -57,6 +57,43 @@ export function hookScriptPath(command) {
   return sub;
 }
 
+// Hook 스크립트가 상대 경로로 불러오는 파일(루브릭 §1.7, 0.3). 1단계만 본다.
+// 결과: [{ spec, names }] — names는 ESM 이름 import의 원래 이름 목록, 파일 전체를 쓰는 형태(require·기본·부작용·source)면 null.
+const MAX_HOOK_IMPORTS = 16;
+export function hookImports(text) {
+  const out = [];
+  // rootRel: $CLAUDE_PROJECT_DIR 기준 경로(출처 루트 기준). 그 외는 스크립트 위치 기준 상대 경로만 받는다.
+  const add = (spec, names, rootRel = false) => {
+    if (out.length >= MAX_HOOK_IMPORTS || /[$()`*?]/.test(spec) || (!rootRel && !/^\.{1,2}\//.test(spec))) return;
+    if (!out.some((o) => o.spec === spec && o.rootRel === rootRel)) out.push({ spec, names, rootRel });
+  };
+  for (const m of text.matchAll(/\bimport\s*(?:([\w$]+)\s*,?\s*)?(?:\{([^}]*)\}|\*\s*as\s+[\w$]+)?\s*(?:from\s*)?["']([^"'\n]+)["']/g)) {
+    const named = m[2] !== undefined && !m[1] ? m[2].split(',').map((x) => x.trim().split(/\s+as\s+/)[0]).filter((n) => /^[\w$]+$/.test(n)) : null;
+    add(m[3], named);
+  }
+  for (const m of text.matchAll(/\b(?:require|import)\s*\(\s*["']([^"'\n]+)["']\s*\)/g)) add(m[1], null);
+  for (const m of text.matchAll(/^\s*(?:source|\.)\s+["']?(\$\{?CLAUDE_PROJECT_DIR\}?\/)?([^"'\s;]+)/gm)) {
+    if (m[1]) add(m[2], null, true);
+    else add(/^\.{1,2}\//.test(m[2]) ? m[2] : `./${m[2]}`, null);
+  }
+  for (const m of text.matchAll(/^\s*from\s+\.([\w.]*)\s+import\b/gm)) if (m[1] && !m[1].includes('.')) add(`./${m[1]}.py`, null);
+  return out;
+}
+
+// 불러온 파일에서 차단 표지가 있는 export 이름. 표지가 export 밖(최상위 실행 코드)에 있으면 '*'를 넣는다.
+// 주석은 다음 export의 설명인 경우가 많아 앞 export에 붙지 않도록 지우고 본다.
+export function blockingExports(source) {
+  const text = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|\s)\/\/.*$/gm, '$1');
+  const marks = /^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?\s*([\w$]+)|(?:const|let|var|class)\s+([\w$]+))/gm;
+  const starts = [...text.matchAll(marks)].map((m) => ({ at: m.index, name: m[1] ?? m[2] }));
+  const names = new Set();
+  if (hasBlockMarker(text.slice(0, starts.length ? starts[0].at : text.length))) names.add('*');
+  starts.forEach((st, i) => {
+    if (hasBlockMarker(text.slice(st.at, i + 1 < starts.length ? starts[i + 1].at : text.length))) names.add(st.name);
+  });
+  return names;
+}
+
 export class Collector {
   constructor({ projectRoot, scope, configDir, skillDir, platform = process.platform }) {
     this.projectRoot = projectRoot;
@@ -107,7 +144,8 @@ export class Collector {
   }
 
   // root 기준 rel 파일을 읽는다. R1·크기·경계 검사를 모두 거친다.
-  readFile(root, rel, origin, limit = TEXT_LIMIT_BYTES) {
+  // probe: 확장자 후보를 찾는 시도라 없는 파일은 출처로 남기지 않는다.
+  readFile(root, rel, origin, limit = TEXT_LIMIT_BYTES, probe = false) {
     const abs = path.join(root, rel);
     const disp = displayPath(abs, this.projectRoot);
     const cacheKey = `${disp}|${origin}`;
@@ -127,6 +165,7 @@ export class Collector {
         if (/\.json$/i.test(rel)) this.countJsonSecrets(raw);
         result = { text, raw, disp, status: 'ok' };
       } else if (r.status === 'absent') {
+        if (probe) return { status: 'absent', disp };
         this.addSource(disp, origin, 'absent');
         result = { status: 'absent', disp };
       } else if (r.status === 'escape') {
@@ -388,7 +427,28 @@ export class Collector {
       }
     }
     const text = `${command}\n${script ?? ''}\n${promptText}`;
-    const block = hasBlockMarker(text);
+    let block = hasBlockMarker(text);
+    // 0.3: 스크립트가 같은 루트 안에서 상대 경로로 불러오는 파일을 1단계까지 본다(실행하지 않음, 256KB 한도).
+    // ESM 이름 import는 그 이름의 export 안에 표지가 있고 스크립트가 그 이름을 호출할 때만 차단으로 본다.
+    const imports = [];
+    let blockVia = block ? 'script' : null;
+    if (script !== null) {
+      const dir = path.posix.dirname(path.posix.normalize(scriptRel));
+      for (const imp of hookImports(script)) {
+        const target = path.posix.normalize(imp.rootRel ? imp.spec : path.posix.join(dir, imp.spec));
+        if (target.startsWith('..') || path.posix.isAbsolute(target)) continue;
+        const cands = /\.[a-z]+$/i.test(target) ? [target] : ['.mjs', '.js', '.cjs', '.ts', '.sh'].map((ext) => target + ext);
+        const f = cands.map((c) => [c, this.readFile(scriptRoot, c, origin, SCRIPT_LIMIT_BYTES, cands.length > 1)]).find(([, r]) => r.status === 'ok')?.[1]
+          ?? this.readFile(scriptRoot, cands[0], origin, SCRIPT_LIMIT_BYTES);
+        if (f.status !== 'ok') continue;
+        imports.push({ disp: f.disp, hash: sha256hex(f.raw) });
+        if (block) continue;
+        const exported = blockingExports(f.text);
+        const called = (n) => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, '\\$')}\\s*\\(`).test(script.replace(/^\s*import\b[^;]*?from\s*["'][^"']*["'];?/gm, ''));
+        const hit = imp.names === null ? exported.size > 0 : exported.has('*') || imp.names.some((n) => exported.has(n) && called(n));
+        if (hit) { block = true; blockVia = f.disp; }
+      }
+    }
     const verify = hasAny(text, VERIFY_CMD);
     const spec = hasAny(text, SPEC_CMD);
     const reentry = hasAny(`${command}\n${script ?? ''}`, REENTRY);
@@ -426,18 +486,18 @@ export class Collector {
     const comp = this.addComponent({
       kind: 'hook', origin, key: `${event}|${matcher ?? ''}|${ord}`,
       name: `${event}${matcher ? `(${this.clean(matcher, 60)})` : ''} ${label}`,
-      paths: [settingsDisp, ...(scriptDisp ? [scriptDisp] : [])],
-      contentHash: sha256tag(hashInput({ event, matcher, handler: h, script: scriptRaw === null ? null : sha256hex(scriptRaw) })),
+      paths: [settingsDisp, ...(scriptDisp ? [scriptDisp] : []), ...(blockVia && blockVia !== 'script' ? [blockVia] : [])],
+      contentHash: sha256tag(hashInput({ event, matcher, handler: h, script: scriptRaw === null ? null : sha256hex(scriptRaw), ...(imports.length ? { imports: imports.map((x) => x.hash) } : {}) })),
       attributes: {
         event, matcher: matcher && this.clean(matcher, 120), type,
         timeoutSec: typeof h.timeout === 'number' ? h.timeout : null,
-        blockingMarker: block, verifyCommand: verify, specCommand: spec, reentryGuard: reentry,
+        blockingMarker: block, blockingMarkerVia: blockVia === null ? null : blockVia === 'script' ? 'script' : 'import', verifyCommand: verify, specCommand: spec, reentryGuard: reentry,
         scriptExists: scriptRel ? scriptStatus === 'ok' : null,
         command: command ? this.clean(command, 120) : null,
       },
     });
     const keyBase = pointer('hooks', event, g, 'hooks', hi);
-    const describe = [block ? '차단 표지 있음' : '차단 표지 없음', verify ? '검증 명령 어휘' : null, levelCap ? '스크립트 확인 불가' : null].filter(Boolean).join(', ');
+    const describe = [block ? (blockVia && blockVia !== 'script' ? `차단 표지 있음(import ${path.posix.basename(blockVia)})` : '차단 표지 있음') : '차단 표지 없음', verify ? '검증 명령 어휘' : null, levelCap ? '스크립트 확인 불가' : null].filter(Boolean).join(', ');
     this.addEvidence({
       comp, path: settingsDisp, keyPath: keyBase, family: 'hook', mechanism: 'harness_enforced',
       fact: `${event}${matcher ? `(${this.clean(matcher, 60)})` : ''} Hook: ${label} (${describe})`,

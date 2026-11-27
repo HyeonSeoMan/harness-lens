@@ -87,3 +87,18 @@
   - 제안: "귀속이 불확실하면(작업 경로 기록이 없거나, 매핑·경로 언급이 없는 봇 세션) "미귀속"으로 따로 표시하고 합계에 섞지 않는다. 작업 경로가 분석 대상과 무관한 것이 확실한 세션(다른 프로젝트, 다른 저장소에 매핑된 봇)은 합계·미귀속 어디에도 집계하지 않고 제외한 세션 수만 보고한다."
   - 이유: 다른 프로젝트의 사용량을 이 프로젝트 리포트에 싣지 않고(Local First 범위 최소화), 미귀속 비율이 실제 불확실성을 나타내게 한다. DiceForge 재실행 기준 미귀속 596개 중 559개가 다른 프로젝트였다.
 - §11.1 압축 인벤토리 예산이 근거 수에 비례해 커지는 점을 고려해 "근거 N개 기준" 같은 조건을 둘지 검토(#8).
+
+## 반영 현황
+
+오너 결정(2026-11-27)을 반영한 PR. 병합 순서는 위에서 아래로다(스택).
+
+| # | 결정 | PR |
+|---|---|---|
+| 10 | A: 무관한 프로젝트 세션 제외, 엔진 명세 §8.3을 "불확실한 것만 미귀속"으로. `coverage.sessionsExcluded`·`unrelated_sessions_excluded`로 제외 수 표시. PRD는 위 "PRD 제안"에 개정 문안만 | #12 |
+| 1 | A: LEX-BLOCK 종료 관례·따옴표 없는 키, 상대 import·source 1단계 스캔(이름 import는 표지가 든 export를 호출할 때만) | 루브릭 0.3 PR |
+| 2 | A: `name` 우선, `description`은 부정 절(LEX-NEG) 제외 | 루브릭 0.3 PR |
+| 4 | A: 실측 상태 축은 빈 영역에서 제외, CE-M-01 폐기(`cache_hit_ratio` 참고 지표, CE 실측 불가 `band_metric_undefined`) | 루브릭 0.3 PR |
+| 5 | A: CX-M-02 `context_p90_window_ratio`(모델 창 크기 표, 모르는 모델은 보류) | 루브릭 0.3 PR |
+| 6 | A: `sessions.toolUsage` 도구별 집계, ES-M-02 Bash 제외 오류율, `bash_error_rate` 참고 지표 | 루브릭 0.3 PR |
+| 9 | A: `bot_weighted_share`·`worker_weighted_share` CE 참고 지표 | 루브릭 0.3 PR |
+| 8 | A: 압축 인벤토리 `contentHash`·null 기본값 필드 제거, 근거 `fact` 축별 상위 N개 | 압축 인벤토리 PR |

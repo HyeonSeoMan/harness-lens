@@ -32,7 +32,7 @@ export function reportClient() {
   };
   var BSTATUS = { within: '예산 이내', exceeded: '초과', unmeasured: '미측정' };
   var BLOCKED = {
-    needs_ci_pr_data: 'CI·PR 데이터 필요(MVP 3)', session_format_unconfirmed: '세션 기록 형식 미확인',
+    needs_ci_pr_data: 'CI·PR 데이터 필요(MVP 3)', session_format_unconfirmed: '세션 기록 형식 미확인', band_metric_undefined: '대역 지표 미정(캐시 적중률은 참고 지표)',
     sessions_disabled: '세션 집계 꺼짐', no_session_logs: '세션 기록 없음', session_format_unsupported: '세션 기록 형식 미지원',
     session_aggregation_failed: '세션 집계 오류', insufficient_samples: '표본 부족', metric_unavailable: '대역 지표 없음',
     no_attributed_sessions: '귀속된 세션 없음', session_lines_skipped: '해석 못 한 줄이 많음',
@@ -41,10 +41,12 @@ export function reportClient() {
   var METHOD = { direct: '직접', worktree: '워크트리 gitdir', inferred: '추정(삭제된 워크트리)', configured: '설정 매핑', auto: '자동 귀속' };
   var TOKTYPE = [['freshInput', '새 입력'], ['cacheWrite', '캐시 쓰기'], ['cacheRead', '캐시 읽기'], ['output', '출력']];
   var METRIC = {
-    tool_error_rate: '도구 오류율', tool_error_recovery_rate: '오류 뒤 회복률', hook_errors_per_session: '세션당 Hook 실패', api_retries_per_session: '세션당 API 재시도',
-    turn_duration_p50_ms: '턴 시간 중앙값', session_duration_p50_ms: '세션 길이 중앙값', cache_hit_ratio: '캐시 적중률', weighted_tokens_per_session: '세션당 환산 토큰',
-    context_p90_tokens: '요청 입력 크기 p90', compactions_per_session: '세션당 컨텍스트 압축', tool_calls_between_prompts_p50: '사람 입력 사이 도구 호출 중앙값',
+    non_bash_tool_error_rate: '도구 오류율(Bash 제외)', bash_error_rate: 'Bash 비정상 종료율(참고)',
+    tool_error_rate: '도구 오류율(전체, 참고)', tool_error_recovery_rate: '오류 뒤 회복률', hook_errors_per_session: '세션당 Hook 실패', api_retries_per_session: '세션당 API 재시도',
+    turn_duration_p50_ms: '턴 시간 중앙값', session_duration_p50_ms: '세션 길이 중앙값', cache_hit_ratio: '캐시 적중률(참고)', weighted_tokens_per_session: '세션당 환산 토큰',
+    context_p90_window_ratio: '요청 입력 크기 p90 ÷ 모델 창', context_p90_tokens: '요청 입력 크기 p90(참고)', compactions_per_session: '세션당 컨텍스트 압축', tool_calls_between_prompts_p50: '사람 입력 사이 도구 호출 중앙값',
     human_prompts_per_session: '세션당 사람 입력', hook_blocks_per_session: '세션당 Hook 차단(VG 대리 지표)',
+    bot_weighted_share: '봇 채팅 환산값 비중(참고)', worker_weighted_share: '워커 환산값 비중(참고)',
   };
   function num(v) {
     if (v === null || v === undefined) return '—';
@@ -335,6 +337,11 @@ export function reportClient() {
       sSec2.appendChild(table(['축', '지표', '값', '표본', '범위'], sess.axisMetrics.map(function (m) {
         return [AXIS[m.axis], METRIC[m.metricId] || m.metricId, metricValue(m), num(m.sampleSize), m.sinceConfig ? '현재 구성 이후' : '전체'];
       })));
+    }
+    if (sess.toolUsage && sess.toolUsage.length) {
+      sSec2.appendChild(el('details', null, [el('summary', null, '도구별 호출·오류'),
+        el('p', { class: 'muted' }, 'Bash 비정상 종료는 테스트 실패처럼 명령의 정상 결과일 수 있어 실행 안정성 대역에서 뺐습니다. Hook 차단·사용자 거절도 오류로 기록될 수 있습니다.'),
+        table(['도구', '호출', '오류', '오류율'], sess.toolUsage.map(function (u) { return [u.tool, num(u.calls), num(u.errors), u.calls ? pct(u.errors / u.calls) : '—']; }))]));
     }
   }
   function trendChart(series) {

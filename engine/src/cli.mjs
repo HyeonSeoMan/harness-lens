@@ -14,7 +14,7 @@ import { diffAnalyses } from './diff.mjs';
 import { rescanAndRedact } from './redact.mjs';
 import { renderReport } from './render.mjs';
 import { skillDir } from './resources.mjs';
-import { computeAxes, computeMaturity, computeTensions, knowledgeBaseKeys } from './rubric.mjs';
+import { computeAxes, computeMaturity, computeTensions, emptyAreaKind, knowledgeBaseKeys } from './rubric.mjs';
 import { aggregateSessions, sessionsStagingDir } from './session-aggregate.mjs';
 import { promoteState } from './sessions.mjs';
 import {
@@ -236,8 +236,8 @@ function interpretationTemplate(axes, comparison) {
       componentTradeoffs: [],
       axisTensions: [],
       emptyAreas: axes
-        .filter((a) => (a.levelStatus === 'assessed' && a.level === 0) || a.levelStatus === 'unknown')
-        .map((a) => ({ axis: a.axis, kind: a.levelStatus === 'unknown' ? 'unknown' : 'unconfigured', meaning: '', howToConfirm: '' })),
+        .filter((a) => emptyAreaKind(a))
+        .map((a) => ({ axis: a.axis, kind: emptyAreaKind(a), meaning: '', howToConfirm: '' })),
     },
     changeTradeoffs: comparison ? [] : null,
     limitations: [],

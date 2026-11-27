@@ -1,6 +1,6 @@
-# 평가 루브릭 v0.2
+# 평가 루브릭 v0.3
 
-- 루브릭 버전: `0.2` (분석 결과의 `rubricVersion`). v0.1과의 차이는 §4.1
+- 루브릭 버전: `0.3` (분석 결과의 `rubricVersion`). 이전 버전과의 차이는 §4.1
 - 대상: PRD v0.3 §7.1의 8개 축, FR-07a, FR-10, FR-11
 - 근거: `docs/research/03-evaluation-axes.md`(축·척도·긴장), `docs/research/02-session-logs.md`(세션 지표)
 - 성격: 이 문서의 규칙은 **엔진이 결정론적으로 실행한다.** 사용자 LLM은 수준을 고르지 않고, 엔진이 계산한 수준을 해석만 한다(`analysis-protocol.md`).
@@ -94,13 +94,20 @@ PRD §7.1의 네 단계 위계(서술 < 절차 < Hook·권한 < 관리형·sandb
 | LEX-NAR-CX | 서술: 컨텍스트 | `컨텍스트`, `/clear`, `/compact`, `context window`, `subagent로 위임`, `delegate to a subagent` |
 | LEX-NAR-AU | 서술: 자율 | `묻지 말고`, `확인 없이`, `승인을 받`, `without asking`, `autonomously`, `ask before` |
 | LEX-NAR-SB | 서술: 안전 | `금지`, `비밀`, `.env`, `rm -rf`, `force push`, `secret`, `credential`, `never commit`, `do not push` |
-| LEX-ROLE | Skill·Agent 역할(`name`+`description`) | reviewer: `review`, `verif`, `audit`, `qa`, `critic`, `검토`, `리뷰`, `검증` / spec: `spec`, `plan`, `prd`, `requirement`, `명세`, `계획`, `요구사항` / recovery: `rollback`, `recover`, `checkpoint`, `restore`, `복구`, `롤백` / parallel: `parallel`, `fan-out`, `dispatch`, `병렬` / explorer: `explore`, `search`, `research`, `investigat`, `탐색`, `조사` |
+| LEX-ROLE | Skill·Agent 역할. `name`을 먼저 보고, 역할이 없으면 LEX-NEG 절을 뺀 `description`을 본다(0.3) | reviewer: `review`, `verif`, `audit`, `qa`, `critic`, `검토`, `리뷰`, `검증` / spec: `spec`, `plan`, `prd`, `requirement`, `명세`, `계획`, `요구사항` / recovery: `rollback`, `recover`, `checkpoint`, `restore`, `복구`, `롤백` / parallel: `parallel`, `fan-out`, `dispatch`, `병렬` / explorer: `explore`, `search`, `research`, `investigat`, `탐색`, `조사` |
 | LEX-VERIFY-CMD | Hook 명령·스크립트의 검증 명령 | `test`, `lint`, `eslint`, `prettier --check`, `tsc`, `typecheck`, `pytest`, `ruff`, `cargo clippy`, `go vet`, `mvn verify`, `gradle check` |
 | LEX-SPEC-CMD | Hook 명령·스크립트의 명세 검사 | `spec`, `prd`, `acceptance`, `requirements`, `명세` |
-| LEX-BLOCK | 차단 표지 | `exit 2`, `"decision": "block"`, `"permissionDecision": "deny"`, `"continue": false` (공백 차이 무시) |
+| LEX-NEG | 역할 판정에서 뺄 설명 절(0.3) | 절(문장 부호·줄바꿈·쉼표+공백으로 나눔)에 `않`, `없이`, `없다`, `없음`, `말고`, `말 것`, `아니`, `n't`, 단어 `not`·`never`·`without`·`no`가 있으면 그 절 전체를 뺀다. 예: "독립 리뷰어는 쓰지 않는다" |
+| LEX-BLOCK | 차단 표지 | `exit 2`, `process.exit(2)`, `process.exitCode = 2`, `sys.exit(2)`, `os.Exit(2)`, `decision`↔`block`·`permissionDecision`↔`deny` 키 쌍(큰따옴표 키, 작은따옴표 키, 따옴표 없는 키 `decision: "block"`·`decision: 'block'`), `"continue": false`, `'continue': False`, `continue: false` (대소문자·공백 차이 무시, 0.3에서 종료 관례·따옴표 없는 키 추가) |
 | LEX-REENTRY | 재진입 방지 | `stop_hook_active` |
 
 Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`sh`·`node`·`python`·`python3` 뒤의 첫 경로 포함)을 `$CLAUDE_PROJECT_DIR`, `${CLAUDE_PLUGIN_ROOT}` 치환 후 찾는다. 자기 출처의 루트(프로젝트 또는 플러그인) 안에 있는 256KB 이하 파일만 읽는다. 스크립트를 실행하지 않는다.
+
+공용 헬퍼 스캔(0.3): 스크립트가 불러오는 파일을 **1단계까지만** 함께 본다. 같은 출처 루트 안이고 256KB 이하인 파일만 읽고, 실행하지 않는다. 대상은 스크립트 위치 기준 상대 경로(`./`, `../`)의 ESM `import … from`·`import "…"`·`import(…)`·`require(…)`, 셸 `source`·`.`(상대 경로 또는 `$CLAUDE_PROJECT_DIR/` 기준), Python 상대 import(`from .mod import`)다. 확장자가 없으면 `.mjs`, `.js`, `.cjs`, `.ts`, `.sh` 순으로 찾는다. 불러온 파일은 읽은 출처로 남고 구성 해시에 들어간다.
+
+- ESM 이름 import(`import { block } from "./lib.mjs"`)는 불러온 파일에서 LEX-BLOCK이 든 `export`(함수·상수·클래스 단위, 주석 제외) 이름을 가져오고 스크립트가 그 이름을 호출(`block(`)할 때만 차단 표지로 본다. 같은 파일에서 차단과 무관한 함수(`emit`)만 쓰면 차단이 아니다. export 밖 최상위 코드에 표지가 있으면 가져오기만 해도 차단으로 본다.
+- 파일 전체를 쓰는 형태(`require`, 기본·네임스페이스 import, `source`, Python 상대 import)는 불러온 파일 어디에든 표지가 있으면 차단으로 본다.
+- 구성 요소 속성 `blockingMarkerVia`는 `script`(스크립트 본문) 또는 `import`(불러온 파일)다. 불러온 파일에서 찾으면 근거 `fact`에 그 파일 이름을 적고 구성 요소 `paths`에 넣는다.
 
 ### 1.8 가능 범위 (`axes[].range`)
 
@@ -133,17 +140,17 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 - 진행도 = min(1, 현재 표본 ÷ 요구량)이다. 실측 불가 축은 진행도를 표시하지 않는다(도달할 수 없는 진행도는 사용자를 오도한다).
 - 세션 지표 집계 범위
   - 봇 채팅은 조율 비용이므로 축 지표에서 뺀다.
-  - 서브에이전트 기록은 `tool_error_rate`와 `cache_hit_ratio`에만 포함한다.
+  - 서브에이전트 기록은 도구 오류 지표(`non_bash_tool_error_rate`, `bash_error_rate`, `tool_error_rate`)와 `cache_hit_ratio`에만 포함한다.
   - 나머지 지표는 프로젝트·워커 세션의 메인 스레드만 쓴다.
 
 | 축 | 실측 가능 | 요구량 (휴리스틱) | 대역 규칙 | 지표 → 대역 (휴리스틱) |
 |---|---|---|---|---|
 | spec_clarity | 아니오 (`needs_ci_pr_data`, MVP 3) | — | — | — |
 | verification_gate_strength | 아니오 (`needs_ci_pr_data`, MVP 3) | — | — | 대리 지표(Hook 차단 수, 리뷰어 호출 비율)는 `axisMetrics`에만 싣는다 |
-| execution_stability | 예 | 도구 호출 500회 | ES-M-01 | `tool_error_rate` ≤ 0.02 → 3, ≤ 0.05 → 2, ≤ 0.10 → 1, 그 외 0 |
+| execution_stability | 예 | Bash를 뺀 도구 호출 500회(서브에이전트 포함) | ES-M-02 | `non_bash_tool_error_rate` ≤ 0.02 → 3, ≤ 0.05 → 2, ≤ 0.10 → 1, 그 외 0. ES-M-01(`tool_error_rate`, 전체 도구)은 폐기(0.3) |
 | throughput | 예 | 세션 20회 | TP-M-01 | `turn_duration_p50_ms` ≤ 30,000 → 3, ≤ 90,000 → 2, ≤ 300,000 → 1, 그 외 0 (작업 크기 미보정) |
-| cost_efficiency | 예 | 세션 20회 | CE-M-01 | `cache_hit_ratio` ≥ 0.90 → 3, ≥ 0.75 → 2, ≥ 0.50 → 1, 그 외 0 (성공 작업당 비용이 아니라 세션 기준) |
-| context_efficiency | 예 | 세션 20회 | CX-M-01 | `context_p90_tokens` ≤ 50,000 → 3, ≤ 100,000 → 2, ≤ 150,000 → 1, 그 외 0. `compactions_per_session` > 0.5이면 최대 1 |
+| cost_efficiency | 아니오 (`band_metric_undefined`, 0.3) | — | — | CE-M-01(`cache_hit_ratio` 대역)은 폐기. 캐시 적중은 클라이언트 동작(프롬프트 캐시 관리) 영향이 커서 하네스 축 실측으로 약하다. `cache_hit_ratio`, `weighted_tokens_per_session`, `bot_weighted_share`, `worker_weighted_share`는 참고 지표로만 싣는다. 성공 작업당 비용 같은 대역 지표가 정해질 때까지 예측 |
+| context_efficiency | 예 | 세션 20회 | CX-M-02 | `context_p90_window_ratio` ≤ 0.25 → 3, ≤ 0.50 → 2, ≤ 0.75 → 1, 그 외 0. `compactions_per_session` > 0.5이면 최대 1. CX-M-01(절대 토큰 50k/100k/150k)은 폐기(0.3) |
 | autonomy | 예 | 도구 호출 500회 | AU-M-01 | `tool_calls_between_prompts_p50` ≥ 20 → 3, ≥ 8 → 2, ≥ 3 → 1, 그 외 0 |
 | safety_boundary | 아니오 (`session_format_unconfirmed`) | — | — | 권한 거부 기록 형식이 확인되면 도구 호출 500회 기준으로 전환을 검토한다 |
 
@@ -151,11 +158,14 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 
 | metricId | 정의 |
 |---|---|
-| `tool_error_rate` | `tool_result.is_error == true` 수 ÷ `tool_use` 블록 수 |
+| `non_bash_tool_error_rate` | ES 대역 지표(0.3). Bash를 뺀 도구의 `tool_result.is_error == true` 수 ÷ Bash를 뺀 `tool_use` 블록 수. 결과의 도구는 `tool_use_id`로 같은 기록의 `tool_use.name`에 잇는다(못 찾으면 `unknown` 분류로 오류에 넣는다). Hook 차단·사용자 거절도 `is_error`로 기록될 수 있으나, 원문 없이 구분할 형식이 확인될 때까지 따로 빼지 않는다 |
+| `bash_error_rate` | ES 참고 지표(0.3). Bash 오류 수 ÷ Bash 호출 수. 0이 아닌 종료(테스트 실패 등 정상 결과 포함)가 섞인다 |
+| `tool_error_rate` | ES 참고 지표(0.3부터). 모든 도구의 `tool_result.is_error == true` 수 ÷ `tool_use` 블록 수 |
 | `tool_error_recovery_rate` | 오류 뒤 같은 세션에서 성공한 도구 호출이 이어진 비율 |
 | `turn_duration_p50_ms` | `system(turn_duration).durationMs`의 중앙값 |
-| `cache_hit_ratio` | cacheRead ÷ (freshInput + cacheWrite + cacheRead) |
-| `context_p90_tokens` | 메인 스레드 요청별 입력 크기(freshInput + cacheWrite + cacheRead)의 90분위 |
+| `cache_hit_ratio` | CE 참고 지표(0.3부터). cacheRead ÷ (freshInput + cacheWrite + cacheRead) |
+| `context_p90_window_ratio` | CX 대역 지표(0.3). 메인 스레드 요청별 (입력 크기 ÷ 그 요청 모델의 컨텍스트 창 크기)의 90분위(소수 4자리). 창 크기는 엔진 내장 표(`engine/src/model-windows.mjs`, Anthropic Models overview 기준 확인일 2026-11-27)에서 찾고, 표에 없는 모델의 요청은 빼며 하나도 없으면 지표를 싣지 않는다(실측 보류) |
+| `context_p90_tokens` | CX 참고 지표(0.3부터). 메인 스레드 요청별 입력 크기(freshInput + cacheWrite + cacheRead)의 90분위 |
 | `compactions_per_session` | `system(compact_boundary)` 수 ÷ 세션 수 |
 | `tool_calls_between_prompts_p50` | 사람 프롬프트(`origin.kind == "human"`) 사이 `tool_use` 수의 중앙값 |
 | `human_prompts_per_session` | 세션당 사람 프롬프트 수 |
@@ -165,6 +175,10 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 | `weighted_tokens_per_session` | CE 참고 지표. 환산 토큰 ÷ 세션 수(서브에이전트 포함) |
 | `hook_blocks_per_session` | VG 대리 지표. 차단된 Hook 결과 수 ÷ 세션 수 (형식 확인 필요) |
 | `reviewer_calls_per_session` | VG 대리 지표. 역할이 reviewer인 Subagent 호출 수 ÷ 세션 수 |
+| `bot_weighted_share` | CE 참고 지표(0.3, 대역 없음). 귀속 합계 환산값 중 오케스트레이터 봇 채팅 비중(`tokens.byLocation[bot].weightedShare`). 누적 집계 전체라 `sinceConfig: false`, 표본은 봇 세션 수. 봇 세션이 없으면 싣지 않는다 |
+| `worker_weighted_share` | CE 참고 지표(0.3, 대역 없음). 같은 방식의 워커 워크트리 세션 비중 |
+
+도구별 집계(`sessions.toolUsage`, 0.3): 축 지표와 같은 범위(현재 구성 이후 프로젝트·워커 세션, 서브에이전트 포함)의 도구 분류별 호출·오류 수다. 내장 도구는 이름(`Bash`, `Read`, …), MCP 도구는 `mcp`, 그 밖의 이름은 `other`, 결과의 호출을 찾지 못하면 `unknown`이다. 도구 입력·결과 원문은 읽지 않는다.
 
 ## 2. 축별 규칙
 
@@ -332,5 +346,6 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 
 | 버전 | 변경 |
 |---|---|
+| 0.3 | 소유자 결정 반영(`docs/reviews/2026-11-27-diceforge-defects.md` #1·#2·#4·#5·#6·#9). LEX-BLOCK에 언어별 종료 관례(`process.exit(2)` 등)와 따옴표 없는·작은따옴표 키 추가, Hook 스크립트가 상대 경로로 불러오는 파일 1단계 스캔(§1.7). LEX-ROLE은 `name` 우선, `description`은 LEX-NEG 절 제외. 빈 영역: 실측 상태 축은 `unconfigured`에서 뺀다(프로토콜 emptyAreas 행). CE-M-01 폐기, CE는 실측 불가(`band_metric_undefined`), `cache_hit_ratio`는 참고 지표. CX-M-01 폐기, CX-M-02(모델 창 크기 대비 p90 비율). ES-M-01 폐기, ES-M-02(Bash 제외 오류율), 표본도 Bash 제외 도구 호출. 참고 지표 `bash_error_rate`, `context_p90_window_ratio`, `bot_weighted_share`, `worker_weighted_share`와 `sessions.toolUsage` 추가 |
 | 0.2 | 가능 범위: 수집하지 않은 사용자·관리형 설정 파일이 실제로 있을 때만 넓힌다(§1.8). ES-L3-03 폐기, ES-L3-04 추가: Subagent 2개 이상이 모두 `maxTurns`를 가질 때만 3. T1 트리거에 VG-L2-03(차단 표지가 있는 PostToolUse Hook) 추가. 자기 구성 요소(`harness_lens`)의 경로를 설치 위치 대신 고정 라벨 `harness-lens/SKILL.md`로 표시(COM-08) |
 | 0.1 | 최초 공개 |

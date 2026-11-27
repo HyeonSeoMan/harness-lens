@@ -136,7 +136,8 @@ export function computeMaturity(axes, sessions, info = {}) {
       a.maturity = { state: 'predicted', measurable: true, requirement, current: null, progress: null, blockedReason: blocked };
       continue;
     }
-    const current = m.unit === 'sessions' ? samples.sessions ?? 0 : a.axis === 'execution_stability' ? samples.tool_calls_all ?? 0 : samples.tool_calls_main ?? 0;
+    // ES(0.3)는 대역 지표가 Bash 제외 오류율이라 표본도 Bash를 뺀 도구 호출(서브에이전트 포함)이다.
+    const current = m.unit === 'sessions' ? samples.sessions ?? 0 : a.axis === 'execution_stability' ? samples.tool_calls_non_bash ?? 0 : samples.tool_calls_main ?? 0;
     const progress = roundHalfEven(Math.min(1, current / m.required), 4);
     const rule = BAND_RULES[a.axis];
     const main = rule && metric(rule.metric);
@@ -166,6 +167,14 @@ export function computeMaturity(axes, sessions, info = {}) {
     };
   }
   return axes;
+}
+
+// 빈 영역 종류(프로토콜 emptyAreas 행, V-EMPTY-AREAS). 0.3: 실측 상태 축은 구조 수준이 0이어도 실측이 있으므로 넣지 않는다.
+// 빈 영역이 아니면 null.
+export function emptyAreaKind(a) {
+  if (a.levelStatus === 'unknown') return 'unknown';
+  if (a.levelStatus === 'assessed' && a.level === 0 && a.maturity?.state !== 'measured') return 'unconfigured';
+  return null;
 }
 
 // 긴장·시너지 트리거(루브릭 §3). 트리거가 맞은 조합만 후보로 낸다.

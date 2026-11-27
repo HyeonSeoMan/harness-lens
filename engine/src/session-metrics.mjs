@@ -1,5 +1,6 @@
 // 누적 세션 상태 → 스키마 engine.sessions (engine-cli.md §8.3~§8.5, 루브릭 §1.9).
 // 같은 상태면 같은 결과가 나오도록 모든 순회를 키 정렬 순서로 한다.
+import { contextWindow } from './model-windows.mjs';
 import { PRICING_TABLE_VERSION, REFERENCE_MODEL, unitsToWeighted, weightedUnits } from './pricing.mjs';
 import { DAY_MS, RESPONSE_RETENTION_DAYS, compareVersions } from './sessions.mjs';
 import { compareCodeUnits, roundHalfEven } from './util.mjs';
@@ -126,13 +127,13 @@ function bucketOut(parts) {
 function emptyBucket() { return { freshInput: 0, cacheWrite: 0, cacheRead: 0, output: 0, weighted: 0 }; }
 
 // 루브릭 §1.9 대역 규칙(휴리스틱).
+// 0.3: ES-M-01 → ES-M-02(Bash 제외 오류율), CX-M-01 → CX-M-02(창 크기 대비 비율), CE-M-01 폐기(cache_hit_ratio는 참고 지표).
 export const BAND_RULES = {
-  execution_stability: { ruleId: 'ES-M-01', metric: 'tool_error_rate', band: (v) => (v <= 0.02 ? 3 : v <= 0.05 ? 2 : v <= 0.1 ? 1 : 0) },
+  execution_stability: { ruleId: 'ES-M-02', metric: 'non_bash_tool_error_rate', band: (v) => (v <= 0.02 ? 3 : v <= 0.05 ? 2 : v <= 0.1 ? 1 : 0) },
   throughput: { ruleId: 'TP-M-01', metric: 'turn_duration_p50_ms', band: (v) => (v <= 30000 ? 3 : v <= 90000 ? 2 : v <= 300000 ? 1 : 0) },
-  cost_efficiency: { ruleId: 'CE-M-01', metric: 'cache_hit_ratio', band: (v) => (v >= 0.9 ? 3 : v >= 0.75 ? 2 : v >= 0.5 ? 1 : 0) },
   context_efficiency: {
-    ruleId: 'CX-M-01', metric: 'context_p90_tokens', band: (v, m) => {
-      const b = v <= 50000 ? 3 : v <= 100000 ? 2 : v <= 150000 ? 1 : 0;
+    ruleId: 'CX-M-02', metric: 'context_p90_window_ratio', band: (v, m) => {
+      const b = v <= 0.25 ? 3 : v <= 0.5 ? 2 : v <= 0.75 ? 1 : 0;
       const cps = m.compactions_per_session;
       return cps !== undefined && cps > 0.5 ? Math.min(b, 1) : b;
     },
@@ -172,7 +173,7 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
       assistantLines: sum('assistantLines'), uniqueResponses: state.responses.size + state.archive.responses,
       excludedSynthetic: sum('synthetic'), excludedApiError: sum('apiError'),
     },
-    tokens: null, contextPerTurn: null, axisMetrics: [],
+    tokens: null, contextPerTurn: null, axisMetrics: [], toolUsage: [],
   };
   const info = { unknownModels: false, estimatedShare: 0, samples: {}, sinceSessions: 0 };
   const unavailable = (reason) => ({ sessions: { ...base, status: 'unavailable', reason }, info });
@@ -315,8 +316,23 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
   const subTool = fsum(sinceFiles, 'subToolUse') + sinceSubs.reduce((s, [, f]) => s + f.c.subToolUse, 0);
   const allTool = mainTool + subTool;
   const allErr = fsum(sinceFiles, 'toolErrors') + fsum(sinceFiles, 'subToolErrors') + sinceSubs.reduce((s, [, f]) => s + f.c.subToolErrors, 0);
+  // 도구 분류별 [호출, 오류](메인+서브에이전트). Bash 비정상 종료는 명령의 정상 결과(테스트 실패 등)일 수 있어 따로 둔다.
+  const toolCats = new Map();
+  for (const f of [...sinceFiles, ...sinceSubs.map(([, x]) => x)]) {
+    for (const [cat, [calls, errs]] of Object.entries(f.tools ?? {})) {
+      const t = toolCats.get(cat) ?? [0, 0];
+      t[0] += calls; t[1] += errs;
+      toolCats.set(cat, t);
+    }
+  }
+  const bash = toolCats.get('Bash') ?? [0, 0];
+  let nbCalls = 0;
+  let nbErr = 0;
+  for (const [cat, [calls, errs]] of toolCats) if (cat !== 'Bash') { nbCalls += calls; nbErr += errs; }
   const metrics = [];
-  const push = (axis, metricId, value, unit, sampleSize) => { if (sampleSize > 0 && Number.isFinite(value)) metrics.push({ axis, metricId, value, unit, sampleSize, sinceConfig: configSinceMs !== null }); };
+  const push = (axis, metricId, value, unit, sampleSize, sinceConfig = configSinceMs !== null) => { if (sampleSize > 0 && Number.isFinite(value)) metrics.push({ axis, metricId, value, unit, sampleSize, sinceConfig }); };
+  push('execution_stability', 'non_bash_tool_error_rate', nbCalls ? r4(nbErr / nbCalls) : NaN, 'ratio', nbCalls);
+  push('execution_stability', 'bash_error_rate', bash[0] ? r4(bash[1] / bash[0]) : NaN, 'ratio', bash[0]);
   push('execution_stability', 'tool_error_rate', allTool ? r4(allErr / allTool) : NaN, 'ratio', allTool);
   const mainErr = fsum(sinceFiles, 'toolErrors');
   push('execution_stability', 'tool_error_recovery_rate', mainErr ? r4(fsum(sinceFiles, 'recovered') / mainErr) : NaN, 'ratio', mainErr);
@@ -336,6 +352,7 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
   let inSum = 0;
   let respN = 0;
   const sinceCtx = [];
+  const sinceRatio = [];
   const sinceWeight = new Map();
   for (const i of slots) {
     if (!sinceKeys.has(rs.session(i))) continue;
@@ -344,19 +361,32 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
     crSum += v[3];
     inSum += rs.ctx(i);
     addTo(sinceWeight, rs.model(i), v);
-    if (!rs.side(i)) sinceCtx.push(rs.ctx(i));
+    if (!rs.side(i)) {
+      sinceCtx.push(rs.ctx(i));
+      const win = contextWindow(rs.model(i));
+      if (win) sinceRatio.push(rs.ctx(i) / win);
+    }
   }
   push('cost_efficiency', 'cache_hit_ratio', inSum ? r4(crSum / inSum) : NaN, 'ratio', respN);
   push('cost_efficiency', 'weighted_tokens_per_session', r1(bucketOut(sinceWeight).bucket.weighted / n), 'tokens', n);
   const sc = sortNum(sinceCtx);
+  // 창 크기를 아는 모델의 요청만 비율에 넣는다(모르는 모델은 실측 보류).
+  const sr = sortNum(sinceRatio);
+  push('context_efficiency', 'context_p90_window_ratio', sr.length ? r4(quantile(sr, 0.9)) : NaN, 'ratio', sr.length);
   push('context_efficiency', 'context_p90_tokens', quantile(sc, 0.9), 'tokens', sc.length);
   push('context_efficiency', 'compactions_per_session', r4(fsum(sinceFiles, 'compactions') / n), 'per_session', n);
   const gaps = sortNum(sinceFiles.flatMap((f) => (f.openGap !== null ? [...f.gaps, f.openGap] : f.gaps)));
   push('autonomy', 'tool_calls_between_prompts_p50', quantile(gaps, 0.5), 'count', gaps.length);
   push('autonomy', 'human_prompts_per_session', r4(fsum(sinceFiles, 'humanPrompts') / n), 'per_session', n);
   push('verification_gate_strength', 'hook_blocks_per_session', r4(fsum(sinceFiles, 'hookBlocks') / n), 'per_session', n);
+  // CE 참고 지표(0.3, 대역 없음): 위치별 환산값 비중. 누적 집계 전체(configSince와 무관)라 sinceConfig: false.
+  for (const l of ['bot', 'worker']) {
+    const x = base.tokens.byLocation.find((b) => b.location === l);
+    push('cost_efficiency', `${l}_weighted_share`, x.weightedShare, 'ratio', x.sessions, false);
+  }
   base.axisMetrics = metrics;
-  info.samples = { sessions: n, tool_calls_all: allTool, tool_calls_main: mainTool };
+  base.toolUsage = [...toolCats.keys()].sort(compareCodeUnits).map((tool) => ({ tool, calls: toolCats.get(tool)[0], errors: toolCats.get(tool)[1] }));
+  info.samples = { sessions: n, tool_calls_all: allTool, tool_calls_non_bash: nbCalls, tool_calls_main: mainTool };
   info.sinceSessions = n;
 
   if (skippedRatio > 0.05) { base.status = 'partial'; base.reason = 'session_lines_skipped'; }
