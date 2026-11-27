@@ -1,12 +1,12 @@
 // 엔진 전역 상수. 버전과 축 정의는 스키마·루브릭 문서와 함께 바꾼다.
 
-export const ENGINE_VERSION = '0.2.0';
-export const VALIDATOR_VERSION = '0.2.0';
+export const ENGINE_VERSION = '0.3.0';
+export const VALIDATOR_VERSION = '0.3.0';
 export const SCHEMA_VERSION = '0.1';
 export const RUBRIC_VERSION = '0.2';
-// 세션 집계는 4단계에서 구현한다. 그 전까지 파서·가격표 버전은 null이다.
-export const SESSION_PARSER_VERSION = null;
-export const PRICING_TABLE_VERSION = null;
+// 세션 기록 파서 규칙 버전(engine-cli.md §8). 규칙이 바뀌면 올리고, 누적 상태를 처음부터 다시 만든다.
+export const SESSION_PARSER_VERSION = '2';
+export { PRICING_TABLE_VERSION } from './pricing.mjs';
 
 export const MIN_NODE_MAJOR = 20;
 export const SUPPORTED_PLATFORMS = ['darwin', 'linux', 'win32'];

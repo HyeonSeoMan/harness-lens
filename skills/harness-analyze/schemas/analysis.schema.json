@@ -625,33 +625,45 @@
           ]
         },
         "contextPerTurn": {
-          "description": "메인 스레드 API 요청 하나의 입력 크기(freshInput+cacheWrite+cacheRead) 분포와 추이.",
+          "description": "메인 스레드 API 요청 하나의 입력 크기(freshInput+cacheWrite+cacheRead) 분포와 추이. 분포는 최근 원시 응답(보존 기간 안)에서만 정확히 내고, 일별 추이는 archive로 접힌 날까지 잇는다.",
           "anyOf": [
             { "type": "null" },
             {
               "type": "object",
               "additionalProperties": false,
-              "required": ["requests", "p50", "p90", "max", "firstRequestP50", "compactions", "series"],
+              "required": ["requests", "p50", "p90", "max", "firstRequestP50", "distribution", "compactions", "series"],
               "properties": {
-                "requests": { "$ref": "#/$defs/count" },
-                "p50": { "$ref": "#/$defs/count" },
-                "p90": { "$ref": "#/$defs/count" },
-                "max": { "$ref": "#/$defs/count" },
-                "firstRequestP50": { "$ref": "#/$defs/count" },
+                "requests": { "description": "분포에 쓴 최근 원시 요청 수.", "$ref": "#/$defs/count" },
+                "p50": { "description": "최근 원시 요청이 없으면 null(미확인).", "anyOf": [{ "$ref": "#/$defs/count" }, { "type": "null" }] },
+                "p90": { "anyOf": [{ "$ref": "#/$defs/count" }, { "type": "null" }] },
+                "max": { "anyOf": [{ "$ref": "#/$defs/count" }, { "type": "null" }] },
+                "firstRequestP50": { "anyOf": [{ "$ref": "#/$defs/count" }, { "type": "null" }] },
+                "distribution": {
+                  "description": "분포(p50·p90·max·firstRequestP50)를 계산한 최근 원시 응답의 날짜 범위. 없으면 from·to가 null.",
+                  "type": "object",
+                  "additionalProperties": false,
+                  "required": ["from", "to", "retentionDays"],
+                  "properties": {
+                    "from": { "anyOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }] },
+                    "to": { "anyOf": [{ "$ref": "#/$defs/date" }, { "type": "null" }] },
+                    "retentionDays": { "$ref": "#/$defs/count" }
+                  }
+                },
                 "compactions": { "$ref": "#/$defs/count" },
                 "series": {
-                  "description": "일별 추이. 최대 90점.",
+                  "description": "일별 추이. 최대 90점. source가 archive인 날은 접힌 요약이라 p50이 근사일 수 있다(requests·max는 정확).",
                   "type": "array",
                   "maxItems": 90,
                   "items": {
                     "type": "object",
                     "additionalProperties": false,
-                    "required": ["date", "requests", "p50", "max"],
+                    "required": ["date", "requests", "p50", "max", "source"],
                     "properties": {
                       "date": { "$ref": "#/$defs/date" },
                       "requests": { "$ref": "#/$defs/count" },
                       "p50": { "$ref": "#/$defs/count" },
-                      "max": { "$ref": "#/$defs/count" }
+                      "max": { "$ref": "#/$defs/count" },
+                      "source": { "enum": ["raw", "archive"] }
                     }
                   }
                 }

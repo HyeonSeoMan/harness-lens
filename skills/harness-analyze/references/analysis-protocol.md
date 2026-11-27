@@ -57,7 +57,7 @@ LLM은 수준, 범위, 지표, 변경 목록을 만들거나 고치지 않는다
 
 ### 2.2 압축 인벤토리 읽기
 
-세션 기록 실측 집계(`aggregate-sessions`)는 엔진 v0.1.0에서 아직 구현되지 않았다. 이때 `sessions.status`는 `unavailable`(`reason: session_aggregation_not_implemented`)이고 모든 축이 예측 상태다. `measured` finding을 쓰지 않는다.
+엔진은 세션 기록을 숫자로만 집계한다(`engine.sessions`). `sessions.status`가 `unavailable`이거나 `disabled`면 모든 축이 예측 상태이고 `measured` finding을 쓰지 않는다. `available`·`partial`이면 `axisMetrics`의 `metricId`를 `metricRefs`로 인용해 `measured` finding을 쓸 수 있다. 실측 대역 임계값은 휴리스틱이고, 구성과 지표의 관계는 상관관계로만 쓴다. 봇 채팅이 토큰 대부분을 차지하면(`byLocation`의 `bot`) 조율 비용임을 밝힌다.
 
 - `compactInventoryPath` 파일 하나만 읽는다. 이 파일에는 다음이 들어 있다.
   - `meta`

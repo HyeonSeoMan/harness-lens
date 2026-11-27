@@ -1,6 +1,7 @@
 // 결정론적 규칙 엔진(evaluation-rubric.md §1.3~§3). LLM이 아니라 이 코드가 0~3 수준을 정한다.
 import { AXES, AXIS_MAX, AXIS_PREFIX, MATURITY_RULES } from './constants.mjs';
-import { compareCodeUnits, uniqueSorted } from './util.mjs';
+import { BAND_RULES } from './session-metrics.mjs';
+import { compareCodeUnits, roundHalfEven, uniqueSorted } from './util.mjs';
 
 const ruleLevel = (ruleId) => Number(/-L([0-3])-/.exec(ruleId)?.[1] ?? -1);
 
@@ -116,15 +117,53 @@ export function computeAxes(col, { scope }) {
   });
 }
 
-// 근거 성숙도(루브릭 §1.9). 세션 집계가 없으면 모든 축이 예측으로 남는다.
-export function computeMaturity(axes, sessions) {
+// 근거 성숙도(루브릭 §1.8~§1.9). 세션 집계가 없으면 모든 축이 예측으로 남는다.
+// info.samples: configSince 이후 프로젝트·워커 세션 수와 도구 호출 수(session-metrics.mjs).
+export function computeMaturity(axes, sessions, info = {}) {
+  const usable = sessions.status === 'available' || sessions.status === 'partial';
   const blocked = sessions.status === 'disabled' ? 'sessions_disabled' : sessions.reason ?? 'no_session_logs';
+  const samples = info.samples ?? {};
+  const metric = (id) => sessions.axisMetrics.find((x) => x.metricId === id);
   for (const a of axes) {
     const m = MATURITY_RULES[a.axis];
-    a.maturity = m.measurable
-      ? { state: 'predicted', measurable: true, requirement: { unit: m.unit, required: m.required, heuristic: true }, current: null, progress: null, blockedReason: blocked }
-      : { state: 'predicted', measurable: false, requirement: null, current: null, progress: null, blockedReason: m.blockedReason };
     delete a._measurable;
+    if (!m.measurable) {
+      a.maturity = { state: 'predicted', measurable: false, requirement: null, current: null, progress: null, blockedReason: m.blockedReason };
+      continue;
+    }
+    const requirement = { unit: m.unit, required: m.required, heuristic: true };
+    if (!usable) {
+      a.maturity = { state: 'predicted', measurable: true, requirement, current: null, progress: null, blockedReason: blocked };
+      continue;
+    }
+    const current = m.unit === 'sessions' ? samples.sessions ?? 0 : a.axis === 'execution_stability' ? samples.tool_calls_all ?? 0 : samples.tool_calls_main ?? 0;
+    const progress = roundHalfEven(Math.min(1, current / m.required), 4);
+    const rule = BAND_RULES[a.axis];
+    const main = rule && metric(rule.metric);
+    if (current < m.required || !main) {
+      a.maturity = { state: 'predicted', measurable: true, requirement, current, progress, blockedReason: current < m.required ? 'insufficient_samples' : 'metric_unavailable' };
+      continue;
+    }
+    const values = Object.fromEntries(sessions.axisMetrics.filter((x) => x.axis === a.axis).map((x) => [x.metricId, x.value]));
+    const band = rule.band(main.value, values);
+    const used = [main, ...(a.axis === 'context_efficiency' && metric('compactions_per_session') ? [metric('compactions_per_session')] : [])];
+    a.maturity = { state: 'measured', measurable: true, requirement, current, progress, blockedReason: null };
+    a.measured = {
+      band,
+      bandRuleId: rule.ruleId,
+      heuristic: true,
+      metrics: used.map((x) => ({ metricId: x.metricId, value: x.value, unit: x.unit })),
+      predictedLevel: a.level,
+      deltaFromPredicted: a.level === null ? null : band - a.level,
+      sampleSize: current,
+    };
+    // 실측 범위: 표본이 요구량의 2배 미만이면 band ± 1(§1.8).
+    const narrow = current >= 2 * m.required;
+    a.range = {
+      min: narrow ? band : Math.max(0, band - 1),
+      max: narrow ? band : Math.min(3, band + 1),
+      reasonCodes: narrow ? ['measured_band'] : ['measured_band', 'sample_below_2x_requirement'],
+    };
   }
   return axes;
 }

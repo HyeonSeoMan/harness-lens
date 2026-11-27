@@ -4,9 +4,11 @@ AI 코딩 에이전트 하네스(Hooks, Skills, MCP, Subagents 등)의 구성과
 
 ## 상태
 
-**alpha (엔진 v0.1.0).** 정적 구성 분석, 스냅샷 비교, 오프라인 HTML 리포트까지 동작한다. 세션 기록 실측 집계(FR-10)는 아직 없어 모든 축이 구성 기반 예측으로 표시된다.
+**alpha (엔진 v0.3.0).** 정적 구성 분석, 스냅샷 비교, 오프라인 HTML 리포트, Claude Code 세션 기록 실측 집계(FR-10)와 근거 성숙도(FR-11)까지 동작한다. 세션 기록(`$CLAUDE_CONFIG_DIR` 또는 `~/.claude/projects`)은 읽기 전용으로 숫자만 집계하고 원문은 저장하지 않는다. 표본이 쌓인 축(처리 속도·비용 효율·컨텍스트 효율·자율성·실행 안정성)은 실측으로 바뀐다. 끄려면 `--no-sessions`.
 
 리포트 예시(`examples/fixtures/harness-before` → `harness-after`): [첫 분석](./docs/screenshots/report-before.png) · [재분석과 변경 비교](./docs/screenshots/report-after.png) · [다크 모드](./docs/screenshots/report-after-dark.png)
+
+세션 기록 실측(`examples/fixtures/claude-config` 합성 기록): [기록 없음](./docs/screenshots/report-sessions-none.png) · [실측 5축과 토큰 분해](./docs/screenshots/report-sessions-measured.png) · [다크 모드](./docs/screenshots/report-sessions-measured-dark.png)
 
 ## 엔진 직접 실행
 

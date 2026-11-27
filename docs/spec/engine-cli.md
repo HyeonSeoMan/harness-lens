@@ -104,13 +104,21 @@ finalize = validate → snapshot → render
 - 옵션
   - `--no-sessions`: 건너뛴다. `status: "disabled"`가 된다.
   - `--full-rescan`: 커서를 무시하고 처음부터 다시 읽는다.
-- 출력: `runs/<runId>/sessions.json`(스키마 `engine.sessions`)과 갱신한 `.harness-lens/sessions/*`.
+- 출력
+  - `prepare` 안에서: `runs/<runId>/sessions.json`(스키마 `engine.sessions`)과 새 누적 상태 `runs/<runId>/sessions.staging/`. 확정(`sessions/` 교체)은 `snapshot` 성공 뒤에만 한다(§8.4, FR-09).
+  - 단독 실행: 확정된 누적 상태에 새 바이트를 더한 결과를 stdout에 낼 뿐 아무것도 쓰지 않는다. `--json`이면 `{ "ok", "status", "reason", "sessions" }`이다.
+- `.harness-lens/config.json`의 `sessions.enabled: false`도 `--no-sessions`와 같다.
 - 상태
   - `available`: 정상
   - `partial`: 건너뛴 줄 비율 > 5% 또는 미지원 버전 구간이 있음
   - `unavailable`: 기록 없음, 읽기 불가, 필수 4필드가 하나도 없음
   - `disabled`: `--no-sessions`
-- `unavailable`·`disabled`면 모든 축이 예측으로 남는다. `reason`(`no_session_logs`, `session_format_unsupported` 등)을 적는다.
+- `unavailable`·`disabled`면 모든 축이 예측으로 남는다. `reason`을 적는다.
+  - `no_session_logs`: 기록도 누적 집계도 없다
+  - `session_format_unsupported`: 줄은 있지만 필수 4필드를 가진 응답이 하나도 없다
+  - `session_aggregation_failed`: 예상 밖 오류. 분석은 멈추지 않는다
+  - `available`이어도 귀속된 세션이 없으면 `reason: "no_attributed_sessions"`다
+  - `partial`의 사유는 `session_lines_skipped`다
 - 세부 규칙은 §8.
 
 ### 4.4 `prepare` (LLM이 호출)
@@ -260,6 +268,7 @@ finalize = validate → snapshot → render
 │   ├── run.json                # 상태(prepared|validated|failed|snapshotted), 버전, 시간, draftHash
 │   ├── inventory.json          # collect 산출
 │   ├── sessions.json           # aggregate-sessions 산출
+│   ├── sessions.staging/       # 새 누적 상태. snapshot 성공 시 sessions/로 옮긴다
 │   ├── draft.json              # meta + engine
 │   ├── inventory.compact.json  # LLM 입력
 │   ├── interpretation.template.json
@@ -272,12 +281,13 @@ finalize = validate → snapshot → render
 │   └── <snapshotId>/
 │       ├── analysis.json       # 검증 통과본. 이후 바꾸지 않는다
 │       └── report.html
-└── sessions/                   # 세션 집계 누적 저장(원문 없음)
-    ├── cursor.json             # 파일별 읽은 위치
-    ├── responses/<YYYY-MM>.json # 응답 키 → 병합 토큰(중복 제거용)
-    ├── sessions.json           # 세션별 요약 카운터
-    ├── daily.json              # 일별·위치별·모델별 토큰과 분포 히스토그램
-    └── attribution-cache.json  # cwd 해시 → 귀속 결과
+└── sessions/                   # 세션 집계 누적 저장(원문 없음). snapshot 성공 때만 교체한다
+    ├── cursor.json             # 파서 버전, R 해시, 파일 경로 해시별 {세대, inode, size, mtimeMs, offset, 지문, 카운터}
+    ├── responses/<YYYY-MM>.jsonl # 응답 키 해시 → 병합 토큰(중복 제거용), 한 줄에 응답 하나. 90일 지나면 archive로 접는다
+    ├── archive.json            # 접힌 응답의 일별·위치별·모델별 토큰과 일별 컨텍스트 요약
+    ├── archived-keys.bin       # archive로 접힌 응답 키 해시(8바이트씩 오름차순). 같은 응답을 다시 읽어도 더하지 않는다
+    ├── events.bin              # 이미 센 도구 호출·결과·프롬프트·시스템 이벤트 키 해시(8바이트씩 오름차순)
+    └── attribution-cache.json  # cwd 해시 → 귀속 분류
 ```
 
 ### 5.1 `config.json` (선택)
@@ -329,7 +339,7 @@ finalize = validate → snapshot → render
 
 ## 8. 세션 기록 집계
 
-근거: `docs/research/02-session-logs.md`. 형식이 공식 계약이 아니므로 파서 규칙에 `sessionParserVersion`(정수 문자열, v0.1은 `"1"`)을 붙인다.
+근거: `docs/research/02-session-logs.md`. 형식이 공식 계약이 아니므로 파서 규칙에 `sessionParserVersion`(정수 문자열)을 붙인다. `"1"`은 PR #8 초안, `"2"`는 캐시 분할 병합·이벤트 중복 제거·세대 보존·archive 키 보존을 반영한 현재 규칙이다. 버전이 바뀌면 누적 상태를 처음부터 다시 만든다.
 
 ### 8.1 읽는 필드(허용 목록)
 
@@ -349,8 +359,12 @@ finalize = validate → snapshot → render
   - `message.model == "<synthetic>"` → `excludedSynthetic`
   - `isApiErrorMessage == true` → `excludedApiError`
 - 키: `message.id`. 없으면 `requestId`, 둘 다 없으면 `파일 해시#uuid`로 개별 취급한다.
-- 병합: 같은 키의 줄마다 토큰 필드를 각각 `max()`로 취한다. `model`·`sessionId`·`agentId`·`isSidechain`은 첫 줄 값을, `timestamp`는 마지막 줄 값을 쓴다.
-- 범위: 전역이다(파일 사이 복사 대비). 이미 집계한 키가 다시 나오면 차이분만 반영한다.
+- 병합: 같은 키의 줄마다 토큰 필드를 각각 `max()`로 취한다. `timestamp`는 최댓값을 쓴다. `model`·`sessionId`는 줄 순서와 무관하게 코드 유닛 순 최솟값, 사이드체인 여부는 모든 줄이 사이드체인일 때만 참이다. 줄 순서에 기대지 않아야 증분 결과가 전체 재집계와 같다(구현 v1, 초안의 "첫 줄 값"을 대신한다).
+- 캐시 쓰기 분할: 줄마다 총량 `cache_creation_input_tokens`와 1시간 분량 `cache_creation.ephemeral_1h_input_tokens`(없으면 0)를 각각 `max()`로 병합한 뒤, 1시간 = min(병합 1시간, 병합 총량), 5분 = 병합 총량 − 1시간으로 나눈다. 분할 합은 병합 총량과 같다(불변식). 분할이 있는 줄과 총량만 있는 줄이 섞여도 줄 순서와 무관하다.
+- 범위: 전역이다(파일 사이 복사 대비). 이미 집계한 키가 다시 나오면 차이분만 반영한다. archive로 접힌 응답의 키는 `archived-keys.bin`에 남겨, 원본 복사·회전·재스캔으로 다시 나와도 더하지 않는다(정확히 한 번).
+- 이벤트 중복 제거: 축 지표에 쓰는 이벤트도 전역으로 한 번만 센다. 키는 `tool_use.id`(도구 호출), `tool_result.tool_use_id`(도구 결과·오류), 레코드 `uuid`(사람 프롬프트, `system`·`attachment` 이벤트: turn_duration, 압축, API 재시도, Hook 오류·차단)다. 같은 응답 안의 서로 다른 `tool_use` 블록은 id가 달라 각각 센다. id가 없는 이벤트는 구분할 수 없어 센다. 본 키는 `events.bin`에 해시로만 남긴다.
+- 응답 키와 이벤트 키는 원 식별자(`message.id`, `tool_use.id` 등, 비밀값이 아닌 API 발급 식별자)의 64비트 비암호 해시(cyrb53 계열)다. 줄마다 `createHash`를 부르면 네이티브 메모리가 쌓여 RSS가 수십 MiB 늘어나기 때문이다. 메모리에서는 문자열 없이 상위·하위 uint32 쌍으로 typed array(오픈 어드레싱 해시, 확정분은 정렬 배열 이진 탐색)에 둔다. 경로·cwd·세션 식별자는 계속 sha256 앞 8바이트다.
+- 집계 문자열 정화: 원문으로 저장하는 `message.model`과 `version`은 형식 정규식에 더해 비밀정보 검사(R3, 값 전체를 토큰으로 보는 고엔트로피 검사 포함)를 통과할 때만 남긴다. 걸리면 모델은 `unknown`, 버전은 버린다. 파서 단계에서 적용하므로 raw `sessions.json`, `aggregate-sessions` 출력, 스테이징, 확정 상태 모두에 원문이 남지 않는다.
 - `usage.iterations[]`는 최상위 값과 합이 같으므로 더하지 않는다.
 - 서브에이전트 기록은 별개 응답이라 합산한다. 부모 쪽 요약 수치(`attachment.usage.totalTokens`, `toolUseResult` 안의 토큰)는 쓰지 않는다.
 - 사이드체인은 별도 파일 배치(`subagents/agent-*.jsonl`)와 메인 파일 혼재 배치 모두 `isSidechain`·`agentId`로 판별한다.
@@ -375,27 +389,43 @@ finalize = validate → snapshot → render
 
 ### 8.4 증분 처리와 누적 보존
 
-- 커서(`cursor.json`): `{ parserVersion, files: { <파일 경로 해시>: { inode, size, mtimeMs, offset } } }`
-  - 파일 크기가 줄었거나 inode가 바뀌었으면 처음부터 다시 읽는다.
-  - 마지막 줄이 개행 없이 끝나면 쓰는 중인 줄로 보고 다음 실행으로 넘긴다.
-  - `parserVersion`이 바뀌면 전체를 다시 읽는다.
-- 응답 맵(`responses/<YYYY-MM>.json`): 키 해시 → `[freshInput, cacheWrite5m, cacheWrite1h, cacheRead, output, 모델 인덱스, location, 일자]`. 오프셋 경계에서 잘린 응답과 resume 복사를 맞추는 데 쓴다. 90일이 지난 달 파일은 지운다. 일별 집계는 남는다.
-- 세션 요약(`sessions.json`): 세션 해시마다 첫·마지막 시각, location, 귀속 방법, 카운터를 둔다. 카운터는 `tool_use`, `tool_error`, 사람 프롬프트, 턴 시간 히스토그램, 컨텍스트 크기 히스토그램, 압축 수다. `configSince` 이후만 걸러 축 지표를 계산할 때 쓴다.
-- 일별 집계(`daily.json`): 일자 × location × 모델의 토큰, 컨텍스트 크기 히스토그램(1,000토큰 폭), 턴 시간 히스토그램(로그 2 폭)이다. 원본 기록이 정리된 뒤에도 남는다(FR-10).
-  - 분위수(p50, p90)는 히스토그램 구간 상한으로 계산한다. 근사지만 결정론적이다.
-- 집계 파일은 `aggregate-sessions` 실행 중 `runs/<runId>/sessions.staging/`에 만든다. `snapshot` 성공 시 `sessions/`로 교체한다. 분석이 실패하면 커서가 전진하지 않으므로 다음 실행에서 같은 구간을 다시 읽는다.
-- 불변식: 증분 실행 결과는 같은 파일 집합을 `--full-rescan`한 결과와 같아야 한다. 테스트로 확인한다.
+- 파일 찾기: `<config-dir>/projects/*/*.jsonl`(메인)과 `<config-dir>/projects/*/<sessionId>/subagents/agent-*.jsonl`. `tool-results/`, `memory/`, `*.meta.json`은 열지 않는다.
+- 읽기: 1MiB 단위 `readSync`로 줄을 나눈다. 16MiB를 넘는 줄은 버퍼에 모으지 않고 건너뛴다(`linesSkipped`). 256KiB를 넘는 줄은 앞 120바이트의 `"type"`만 보고, 해석하지 않는 타입(§8.1 밖, 예: `api-request-blob`)이면 파싱하지 않는다.
+- 키 파일 무결성: `cursor.json`의 `keyFiles`에 `archived-keys.bin`·`events.bin`의 키 개수와 sha256 앞 8바이트를 적는다. 읽을 때 길이(8의 배수, 개수 일치), 해시, 엄격한 오름차순을 확인한다. 하나라도 어긋나면(잘림·비움·삭제·덮어쓰기·정렬 깨짐) 누적 상태 전체를 손상으로 보고 처음부터 다시 만든다(`limitations`의 `session_state_rebuilt`, 원문 없이 코드와 고정 문구만).
+- 커서(`cursor.json`): `{ parserVersion, rootPathHash, keyFiles, files: { <파일 경로 해시>[~g<세대>]: { kind, gen, inode, size, mtimeMs, offset, fp, present, session, cls, botMention, versions, firstTs, lastTs, c: {카운터}, durations, gaps, openGap, pendingError } } }`
+  - 지문(`fp`): 커서까지 읽은 앞부분의 첫 4KiB와 커서 직전 4KiB의 해시다. inode·크기·수정 시각이 모두 같으면 읽지 않는다. 하나라도 바뀌면 지문을 다시 계산해, 크기가 offset 이상이고 지문이 같으면(이어 쓰기, 같은 내용으로 원자적 교체) 커서부터 이어 읽는다.
+  - 크기가 offset보다 작아졌거나 지문이 다르면(같은 경로로 회전, copytruncate 뒤 재성장, 재작성) 새 세대로 보고 처음부터 읽는다. 이전 세대는 `<경로 해시>~g<세대>` 항목(`present: false`)으로 남겨 그 세션의 귀속과 카운터를 보존한다. 응답과 이벤트는 전역으로 한 번만 세므로 같은 내용을 다시 읽어도 늘지 않는다.
+  - 파일을 읽다 실패하면 그 파일의 상태와 새 이벤트 키를 반영하지 않고 다음 실행에서 다시 읽는다.
+  - 마지막 줄이 개행 없이 끝나면 쓰는 중인 줄로 보고 offset을 그 앞에 둔다.
+  - `parserVersion` 또는 R(메인 저장소 경로) 해시가 바뀌면 전체를 다시 읽는다. `--full-rescan`도 같다.
+  - 원본 파일이 사라져도 카운터는 남긴다(`present: false`).
+- 응답 맵(`responses/<YYYY-MM>.jsonl`): 한 줄에 `[키 해시, freshInput, cacheCreation 총량, 1시간 쓰기(병합 최댓값), cacheRead, output, model, 세션 해시, 사이드체인(0|1), 시각(ms)]`. 메모리에서는 응답마다 객체를 만들지 않고 열 단위 typed array에 두며, 쓰기·읽기도 줄 단위로 나눠 한다(메모리 예산 200MiB). `--now`보다 90일 넘게 오래된 응답은 `archive.json`의 일별·위치별·모델별 토큰과 일별 컨텍스트 요약(`requests`, `p50`, `max`)으로 접고 키를 `archived-keys.bin`에 남긴다. 축 지표는 응답 맵(최근 90일)만 쓴다.
+- 귀속은 저장하지 않고 실행마다 다시 정한다. 파일마다 첫 `cwd`의 분류(`direct`·`worktree`·`inferred`·`bot`(봇 이름 해시)·`none`)와 봇 세션의 프로젝트 경로 언급 여부(불리언)만 저장하므로, `config.json`의 봇 매핑을 바꾸면 다음 실행에 바로 반영된다. cwd 분류는 `attribution-cache.json`에 남겨 워크트리가 지워져도 같은 결과를 낸다.
+- 스테이징과 확정: `prepare`는 확정 상태(`sessions/`)를 읽어 새 바이트를 더한 상태를 `runs/<runId>/sessions.staging/`에 쓴다. `snapshot`이 성공하면 `sessions/`를 그것으로 바꾼다(이름 바꾸기). 검증이 실패하면 커서가 전진하지 않으므로 다음 실행에서 같은 구간을 다시 읽는다.
+- 분위수는 원값을 정렬한 최근접 순위(nearest-rank)다. 정확하고 결정론적이다(초안의 히스토그램 근사를 대신한다).
+- 불변식: 증분 실행 결과는 같은 파일 집합을 `--full-rescan`한 결과와 같다(`coverage.incremental`만 다름). `tests/sessions.test.mjs`가 확인한다.
 
 ### 8.5 토큰 지표(PRD §6.1)
 
 - 4종 분리: `freshInput`(=`input_tokens`), `cacheWrite`(=`cache_creation_input_tokens`), `cacheRead`, `output`
 - 환산값 `weighted`
   - 식: Σ 모델가중치(model) × (freshInput × 1 + cacheWrite5m × w₅ₘ + cacheWrite1h × w₁ₕ + cacheRead × w_r + output × w_o)
-  - 가중치는 엔진에 내장한 가격표(`pricingTableVersion`, 날짜)에서 온다. 기준 모델(`referenceModel`)의 새 입력 단가를 1로 둔 상대값이다.
+  - 가중치는 엔진에 내장한 가격표(`engine/src/pricing.mjs`, `pricingTableVersion` `2026-10-06`)에서 온다. 기준 모델(`referenceModel`, `claude-opus-5-5`)의 새 입력 단가를 1로 둔 상대값이다. 캐시 쓰기는 입력의 1.25배(5분)·2배(1시간), 캐시 읽기와 출력은 모델별 공개 단가다. 모델 이름의 날짜 접미사·플랫폼 접두사·`[1m]` 표기는 떼고 찾는다.
   - 가격표에 없는 모델의 토큰은 `weighted`에서 빼고 `limitations`에 `unknown_model_pricing`을 남긴다.
   - 청구액으로 표시하지 않는다.
 - 위치별: `direct`, `worker`, `subagent`, `bot`. 위치끼리 겹치지 않는다(서브에이전트 토큰은 부모 위치에 넣지 않는다). `subagent`의 `sessions`는 서브에이전트 기록 수다.
-- 턴별 컨텍스트 크기: 메인 스레드 요청마다 freshInput + cacheWrite + cacheRead다. 분포(p50, p90, max), 첫 요청 p50, 압축 수, 일별 추이(최대 90점)를 낸다.
+- 턴별 컨텍스트 크기: 프로젝트·워커 세션의 메인 스레드 요청마다 freshInput + cacheWrite + cacheRead다. 분포(p50, p90, max), 첫 요청 p50, 압축 수, 일별 추이(최대 90점)를 낸다.
+  - 분포는 응답 맵(최근 90일 원시 응답)에서만 정확히 낸다. 범위는 `distribution: { from, to, retentionDays }`다. 원시 응답이 없으면 분포 값은 `null`(미확인)이다.
+  - 일별 추이는 분포와 별개로 archive로 접힌 날까지 잇는다. 원시 응답이 모두 접혀도 남는다. 점마다 `source`(`raw` | `archive`)를 붙인다. `archive` 날의 `requests`·`max`는 정확하고, 같은 날이 여러 번 접히면 `p50`은 근사다. 리포트는 그 날을 "근사"로 표시한다.
+- 서브에이전트는 부모 세션이 귀속됐을 때만 `subagent` 위치에 들어간다. 봇 세션의 서브에이전트도 `subagent`다(축 지표에서는 뺀다).
+
+### 8.6 축 지표와 성숙도
+
+- 축 지표(`axisMetrics`)는 `configSince` 이후에 시작한 프로젝트·워커 세션만으로 계산한다(`sinceConfig: true`). 봇 채팅은 조율 비용이라 넣지 않는다. 서브에이전트는 `tool_error_rate`와 `cache_hit_ratio`에만 넣는다(루브릭 §1.9).
+- 표본이 0인 지표는 싣지 않는다. 지표 목록과 정의는 루브릭 §1.9 표다.
+- `configSince` = min(같은 구성 해시가 이어진 마지막 스냅샷 묶음의 첫 `analyzedAt`, 수집한 프로젝트 설정 파일의 최근 수정 시각(초 단위로 내림)), 그리고 `--now`를 넘지 않는다. 첫 분석과 두 번째 분석이 같은 값을 갖도록 수정 시각을 함께 본다.
+- 성숙도: 표본(세션 수, 또는 도구 호출 수 — ES는 서브에이전트 포함, AU는 메인 스레드만)이 요구량에 닿고 대역 지표가 있으면 `measured`다. 닿지 않으면 `blockedReason: "insufficient_samples"`, 지표가 없으면 `"metric_unavailable"`이다.
+- 직전 분석 자기 비용: 이전 스냅샷의 `meta.analyzedAt` ~ `validation.checkedAt` 구간에 시각이 있는, 이 프로젝트(direct·worker)에 귀속된 메인 스레드 응답을 더한다. 같은 시간대의 다른 작업도 함께 들어간다.
 
 ## 9. 검증 검사 목록 (`validate`)
 
@@ -469,7 +499,8 @@ finalize = validate → snapshot → render
 
 ## 13. 구현 시 확인할 것
 
-- Hook 실패·권한 거부·압축 레코드의 실제 형식(픽스처 필요). 확인 전에는 `hook_blocks_per_session`을 대리 지표로만 싣고 SB 실측을 막아 둔다.
+- Hook 실패·권한 거부·압축 레코드의 실제 형식(픽스처 필요). 확인 전에는 `hook_blocks_per_session`을 대리 지표로만 싣고 SB 실측을 막아 둔다. 구현 v1은 `attachment.type == "hook_non_blocking_error"`, `exitCode != 0`인 `hook_*`, `stop_hook_summary.hookErrors[]`를 실패로, `hook_*blocking_error`(non_blocking 제외)를 차단으로 센다.
+- `system(turn_duration)`이 없는 세션(실측에서 Orca 워커 세션 다수)은 TP 대역 지표가 없어 `metric_unavailable`로 남는다.
 - `CLAUDE_CODE_MAX_WEB_SEARCHES_PER_SESSION`, `omitClaudeMd`, 실패 이벤트 Hook 이름 등 루브릭이 참조하는 키를 공식 문서로 재확인한다.
 - 관리형 설정 파일의 OS별 경로, Windows의 심볼릭 링크·경로 처리.
 - 가격표 내장 형식과 갱신 절차(`pricingTableVersion`).

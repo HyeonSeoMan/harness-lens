@@ -128,7 +128,8 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
   - 이 방식을 쓸지는 소유자 결정 사항이다(PR 설명 참고). 별도 패널로 정하면 `measured.band`를 레이더에 쓰지 않으면 된다. 스키마는 바뀌지 않는다.
 - 실측 전환 조건
   - 실측 가능 축(`measurable: true`)에서 `configSince` 이후 표본이 요구량에 도달하면 `state: "measured"`가 된다.
-  - `configSince`는 현재 구성 해시가 처음 관측된 시각이다. 이전 스냅샷이 없으면 수집한 설정 파일 중 가장 최근 수정 시각을 쓴다.
+  - `configSince`는 현재 구성이 시작된 시각의 추정이다. 같은 구성 해시가 이어진 마지막 스냅샷 묶음의 첫 분석 시각과, 수집한 프로젝트 설정 파일의 가장 최근 수정 시각 중 이른 쪽을 쓴다(이전 스냅샷이 없으면 수정 시각). 첫 분석 뒤 두 번째 분석에서 진행도가 줄어들지 않게 하려는 것이다.
+  - 표본이 요구량에 닿았어도 대역 지표가 없으면(예: `turn_duration` 기록이 없는 세션) 예측으로 남고 `blockedReason: "metric_unavailable"`이다. 모자라면 `insufficient_samples`다.
 - 진행도 = min(1, 현재 표본 ÷ 요구량)이다. 실측 불가 축은 진행도를 표시하지 않는다(도달할 수 없는 진행도는 사용자를 오도한다).
 - 세션 지표 집계 범위
   - 봇 채팅은 조율 비용이므로 축 지표에서 뺀다.
@@ -146,7 +147,7 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 | autonomy | 예 | 도구 호출 500회 | AU-M-01 | `tool_calls_between_prompts_p50` ≥ 20 → 3, ≥ 8 → 2, ≥ 3 → 1, 그 외 0 |
 | safety_boundary | 아니오 (`session_format_unconfirmed`) | — | — | 권한 거부 기록 형식이 확인되면 도구 호출 500회 기준으로 전환을 검토한다 |
 
-지표 정의 (모두 `message.id` 중복 제거 후, 원문 없이 숫자만):
+지표 정의 (모두 `message.id` 중복 제거 후, 원문 없이 숫자만. 분위수는 최근접 순위):
 
 | metricId | 정의 |
 |---|---|
@@ -158,6 +159,10 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 | `compactions_per_session` | `system(compact_boundary)` 수 ÷ 세션 수 |
 | `tool_calls_between_prompts_p50` | 사람 프롬프트(`origin.kind == "human"`) 사이 `tool_use` 수의 중앙값 |
 | `human_prompts_per_session` | 세션당 사람 프롬프트 수 |
+| `session_duration_p50_ms` | 세션별 (마지막 줄 시각 − 첫 줄 시각)의 중앙값. 참고 지표(대역 없음) |
+| `hook_errors_per_session` | ES 참고 지표. Hook 실패 기록 수 ÷ 세션 수 |
+| `api_retries_per_session` | ES 참고 지표. `system(api_error)` 수 ÷ 세션 수 |
+| `weighted_tokens_per_session` | CE 참고 지표. 환산 토큰 ÷ 세션 수(서브에이전트 포함) |
 | `hook_blocks_per_session` | VG 대리 지표. 차단된 Hook 결과 수 ÷ 세션 수 (형식 확인 필요) |
 | `reviewer_calls_per_session` | VG 대리 지표. 역할이 reviewer인 Subagent 호출 수 ÷ 세션 수 |
 

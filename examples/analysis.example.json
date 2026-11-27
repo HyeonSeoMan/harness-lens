@@ -13,7 +13,7 @@
       "version": "0.1.0",
       "nodeVersion": "v22.22.1",
       "platform": "darwin",
-      "sessionParserVersion": "1",
+      "sessionParserVersion": "2",
       "pricingTableVersion": "2026-11-01"
     }
   },
@@ -309,11 +309,13 @@
         ]
       },
       "contextPerTurn": {
-        "requests": 1480, "p50": 38000, "p90": 92000, "max": 161000, "firstRequestP50": 14500, "compactions": 3,
+        "requests": 1480, "p50": 38000, "p90": 92000, "max": 161000, "firstRequestP50": 14500,
+        "distribution": { "from": "2026-08-29", "to": "2026-11-26", "retentionDays": 90 }, "compactions": 3,
         "series": [
-          { "date": "2026-11-24", "requests": 210, "p50": 36000, "max": 120000 },
-          { "date": "2026-11-25", "requests": 260, "p50": 41000, "max": 161000 },
-          { "date": "2026-11-26", "requests": 190, "p50": 37000, "max": 98000 }
+          { "date": "2026-08-20", "requests": 120, "p50": 33000, "max": 88000, "source": "archive" },
+          { "date": "2026-11-24", "requests": 210, "p50": 36000, "max": 120000, "source": "raw" },
+          { "date": "2026-11-25", "requests": 260, "p50": 41000, "max": 161000, "source": "raw" },
+          { "date": "2026-11-26", "requests": 190, "p50": 37000, "max": 98000, "source": "raw" }
         ]
       },
       "axisMetrics": [

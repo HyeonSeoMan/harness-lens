@@ -15,7 +15,8 @@ import { rescanAndRedact } from './redact.mjs';
 import { renderReport } from './render.mjs';
 import { skillDir } from './resources.mjs';
 import { computeAxes, computeMaturity, computeTensions, knowledgeBaseKeys } from './rubric.mjs';
-import { SESSIONS_NOT_IMPLEMENTED, aggregateSessions } from './sessions.mjs';
+import { aggregateSessions, sessionsStagingDir } from './session-aggregate.mjs';
+import { promoteState } from './sessions.mjs';
 import {
   EngineError, acquireLock, atomicWrite, commitSnapshot, ensureOutDir, latestSnapshotId, loadSnapshot, pruneRuns,
   readIndex, readJson, runDir, snapshotDir, writeJson,
@@ -118,10 +119,30 @@ function requireRuntime(ctx) {
 }
 
 // ---------- collect / prepare ----------
-function engineLimitations(col, ctx, sessions, extra = []) {
-  const out = [{ code: 'static_analysis_only', message: '정적 구성만 분석했습니다. 실제 성능·비용 절감을 확정하지 않으며 수준은 구조적 지원 수준입니다.' }];
-  if (sessions.status === 'disabled') out.push({ code: 'sessions_disabled', message: '세션 기록 집계를 껐습니다(--no-sessions). 모든 축이 구성 기반 예측입니다.' });
-  else if (sessions.reason === SESSIONS_NOT_IMPLEMENTED) out.push({ code: SESSIONS_NOT_IMPLEMENTED, message: '세션 기록 실측 집계는 아직 구현되지 않았습니다(다음 단계). 모든 축이 구성 기반 예측이고 토큰 지표는 미확인입니다.' });
+const SESSION_REASON = {
+  no_session_logs: '세션 기록이 없습니다',
+  session_format_unsupported: '세션 기록 형식을 해석하지 못했습니다(지원하지 않는 형식 또는 버전)',
+  session_aggregation_failed: '세션 기록 집계 중 오류가 났습니다',
+  no_attributed_sessions: '이 프로젝트에 귀속된 세션이 없습니다',
+  session_lines_skipped: '해석하지 못한 줄이 5%를 넘었습니다',
+};
+
+function engineLimitations(col, ctx, sessions, info, extra = []) {
+  const usable = sessions.status === 'available' || sessions.status === 'partial';
+  const out = [];
+  if (!usable || !sessions.coverage.sessionsAttributed) out.push({ code: 'static_analysis_only', message: '정적 구성만 분석했습니다. 실제 성능·비용 절감을 확정하지 않으며 수준은 구조적 지원 수준입니다.' });
+  else out.push({ code: 'session_measures_correlational', message: `세션 기록을 숫자로만 집계해 일부 축을 실측했습니다(귀속 세션 ${sessions.coverage.sessionsAttributed}개). 실측 대역의 임계값은 휴리스틱이고, 구성과 지표의 관계는 상관관계일 뿐 인과가 아닙니다.` });
+  if (sessions.status === 'disabled') out.push({ code: 'sessions_disabled', message: '세션 기록 집계를 껐습니다(--no-sessions 또는 config.json). 모든 축이 구성 기반 예측입니다.' });
+  else if (!usable) out.push({ code: sessions.reason ?? 'no_session_logs', message: `세션 기록 실측: ${SESSION_REASON[sessions.reason] ?? sessions.reason}. 모든 축이 구성 기반 예측이고 토큰 지표는 미확인입니다.` });
+  else {
+    if (sessions.status === 'partial') out.push({ code: 'session_lines_skipped', message: `세션 기록 줄의 ${(sessions.coverage.skippedRatio * 100).toFixed(1)}%를 해석하지 못해 건너뛰었습니다(모르는 레코드 타입 포함). 형식이 바뀌었을 수 있습니다.` });
+    if (sessions.tokens) out.push({ code: 'weighted_not_a_bill', message: `환산값은 공개 가격표(${sessions.tokens.weighting.pricingTableVersion}) 기준 ${sessions.tokens.weighting.referenceModel} 새 입력 토큰 환산 상대값이며 청구액이 아닙니다.` });
+    if (info.unknownModels) out.push({ code: 'unknown_model_pricing', message: '가격표에 없는 모델의 토큰은 환산값에서 뺐습니다(토큰 수에는 포함).' });
+    if (sessions.coverage.sessionsUnattributed) out.push({ code: 'unattributed_sessions', message: `귀속이 불확실한 세션 ${sessions.coverage.sessionsUnattributed}개(봇 ${sessions.tokens?.unattributed.botSessions ?? 0}개)는 합계에 넣지 않았습니다.` });
+    if (info.estimatedShare > 0) out.push({ code: 'estimated_attribution_included', message: `합계에 추정 귀속(삭제된 워크트리 추정·봇 자동 귀속) 환산값 ${(info.estimatedShare * 100).toFixed(1)}%가 포함돼 있습니다.` });
+    if (info.unreadableFiles) out.push({ code: 'session_files_unreadable', message: `세션 기록 파일 ${info.unreadableFiles}개를 읽지 못했습니다.` });
+    if (info.stateCorrupted) out.push({ code: 'session_state_rebuilt', message: '세션 누적 집계 파일이 손상돼 처음부터 다시 만들었습니다. 원본 기록이 정리된 구간은 빠졌을 수 있습니다.' });
+  }
   if (ctx.scope === 'project') {
     const unscoped = col.sources.filter((s) => s.reason === 'user_scope_not_collected' || s.reason === 'managed_settings_not_collected');
     out.push(unscoped.length
@@ -134,6 +155,25 @@ function engineLimitations(col, ctx, sessions, extra = []) {
   if (col.sources.some((s) => s.status === 'out_of_scope' && s.origin !== 'user' && s.origin !== 'managed')) out.push({ code: 'source_out_of_scope', message: '수집 루트 밖을 가리키는 경로(심볼릭 링크·import 등)는 따라가지 않았습니다.' });
   if (col.sources.some((s) => s.status === 'skipped_sensitive')) out.push({ code: 'sensitive_files_skipped', message: '민감한 이름의 파일(.env, 키 파일 등)은 열지 않았습니다.' });
   return [...out, ...extra];
+}
+
+// 현재 구성 해시가 처음 관측된 시각(루브릭 §1.9). 같은 해시가 이어진 마지막 스냅샷 묶음의 첫 시각과
+// 수집한 프로젝트 설정 파일의 최근 수정 시각 중 이른 쪽을 쓴다. 지금보다 늦을 수는 없다.
+function configSinceMs(ctx, col) {
+  const nowMs = Date.parse(ctx.now);
+  let best = null;
+  for (const src of col.sources) {
+    if (src.status !== 'read' || (src.origin !== 'project_shared' && src.origin !== 'project_local')) continue;
+    try {
+      const m = Math.floor(statSync(path.join(ctx.projectRoot, src.path)).mtimeMs / 1000) * 1000;
+      if (best === null || m > best) best = m;
+    } catch { /* 경로 라벨이 실제 파일이 아님 */ }
+  }
+  const idx = readIndex(ctx.out);
+  let streak = null;
+  for (let i = idx.length - 1; i >= 0 && idx[i].configurationHash === col.configurationHash; i--) streak = Date.parse(idx[i].analyzedAt);
+  const cands = [best, streak].filter((x) => x !== null && Number.isFinite(x));
+  return cands.length ? Math.min(nowMs, ...cands) : null;
 }
 
 function runCollect(ctx) {
@@ -203,6 +243,18 @@ function interpretationTemplate(axes, comparison) {
   };
 }
 
+// 직전 분석의 벽시계 시간(prepare 시작 ~ finalize 끝)과 그 구간의 귀속 메인 스레드 토큰.
+function previousAnalysis(prev, tokens) {
+  const start = Date.parse(prev.meta.analyzedAt);
+  const end = Date.parse(prev.validation?.checkedAt ?? prev.meta.analyzedAt);
+  return {
+    snapshotId: prev.meta.snapshotId,
+    wallClockMs: Number.isFinite(end - start) && end >= start ? end - start : null,
+    llmTokens: tokens,
+    method: tokens ? 'session_window' : 'unknown',
+  };
+}
+
 function cmdPrepare(ctx) {
   const t0 = performance.now();
   requireRuntime(ctx);
@@ -212,11 +264,19 @@ function cmdPrepare(ctx) {
   try {
     ctx.log('Harness Lens: 구성 수집 중(읽기 전용)…');
     const c = runCollect(ctx);
-    const sessions = ctx.time('aggregate-sessions', () => aggregateSessions({ disabled: !!ctx.opts['no-sessions'] }));
-    const axes = computeMaturity(c.axes, sessions);
     const prevId = latestSnapshotId(out);
+    const prevSnap = prevId ? loadSnapshot(out, prevId) : null;
     const dir = runDir(out, c.runId);
     rmSync(dir, { recursive: true, force: true });
+    const agg = ctx.time('aggregate-sessions', () => aggregateSessions({
+      disabled: !!ctx.opts['no-sessions'], configDir: ctx.configDir, projectRoot: ctx.projectRoot, out,
+      configSinceMs: configSinceMs(ctx, c.col), fullRescan: !!ctx.opts['full-rescan'], nowMs: Date.parse(ctx.now),
+      log: (m) => ctx.log(m), stagingDir: sessionsStagingDir(dir),
+      previousWindow: prevSnap ? { startMs: Date.parse(prevSnap.meta.analyzedAt), endMs: Date.parse(prevSnap.validation?.checkedAt ?? prevSnap.meta.analyzedAt) } : null,
+    }));
+    const { sessions } = agg;
+    const axes = computeMaturity(c.axes, sessions, agg.info);
+    if (sessions.status === 'available' || sessions.status === 'partial') c.meta.analysisType = 'static_with_sessions';
     const rescanWarnings = [];
     const draft = {
       schemaVersion: SCHEMA_VERSION,
@@ -230,12 +290,12 @@ function cmdPrepare(ctx) {
         sessions,
         selfCost: null,
         comparison: null,
-        limitations: engineLimitations(c.col, ctx, sessions),
+        limitations: engineLimitations(c.col, ctx, sessions, agg.info),
       },
     };
     if (prevId) {
       ctx.log(`Harness Lens: 이전 스냅샷 ${prevId}과 비교 중…`);
-      draft.engine.comparison = ctx.time('diff', () => diffAnalyses(loadSnapshot(out, prevId), draft));
+      draft.engine.comparison = ctx.time('diff', () => diffAnalyses(prevSnap, draft));
     }
     const finishSelfCost = (inventoryTokens) => {
       const prepareMs = Math.round(performance.now() - t0);
@@ -244,14 +304,14 @@ function cmdPrepare(ctx) {
         componentId: c.col.selfComponentId,
         alwaysLoadedTokens: { value: c.col.selfAlwaysLoadedTokens, method: 'estimate_utf8_bytes' },
         currentRun,
-        previousAnalysis: prevId ? { snapshotId: prevId, wallClockMs: null, llmTokens: null, method: 'unknown' } : null,
+        previousAnalysis: prevSnap ? previousAnalysis(prevSnap, agg.previousTokens) : null,
         budgets: [
           budget('always_loaded_tokens', c.col.selfAlwaysLoadedTokens),
           budget('background_processes', 0),
           budget('reanalysis_engine_ms', prevId ? prepareMs : null),
           budget('engine_max_rss_bytes', Math.max(...currentRun.map((r) => r.maxRssBytes))),
           budget('llm_input_inventory_tokens', inventoryTokens),
-          budget('llm_tokens_per_analysis', null),
+          budget('llm_tokens_per_analysis', agg.previousTokens ? agg.previousTokens.freshInput + agg.previousTokens.cacheWrite + agg.previousTokens.output : null),
         ],
       };
     };
@@ -352,6 +412,8 @@ function cmdSnapshot(ctx) {
   if (analysis.validation?.status !== 'valid') throw new EngineError(EXIT.INVALID, '검증을 통과하지 못한 결과는 스냅샷으로 저장하지 않습니다.');
   const { value: safe } = rescanAndRedact(analysis);
   ctx.time('snapshot', () => commitSnapshot(ctx.out, safe));
+  // FR-09: 세션 커서·누적 집계는 스냅샷 저장이 성공한 뒤에만 전진한다.
+  try { promoteState(ctx.out, sessionsStagingDir(runDir(ctx.out, ctx.opts.run))); } catch { ctx.log('경고: 세션 누적 집계를 확정하지 못했습니다. 다음 분석에서 같은 구간을 다시 읽습니다.'); }
   const runFile = path.join(runDir(ctx.out, ctx.opts.run), 'run.json');
   if (existsSync(runFile)) writeJson(runFile, { ...readJson(runFile), status: 'snapshotted' });
   return { result: { ok: true, snapshotId: safe.meta.snapshotId, analysisPath: path.join(snapshotDir(ctx.out, safe.meta.snapshotId), 'analysis.json') } };
@@ -434,10 +496,15 @@ function cmdDiff(ctx) {
   return { result: { ok: true, comparison } };
 }
 
+// 단독 실행: 확정된 누적 상태에 새 바이트를 더한 결과를 보여 줄 뿐 아무것도 쓰지 않는다(커서도 전진하지 않음).
 function cmdAggregateSessions(ctx) {
-  const s = aggregateSessions({ disabled: !!ctx.opts['no-sessions'] });
-  ctx.log('aggregate-sessions: 세션 기록 실측 집계는 아직 구현되지 않았습니다(다음 단계). 세션 기록을 읽지 않았습니다.');
-  return { result: { ok: true, implemented: false, status: s.status, reason: s.reason } };
+  requireRuntime(ctx);
+  const agg = ctx.time('aggregate-sessions', () => aggregateSessions({
+    disabled: !!ctx.opts['no-sessions'], configDir: ctx.configDir, projectRoot: ctx.projectRoot, out: ctx.out,
+    configSinceMs: null, fullRescan: !!ctx.opts['full-rescan'], nowMs: Date.parse(ctx.now), log: (m) => ctx.log(m),
+  }));
+  const s = agg.sessions;
+  return { result: { ok: true, status: s.status, reason: s.reason, sessions: s } };
 }
 
 const HANDLERS = {
@@ -465,7 +532,7 @@ export function main(argv) {
     ctx = new Ctx(opts);
     const { result, exit = 0 } = HANDLERS[command](ctx);
     if (json) process.stdout.write(`${JSON.stringify(result)}\n`);
-    else if (command === 'diff' || command === 'check-runtime' || command === 'collect') process.stdout.write(stableStringify(result));
+    else if (command === 'diff' || command === 'check-runtime' || command === 'collect' || command === 'aggregate-sessions') process.stdout.write(stableStringify(result));
     if (!json && exit === EXIT.INVALID) {
       for (const c of result.checks ?? []) process.stderr.write(`${c.checkId}: ${c.status} ${c.message ?? ''}\n`);
     }
