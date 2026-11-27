@@ -8,6 +8,7 @@
     "node": ">=20"
   },
   "scripts": {
-    "build": "echo \"build: 아직 구현되지 않음. 산출물은 ../skills/harness-analyze/scripts/harness-lens.mjs\""
+    "build": "echo \"build: 아직 구현되지 않음. 산출물은 ../skills/harness-analyze/scripts/harness-lens.mjs\"",
+    "test": "node --test ../tests/*.test.mjs"
   }
 }

@@ -1,0 +1,522 @@
+{
+  "schemaVersion": "0.1",
+  "rubricVersion": "0.1",
+  "meta": {
+    "snapshotId": "20261127T091500Z-3f9a1c2e",
+    "analyzedAt": "2026-11-27T09:15:00Z",
+    "analysisType": "static_with_sessions",
+    "scope": { "preset": "project", "sources": ["project_shared", "project_local", "plugin"] },
+    "configurationHash": "sha256:3f9a1c2e188ab7922fea109e6e060b081f319320b1975a0b38ccad16f8c8d056",
+    "project": { "displayName": "sample-app", "rootPathHash": "sha256:8c49bcb1ba0e1b86ae74186edd519afedd44aee9d91210184504fa774ce3e311" },
+    "analyzer": { "agent": "claude-code", "model": "claude-opus-5-5", "modelSource": "reported_by_agent" },
+    "engineInfo": {
+      "version": "0.1.0",
+      "nodeVersion": "v22.22.1",
+      "platform": "darwin",
+      "sessionParserVersion": "1",
+      "pricingTableVersion": "2026-11-01"
+    }
+  },
+  "engine": {
+    "inventory": {
+      "components": [
+        {
+          "id": "c_000000000001", "kind": "instructions", "name": "CLAUDE.md", "origin": "project_shared",
+          "paths": ["CLAUDE.md"], "contentHash": "sha256:abbfbe154c88688e1779c74bfa4eb34b24362ec201f6cbb5679eb81fc7966205",
+          "attributes": { "lines": 84, "imports": 0, "headings": ["개요", "완료 정의", "작업 규칙", "테스트"] }
+        },
+        {
+          "id": "c_000000000002", "kind": "settings", "name": ".claude/settings.json", "origin": "project_shared",
+          "paths": [".claude/settings.json"], "contentHash": "sha256:2e0be3d02685191047a9f8a33ebcb3179bdaa784f40c4e054f55f63f850b5319",
+          "attributes": { "allowRules": 6, "askRules": 1, "denyRules": 2, "defaultMode": null, "sandboxEnabled": false, "disableAllHooks": false }
+        },
+        {
+          "id": "c_000000000003", "kind": "hook", "name": "PreToolUse(Bash) guard-bash.sh", "origin": "project_shared",
+          "paths": [".claude/settings.json", ".claude/hooks/guard-bash.sh"], "contentHash": "sha256:17b76715f831c109039bee50434eea485b782109f50473820653b47af9c4ed4c",
+          "attributes": { "event": "PreToolUse", "matcher": "Bash", "type": "command", "timeoutSec": null, "blockingMarker": true, "scriptExists": true }
+        },
+        {
+          "id": "c_000000000004", "kind": "hook", "name": "Stop run-tests.sh", "origin": "project_shared",
+          "paths": [".claude/settings.json", ".claude/hooks/run-tests.sh"], "contentHash": "sha256:30a28565800f64ac1d21398fb908675a08d0394554f43ae874ccdc9bf62c0080",
+          "attributes": { "event": "Stop", "matcher": null, "type": "command", "timeoutSec": 120, "blockingMarker": true, "scriptExists": true }
+        },
+        {
+          "id": "c_000000000005", "kind": "agent", "name": "reviewer", "origin": "project_shared",
+          "paths": [".claude/agents/reviewer.md"], "contentHash": "sha256:2917888a42f89363e5e3b05feeaf2b579c259aaf80e67f72177ef1999bc329db",
+          "attributes": { "role": "reviewer", "tools": ["Read", "Grep", "Glob"], "model": "haiku", "maxTurns": 20, "isolation": null, "background": false }
+        },
+        {
+          "id": "c_000000000006", "kind": "skill", "name": "write-spec", "origin": "project_shared",
+          "paths": [".claude/skills/write-spec/SKILL.md"], "contentHash": "sha256:444cf116724face8b6a4cc956b3fb3409a63f36b0e00788cc75edc397405e48b",
+          "attributes": { "role": "spec", "context": null, "model": null, "bodyLines": 58 }
+        },
+        {
+          "id": "c_000000000007", "kind": "mcp_server", "name": "github", "origin": "project_shared",
+          "paths": [".mcp.json"], "contentHash": "sha256:280e9c7cc690a1e4334be124de8ae87ce844b8eee57bb3f34347c61a5424d512",
+          "attributes": { "transport": "http", "host": "api.example.com", "headersRedacted": 1 }
+        },
+        {
+          "id": "c_000000000008", "kind": "harness_lens", "name": "harness-lens", "origin": "plugin",
+          "paths": ["~/.claude/plugins/cache/harness-lens/harness-lens/0.1.0/skills/harness-analyze/SKILL.md"], "contentHash": "sha256:aab9d9b06bf4c7a5340da27548988d3ac66766414619bb2e8880ca3793aa0cb2",
+          "attributes": { "channel": "plugin", "version": "0.1.0" }
+        }
+      ],
+      "sources": [
+        { "path": "CLAUDE.md", "origin": "project_shared", "status": "read", "reason": null },
+        { "path": "CLAUDE.local.md", "origin": "project_local", "status": "absent", "reason": null },
+        { "path": ".claude/settings.json", "origin": "project_shared", "status": "read", "reason": null },
+        { "path": ".claude/settings.local.json", "origin": "project_local", "status": "absent", "reason": null },
+        { "path": ".claude/agents", "origin": "project_shared", "status": "read", "reason": null },
+        { "path": ".claude/skills", "origin": "project_shared", "status": "read", "reason": null },
+        { "path": ".mcp.json", "origin": "project_shared", "status": "read", "reason": null },
+        { "path": ".env", "origin": "project_shared", "status": "skipped_sensitive", "reason": "비밀정보 파일 패턴" },
+        { "path": "~/.claude/settings.json", "origin": "user", "status": "out_of_scope", "reason": "분석 범위가 project" },
+        { "path": "~/.claude/CLAUDE.md", "origin": "user", "status": "out_of_scope", "reason": "분석 범위가 project" }
+      ],
+      "alwaysLoaded": { "files": 1, "lines": 84, "bytes": 4210, "estimatedTokens": 1053 },
+      "redactions": [{ "kind": "http_header", "count": 1 }]
+    },
+    "evidence": [
+      {
+        "id": "ev_000000000001", "componentId": "c_000000000001", "path": "CLAUDE.md", "line": 12, "keyPath": null,
+        "fact": "지침에 '완료 정의' 절이 있다", "mechanism": "narrative",
+        "primaryAxis": "spec_clarity", "secondaryAxes": [], "ruleIds": ["SC-L1-01"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_000000000002", "componentId": "c_000000000001", "path": "CLAUDE.md", "line": 30, "keyPath": null,
+        "fact": "지침이 변경 후 테스트 실행을 요구한다", "mechanism": "narrative",
+        "primaryAxis": "verification_gate_strength", "secondaryAxes": [], "ruleIds": ["VG-L1-01"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_000000000003", "componentId": "c_000000000002", "path": ".claude/settings.json", "line": 14, "keyPath": "/permissions/deny",
+        "fact": "deny 규칙 2개(예: Read(./.env))", "mechanism": "harness_enforced",
+        "primaryAxis": "safety_boundary", "secondaryAxes": [], "ruleIds": ["SB-L2-03"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_000000000004", "componentId": "c_000000000002", "path": ".claude/settings.json", "line": 5, "keyPath": "/permissions/allow",
+        "fact": "allow 규칙 6개(Bash(npm test:*) 등)", "mechanism": "harness_enforced",
+        "primaryAxis": "autonomy", "secondaryAxes": [], "ruleIds": ["AU-L1-02", "AU-L3-01"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_000000000005", "componentId": "c_000000000002", "path": ".claude/settings.json", "line": 12, "keyPath": "/permissions/ask",
+        "fact": "ask 규칙 1개(Bash(git push:*))", "mechanism": "harness_enforced",
+        "primaryAxis": "autonomy", "secondaryAxes": ["safety_boundary"], "ruleIds": ["AU-L3-01"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_000000000006", "componentId": "c_000000000006", "path": ".claude/skills/write-spec/SKILL.md", "line": 1, "keyPath": null,
+        "fact": "명세 작성 Skill(write-spec)이 있다", "mechanism": "procedure",
+        "primaryAxis": "spec_clarity", "secondaryAxes": ["context_efficiency"], "ruleIds": ["SC-L2-01"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_000000000007", "componentId": "c_000000000003", "path": ".claude/settings.json", "line": 22, "keyPath": "/hooks/PreToolUse/0",
+        "fact": "PreToolUse(Bash) Hook이 차단 표지(exit 2)가 있는 스크립트를 실행한다", "mechanism": "harness_enforced",
+        "primaryAxis": "safety_boundary", "secondaryAxes": [], "ruleIds": ["SB-L2-02"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_000000000008", "componentId": "c_000000000004", "path": ".claude/settings.json", "line": 31, "keyPath": "/hooks/Stop/0",
+        "fact": "Stop Hook이 테스트를 실행하고 실패 시 exit 2로 종료를 막는다", "mechanism": "harness_enforced",
+        "primaryAxis": "verification_gate_strength", "secondaryAxes": ["throughput"], "ruleIds": ["VG-L3-01"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_000000000009", "componentId": "c_000000000004", "path": ".claude/hooks/run-tests.sh", "line": 3, "keyPath": null,
+        "fact": "Stop Hook 스크립트가 stop_hook_active로 재진입을 막는다", "mechanism": "harness_enforced",
+        "primaryAxis": "execution_stability", "secondaryAxes": [], "ruleIds": ["ES-L3-02"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_00000000000a", "componentId": "c_000000000004", "path": ".claude/settings.json", "line": 35, "keyPath": "/hooks/Stop/0/hooks/0/timeout",
+        "fact": "Stop Hook에 timeout 120초가 명시돼 있다", "mechanism": "harness_enforced",
+        "primaryAxis": "execution_stability", "secondaryAxes": [], "ruleIds": ["ES-L2-03"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_00000000000b", "componentId": "c_000000000005", "path": ".claude/agents/reviewer.md", "line": 2, "keyPath": "/name",
+        "fact": "리뷰 역할 Subagent(reviewer)가 있다", "mechanism": "procedure",
+        "primaryAxis": "verification_gate_strength", "secondaryAxes": [], "ruleIds": ["VG-L2-01"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_00000000000c", "componentId": "c_000000000005", "path": ".claude/agents/reviewer.md", "line": 4, "keyPath": "/tools",
+        "fact": "reviewer의 도구가 Read, Grep, Glob으로 제한돼 있다", "mechanism": "harness_enforced",
+        "primaryAxis": "safety_boundary", "secondaryAxes": ["verification_gate_strength"], "ruleIds": ["SB-L2-01"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_00000000000d", "componentId": "c_000000000005", "path": ".claude/agents/reviewer.md", "line": 5, "keyPath": "/model",
+        "fact": "reviewer에 model: haiku가 배정돼 있다", "mechanism": "procedure",
+        "primaryAxis": "cost_efficiency", "secondaryAxes": [], "ruleIds": ["CE-L2-01"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_00000000000e", "componentId": "c_000000000005", "path": ".claude/agents/reviewer.md", "line": 6, "keyPath": "/maxTurns",
+        "fact": "reviewer에 maxTurns 20이 지정돼 있다", "mechanism": "harness_enforced",
+        "primaryAxis": "execution_stability", "secondaryAxes": ["cost_efficiency"], "ruleIds": ["ES-L2-01"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_00000000000f", "componentId": "c_000000000001", "path": "CLAUDE.md", "line": null, "keyPath": null,
+        "fact": "상시 로드 지침이 84줄(파일당 권장 200줄 이하)이다", "mechanism": "narrative",
+        "primaryAxis": "context_efficiency", "secondaryAxes": [], "ruleIds": ["CX-L1-01"], "void": null, "levelCap": null
+      },
+      {
+        "id": "ev_000000000010", "componentId": "c_000000000007", "path": ".mcp.json", "line": 3, "keyPath": "/mcpServers/github",
+        "fact": "MCP 서버 1개(http)가 있고 MAX_MCP_OUTPUT_TOKENS는 설정돼 있지 않다", "mechanism": "procedure",
+        "primaryAxis": null, "secondaryAxes": ["context_efficiency", "safety_boundary"], "ruleIds": ["T10"], "void": null, "levelCap": null
+      }
+    ],
+    "axes": [
+      {
+        "axis": "spec_clarity", "level": 2, "levelStatus": "assessed",
+        "source": { "ruleId": "SC-L2-01", "evidenceIds": ["ev_000000000001", "ev_000000000006"], "capRuleIds": [] },
+        "range": { "min": 2, "max": 3, "reasonCodes": ["user_scope_not_collected"] },
+        "maturity": { "state": "predicted", "measurable": false, "requirement": null, "current": null, "progress": null, "blockedReason": "needs_ci_pr_data" },
+        "measured": null
+      },
+      {
+        "axis": "verification_gate_strength", "level": 3, "levelStatus": "assessed",
+        "source": { "ruleId": "VG-L3-01", "evidenceIds": ["ev_000000000002", "ev_000000000008", "ev_00000000000b"], "capRuleIds": [] },
+        "range": { "min": 3, "max": 3, "reasonCodes": [] },
+        "maturity": { "state": "predicted", "measurable": false, "requirement": null, "current": null, "progress": null, "blockedReason": "needs_ci_pr_data" },
+        "measured": null
+      },
+      {
+        "axis": "execution_stability", "level": 3, "levelStatus": "assessed",
+        "source": { "ruleId": "ES-L3-02", "evidenceIds": ["ev_000000000009", "ev_00000000000a", "ev_00000000000e"], "capRuleIds": [] },
+        "range": { "min": 1, "max": 3, "reasonCodes": ["measured_band", "sample_below_2x_requirement"] },
+        "maturity": {
+          "state": "measured", "measurable": true,
+          "requirement": { "unit": "tool_calls", "required": 500, "heuristic": true },
+          "current": 640, "progress": 1, "blockedReason": null
+        },
+        "measured": {
+          "band": 2, "bandRuleId": "ES-M-01", "heuristic": true,
+          "metrics": [
+            { "metricId": "tool_error_rate", "value": 0.031, "unit": "ratio" },
+            { "metricId": "tool_error_recovery_rate", "value": 0.9, "unit": "ratio" }
+          ],
+          "predictedLevel": 3, "deltaFromPredicted": -1, "sampleSize": 640
+        }
+      },
+      {
+        "axis": "throughput", "level": 0, "levelStatus": "assessed",
+        "source": { "ruleId": "TP-L0-00", "evidenceIds": [], "capRuleIds": [] },
+        "range": { "min": 0, "max": 2, "reasonCodes": ["user_scope_not_collected", "level3_reserved"] },
+        "maturity": {
+          "state": "predicted", "measurable": true,
+          "requirement": { "unit": "sessions", "required": 20, "heuristic": true },
+          "current": 12, "progress": 0.6, "blockedReason": null
+        },
+        "measured": null
+      },
+      {
+        "axis": "cost_efficiency", "level": 2, "levelStatus": "assessed",
+        "source": { "ruleId": "CE-L2-01", "evidenceIds": ["ev_00000000000d"], "capRuleIds": [] },
+        "range": { "min": 2, "max": 3, "reasonCodes": ["user_scope_not_collected"] },
+        "maturity": {
+          "state": "predicted", "measurable": true,
+          "requirement": { "unit": "sessions", "required": 20, "heuristic": true },
+          "current": 12, "progress": 0.6, "blockedReason": null
+        },
+        "measured": null
+      },
+      {
+        "axis": "context_efficiency", "level": 1, "levelStatus": "assessed",
+        "source": { "ruleId": "CX-L1-01", "evidenceIds": ["ev_00000000000f"], "capRuleIds": [] },
+        "range": { "min": 1, "max": 3, "reasonCodes": ["user_scope_not_collected"] },
+        "maturity": {
+          "state": "predicted", "measurable": true,
+          "requirement": { "unit": "sessions", "required": 20, "heuristic": true },
+          "current": 12, "progress": 0.6, "blockedReason": null
+        },
+        "measured": null
+      },
+      {
+        "axis": "autonomy", "level": 3, "levelStatus": "assessed",
+        "source": { "ruleId": "AU-L3-01", "evidenceIds": ["ev_000000000004", "ev_000000000005"], "capRuleIds": [] },
+        "range": { "min": 0, "max": 2, "reasonCodes": ["measured_band", "sample_below_2x_requirement"] },
+        "maturity": {
+          "state": "measured", "measurable": true,
+          "requirement": { "unit": "tool_calls", "required": 500, "heuristic": true },
+          "current": 640, "progress": 1, "blockedReason": null
+        },
+        "measured": {
+          "band": 1, "bandRuleId": "AU-M-01", "heuristic": true,
+          "metrics": [
+            { "metricId": "tool_calls_between_prompts_p50", "value": 6, "unit": "count" },
+            { "metricId": "human_prompts_per_session", "value": 8.2, "unit": "per_session" }
+          ],
+          "predictedLevel": 3, "deltaFromPredicted": -2, "sampleSize": 640
+        }
+      },
+      {
+        "axis": "safety_boundary", "level": 2, "levelStatus": "assessed",
+        "source": { "ruleId": "SB-L2-01", "evidenceIds": ["ev_000000000003", "ev_000000000007", "ev_00000000000c"], "capRuleIds": [] },
+        "range": { "min": 2, "max": 3, "reasonCodes": ["user_scope_not_collected", "managed_settings_not_collected"] },
+        "maturity": { "state": "predicted", "measurable": false, "requirement": null, "current": null, "progress": null, "blockedReason": "session_format_unconfirmed" },
+        "measured": null
+      }
+    ],
+    "tensionCandidates": [
+      { "tensionId": "T1", "kind": "tension", "axes": ["verification_gate_strength", "throughput"], "evidenceIds": ["ev_000000000008"] },
+      { "tensionId": "T2", "kind": "tension", "axes": ["verification_gate_strength", "cost_efficiency"], "evidenceIds": ["ev_00000000000b"] },
+      { "tensionId": "T9", "kind": "tension", "axes": ["cost_efficiency", "verification_gate_strength"], "evidenceIds": ["ev_00000000000d"] },
+      { "tensionId": "T10", "kind": "tension", "axes": ["context_efficiency", "safety_boundary"], "evidenceIds": ["ev_000000000010"] },
+      { "tensionId": "S2", "kind": "synergy", "axes": ["verification_gate_strength", "execution_stability"], "evidenceIds": ["ev_000000000008"] },
+      { "tensionId": "S3", "kind": "synergy", "axes": ["safety_boundary", "autonomy"], "evidenceIds": ["ev_000000000003", "ev_000000000004"] }
+    ],
+    "sessions": {
+      "status": "available",
+      "reason": null,
+      "clientVersions": { "min": "2.1.309", "max": "2.1.322" },
+      "window": { "from": "2026-10-29", "to": "2026-11-27", "rawLogsFrom": "2026-10-29" },
+      "coverage": {
+        "filesScanned": 46, "linesRead": 18234, "linesSkipped": 112, "skippedRatio": 0.0061,
+        "sessionsAttributed": 31, "sessionsUnattributed": 4, "incremental": true,
+        "configSince": "2026-11-20T09:00:00Z"
+      },
+      "dedup": { "assistantLines": 6120, "uniqueResponses": 3105, "excludedSynthetic": 3, "excludedApiError": 2 },
+      "tokens": {
+        "weighting": { "pricingTableVersion": "2026-11-01", "referenceModel": "claude-sonnet-5-5", "basis": "reference_model_fresh_input_equivalent" },
+        "total": { "freshInput": 207000, "cacheWrite": 1700000, "cacheRead": 27200000, "output": 488000, "weighted": 10535333.2 },
+        "byLocation": [
+          {
+            "location": "direct", "sessions": 9,
+            "tokens": { "freshInput": 42000, "cacheWrite": 310000, "cacheRead": 5200000, "output": 88000, "weighted": 2315833.3 },
+            "weightedShare": 0.22,
+            "attribution": { "direct": 9, "worktree": 0, "inferred": 0, "configured": 0, "auto": 0 }
+          },
+          {
+            "location": "worker", "sessions": 18,
+            "tokens": { "freshInput": 114000, "cacheWrite": 970000, "cacheRead": 16400000, "output": 292000, "weighted": 6913833.3 },
+            "weightedShare": 0.656,
+            "attribution": { "direct": 0, "worktree": 15, "inferred": 3, "configured": 0, "auto": 0 }
+          },
+          {
+            "location": "subagent", "sessions": 22,
+            "tokens": { "freshInput": 39000, "cacheWrite": 330000, "cacheRead": 4000000, "output": 82000, "weighted": 614833.3 },
+            "weightedShare": 0.058,
+            "attribution": { "direct": 7, "worktree": 15, "inferred": 0, "configured": 0, "auto": 0 }
+          },
+          {
+            "location": "bot", "sessions": 4,
+            "tokens": { "freshInput": 12000, "cacheWrite": 90000, "cacheRead": 1600000, "output": 26000, "weighted": 690833.3 },
+            "weightedShare": 0.066,
+            "attribution": { "direct": 0, "worktree": 0, "inferred": 0, "configured": 0, "auto": 4 }
+          }
+        ],
+        "unattributed": {
+          "sessions": 4, "botSessions": 1,
+          "tokens": { "freshInput": 8000, "cacheWrite": 40000, "cacheRead": 600000, "output": 15000, "weighted": 193000 }
+        },
+        "byModel": [
+          { "model": "claude-haiku-5-5", "tokens": { "freshInput": 30000, "cacheWrite": 260000, "cacheRead": 3100000, "output": 61000, "weighted": 323333.3 } },
+          { "model": "claude-opus-5-5", "tokens": { "freshInput": 150000, "cacheWrite": 1220000, "cacheRead": 20900000, "output": 354000, "weighted": 9224999.9 } },
+          { "model": "claude-sonnet-5-5", "tokens": { "freshInput": 27000, "cacheWrite": 220000, "cacheRead": 3200000, "output": 73000, "weighted": 987000 } }
+        ]
+      },
+      "contextPerTurn": {
+        "requests": 1480, "p50": 38000, "p90": 92000, "max": 161000, "firstRequestP50": 14500, "compactions": 3,
+        "series": [
+          { "date": "2026-11-24", "requests": 210, "p50": 36000, "max": 120000 },
+          { "date": "2026-11-25", "requests": 260, "p50": 41000, "max": 161000 },
+          { "date": "2026-11-26", "requests": 190, "p50": 37000, "max": 98000 }
+        ]
+      },
+      "axisMetrics": [
+        { "axis": "execution_stability", "metricId": "tool_error_rate", "value": 0.031, "unit": "ratio", "sampleSize": 640, "sinceConfig": true },
+        { "axis": "execution_stability", "metricId": "tool_error_recovery_rate", "value": 0.9, "unit": "ratio", "sampleSize": 20, "sinceConfig": true },
+        { "axis": "throughput", "metricId": "turn_duration_p50_ms", "value": 41000, "unit": "ms", "sampleSize": 98, "sinceConfig": true },
+        { "axis": "cost_efficiency", "metricId": "cache_hit_ratio", "value": 0.934, "unit": "ratio", "sampleSize": 3105, "sinceConfig": false },
+        { "axis": "context_efficiency", "metricId": "context_p90_tokens", "value": 92000, "unit": "tokens", "sampleSize": 1480, "sinceConfig": false },
+        { "axis": "context_efficiency", "metricId": "compactions_per_session", "value": 0.1, "unit": "per_session", "sampleSize": 31, "sinceConfig": false },
+        { "axis": "autonomy", "metricId": "tool_calls_between_prompts_p50", "value": 6, "unit": "count", "sampleSize": 98, "sinceConfig": true },
+        { "axis": "autonomy", "metricId": "human_prompts_per_session", "value": 8.2, "unit": "per_session", "sampleSize": 12, "sinceConfig": true }
+      ]
+    },
+    "selfCost": {
+      "componentId": "c_000000000008",
+      "alwaysLoadedTokens": { "value": 46, "method": "estimate_utf8_bytes" },
+      "currentRun": [{ "subcommand": "prepare", "durationMs": 1840, "maxRssBytes": 96000000 }],
+      "previousAnalysis": {
+        "snapshotId": "20261120T090000Z-8b7d6e5f",
+        "wallClockMs": 214000,
+        "llmTokens": { "freshInput": 21000, "cacheWrite": 64000, "cacheRead": 1450000, "output": 19000, "weighted": 568333.3 },
+        "method": "session_window"
+      },
+      "budgets": [
+        { "budgetId": "always_loaded_tokens", "target": 100, "unit": "tokens", "observed": 46, "status": "within" },
+        { "budgetId": "background_processes", "target": 0, "unit": "count", "observed": 0, "status": "within" },
+        { "budgetId": "reanalysis_engine_ms", "target": 5000, "unit": "ms", "observed": 1840, "status": "within" },
+        { "budgetId": "engine_max_rss_bytes", "target": 209715200, "unit": "bytes", "observed": 96000000, "status": "within" },
+        { "budgetId": "llm_input_inventory_tokens", "target": 6000, "unit": "tokens", "observed": 3900, "status": "within" },
+        { "budgetId": "llm_tokens_per_analysis", "target": 120000, "unit": "tokens", "observed": 104000, "status": "within" }
+      ]
+    },
+    "comparison": {
+      "previousSnapshotId": "20261120T090000Z-8b7d6e5f",
+      "previousAnalyzedAt": "2026-11-20T09:00:00Z",
+      "comparability": "full",
+      "limitations": [],
+      "componentChanges": [
+        { "changeId": "chg_000000000001", "componentId": "c_000000000005", "kind": "agent", "name": "reviewer", "change": "added", "paths": [".claude/agents/reviewer.md"] }
+      ],
+      "axisDeltas": [
+        { "axis": "spec_clarity", "previousLevel": 2, "currentLevel": 2, "previousState": "predicted", "currentState": "predicted", "comparable": true, "reason": null },
+        { "axis": "verification_gate_strength", "previousLevel": 3, "currentLevel": 3, "previousState": "predicted", "currentState": "predicted", "comparable": true, "reason": null },
+        { "axis": "execution_stability", "previousLevel": 3, "currentLevel": 3, "previousState": "predicted", "currentState": "measured", "comparable": true, "reason": "maturity_changed" },
+        { "axis": "throughput", "previousLevel": 0, "currentLevel": 0, "previousState": "predicted", "currentState": "predicted", "comparable": true, "reason": null },
+        { "axis": "cost_efficiency", "previousLevel": 0, "currentLevel": 2, "previousState": "predicted", "currentState": "predicted", "comparable": true, "reason": null },
+        { "axis": "context_efficiency", "previousLevel": 1, "currentLevel": 1, "previousState": "predicted", "currentState": "predicted", "comparable": true, "reason": null },
+        { "axis": "autonomy", "previousLevel": 3, "currentLevel": 3, "previousState": "predicted", "currentState": "measured", "comparable": true, "reason": "maturity_changed" },
+        { "axis": "safety_boundary", "previousLevel": 2, "currentLevel": 2, "previousState": "predicted", "currentState": "predicted", "comparable": true, "reason": null }
+      ]
+    },
+    "limitations": [
+      { "code": "user_scope_not_collected", "message": "사용자·관리형 설정을 수집하지 않아 해당 출처의 효과는 미확인이다." },
+      { "code": "session_format_unofficial", "message": "세션 기록 형식은 공식 계약이 아니다. 관측 버전 2.1.309~2.1.322 범위에서만 검증된 파서 규칙을 썼다." },
+      { "code": "ci_data_not_collected", "message": "CI·PR 데이터를 수집하지 않아 명세 명확성·검증 게이트 강도는 실측할 수 없다(MVP 3)." }
+    ]
+  },
+  "interpretation": {
+    "summary": [
+      "검증 게이트(Stop Hook 테스트)와 실행 안정성에 투자했고, 처리 속도와 컨텍스트 관리는 비워 두었다.",
+      "reviewer 추가로 비용 효율 구조 수준이 0→2가 됐지만 리뷰 호출만큼 대기와 토큰이 늘 수 있다.",
+      "자율성은 구조상 3이지만 실측 대역은 1이다. 사람 프롬프트가 잦은 원인을 확인할 필요가 있다."
+    ],
+    "components": [
+      {
+        "componentId": "c_000000000004", "role": "종료 전 테스트 게이트",
+        "intent": "작업을 끝내기 전에 테스트를 실행하고 실패하면 종료를 막아, 실패한 변경이 사람에게 넘어가지 않게 하려는 의도로 보인다.",
+        "dependsOn": [], "risks": [{ "text": "테스트가 느리면 매 종료마다 최대 120초 대기가 생긴다", "evidenceIds": ["ev_000000000008", "ev_00000000000a"] }],
+        "confidence": "medium"
+      },
+      {
+        "componentId": "c_000000000005", "role": "읽기 전용 코드 리뷰어",
+        "intent": "쓰기 도구 없이 변경을 검토해 독립적인 두 번째 시각을 제공하려는 의도로 보인다.",
+        "dependsOn": [], "risks": [{ "text": "haiku 모델은 복잡한 변경에서 결함을 놓칠 수 있다", "evidenceIds": ["ev_00000000000d"] }],
+        "confidence": "medium"
+      },
+      {
+        "componentId": "c_000000000003", "role": "위험 Bash 명령 차단",
+        "intent": "PreToolUse 단계에서 위험한 셸 명령을 실행 전에 막으려는 의도로 보인다.",
+        "dependsOn": [], "risks": [],
+        "confidence": "low"
+      }
+    ],
+    "findings": [
+      {
+        "id": "f1", "axis": "verification_gate_strength", "componentIds": ["c_000000000004"],
+        "status": "observed", "direction": "potential_positive",
+        "statement": "Stop Hook이 테스트 실패 시 exit 2로 종료를 막는 구조가 설정돼 있다.",
+        "evidenceIds": ["ev_000000000008"], "metricRefs": [], "condition": null, "confidence": "high",
+        "validation": "의도적으로 실패하는 테스트를 넣고 세션 종료가 막히는지 확인", "unknownReason": null
+      },
+      {
+        "id": "f2", "axis": "verification_gate_strength", "componentIds": ["c_000000000005"],
+        "status": "inferred", "direction": "potential_positive",
+        "statement": "격리된 컨텍스트의 reviewer가 같은 컨텍스트 자기 검토보다 결함을 더 찾을 수 있다.",
+        "evidenceIds": ["ev_00000000000b", "ev_00000000000c"], "metricRefs": [],
+        "condition": "reviewer가 실제로 호출되고 리뷰 기준이 명확한 경우", "confidence": "low",
+        "validation": "세션 기록에서 reviewer 호출 비율을 확인", "unknownReason": null
+      },
+      {
+        "id": "f3", "axis": "autonomy", "componentIds": [],
+        "status": "measured", "direction": "potential_negative",
+        "statement": "사람 프롬프트 사이 도구 호출 중앙값이 6회로, 구조 수준(3)에 비해 개입이 잦다.",
+        "evidenceIds": [], "metricRefs": ["tool_calls_between_prompts_p50", "human_prompts_per_session"],
+        "condition": null, "confidence": "medium",
+        "validation": "ask 규칙 대상 명령의 빈도와 세션당 사람 프롬프트 수를 함께 비교", "unknownReason": null
+      },
+      {
+        "id": "f4", "axis": "throughput", "componentIds": ["c_000000000004"],
+        "status": "inferred", "direction": "potential_negative",
+        "statement": "병렬화 구성이 없고 Stop Hook 테스트가 매 종료에 대기를 더한다.",
+        "evidenceIds": ["ev_000000000008"], "metricRefs": [],
+        "condition": "테스트 실행 시간이 턴 시간에서 큰 비중을 차지하는 경우", "confidence": "low",
+        "validation": "세션 20회 이후 turn_duration_p50_ms를 Hook 도입 전과 비교", "unknownReason": null
+      },
+      {
+        "id": "f5", "axis": "safety_boundary", "componentIds": [],
+        "status": "unknown", "direction": "unknown",
+        "statement": "사용자·관리형 설정의 sandbox와 deny 규칙 여부를 알 수 없다.",
+        "evidenceIds": [], "metricRefs": [], "condition": null, "confidence": "low",
+        "validation": "분석 범위를 project_and_user로 넓혀 재분석", "unknownReason": "분석 범위가 project라 사용자·관리형 설정을 읽지 않았다"
+      }
+    ],
+    "axisNotes": [
+      { "axis": "spec_clarity", "rationale": "명세 작성 Skill이 있어 절차 수준(2)이다. 명세 없이 구현을 막는 Hook은 없다.", "conditions": ["write-spec이 실제로 호출될 때"], "counterexamples": ["Skill이 있어도 호출되지 않으면 명세가 만들어지지 않는다"], "validation": ["세션 기록에서 write-spec 호출 비율 확인"] },
+      { "axis": "verification_gate_strength", "rationale": "Stop Hook이 테스트 실패를 차단하므로 하네스 강제(3)다.", "conditions": ["테스트 스위트가 변경을 실제로 덮을 때"], "counterexamples": ["테스트가 빈약하면 강제 게이트도 잘못 승인한다"], "validation": ["실패 테스트로 종료 차단 확인"] },
+      { "axis": "execution_stability", "rationale": "재진입 방지, Hook timeout, reviewer maxTurns가 있어 구조는 3이지만 실측 오류율 3.1%로 대역은 2다.", "conditions": [], "counterexamples": ["오류율은 작업 난이도에 따라 달라 구성 효과로 단정할 수 없다"], "validation": ["오류가 몰린 도구 이름별 분포 확인"] },
+      { "axis": "throughput", "rationale": "병렬 실행이나 background Subagent 구성이 없다.", "conditions": [], "counterexamples": ["작업이 작으면 병렬화가 없어도 느리지 않다"], "validation": ["세션 20회 도달 후 실측 대역 확인"] },
+      { "axis": "cost_efficiency", "rationale": "reviewer에 haiku를 배정한 모델 라우팅이 있다.", "conditions": ["리뷰 작업이 저가 모델로 충분할 때"], "counterexamples": ["리뷰 누락으로 재작업이 늘면 성공 작업당 비용이 오른다"], "validation": ["캐시 적중률과 세션당 환산 토큰 추이 확인"] },
+      { "axis": "context_efficiency", "rationale": "상시 로드 지침이 적정 크기지만 지연 로드·격리 구성은 명세 Skill 외에 없다.", "conditions": [], "counterexamples": ["MCP 도구 정의가 컨텍스트를 차지할 수 있다"], "validation": ["context_p90_tokens 추이 확인"] },
+      { "axis": "autonomy", "rationale": "allow와 ask 규칙으로 자동 범위와 정지 지점을 하네스가 강제해 구조는 3이다. 실측 대역은 1이다.", "conditions": [], "counterexamples": ["사람 프롬프트가 많은 이유가 작업 성격일 수 있다"], "validation": ["세션당 사람 프롬프트 수 비교"] },
+      { "axis": "safety_boundary", "rationale": "deny 규칙, PreToolUse 차단 Hook, reviewer 도구 제한이 있어 2다. sandbox·관리형 설정은 확인되지 않았다.", "conditions": [], "counterexamples": ["Bash 하위 프로세스는 권한 규칙 밖에서 파일에 접근할 수 있다"], "validation": ["사용자 범위 포함 재분석"] }
+    ],
+    "currentTradeoffs": {
+      "investForgo": {
+        "summary": "검증 게이트·실행 안정성·자율 범위 정의에 투자하고, 처리 속도와 컨텍스트 관리는 비워 두었다.",
+        "invested": ["verification_gate_strength", "execution_stability", "autonomy"],
+        "forgone": ["throughput", "context_efficiency"],
+        "evidenceIds": ["ev_000000000008", "ev_000000000009", "ev_000000000005", "ev_00000000000f"]
+      },
+      "componentTradeoffs": [
+        {
+          "componentId": "c_000000000005",
+          "gains": [{ "axis": "verification_gate_strength", "text": "독립 컨텍스트 리뷰로 결함 탐지 가능성 ↑", "evidenceIds": ["ev_00000000000b"] }],
+          "costs": [
+            { "axis": "cost_efficiency", "text": "리뷰 호출마다 별도 모델 호출 토큰 ↑", "evidenceIds": ["ev_00000000000b"] },
+            { "axis": "throughput", "text": "리뷰 대기 시간 ↑", "evidenceIds": ["ev_00000000000b"] }
+          ],
+          "confidence": "medium"
+        },
+        {
+          "componentId": "c_000000000004",
+          "gains": [{ "axis": "verification_gate_strength", "text": "테스트 실패 시 종료 차단", "evidenceIds": ["ev_000000000008"] }],
+          "costs": [{ "axis": "throughput", "text": "매 종료마다 테스트 실행 대기", "evidenceIds": ["ev_000000000008", "ev_00000000000a"] }],
+          "confidence": "medium"
+        }
+      ],
+      "axisTensions": [
+        { "tensionId": "T1", "explanation": "Stop Hook 테스트가 검증을 강제하는 대신 매 종료에 대기를 더한다.", "evidenceIds": ["ev_000000000008"], "condition": "테스트가 수십 초 이상 걸릴 때", "confidence": "medium" },
+        { "tensionId": "T9", "explanation": "haiku reviewer는 비용을 줄이지만 어려운 변경에서 리뷰 품질이 떨어질 수 있다.", "evidenceIds": ["ev_00000000000d"], "condition": "변경이 크거나 도메인 지식이 필요할 때", "confidence": "low" },
+      { "tensionId": "S3", "explanation": "deny와 ask 규칙이 있어 allow 범위를 넓혀도 위험 작업에서 멈춘다.", "evidenceIds": ["ev_000000000003", "ev_000000000004", "ev_000000000005"], "condition": "deny·ask가 위험 명령을 실제로 덮을 때", "confidence": "medium" }
+      ],
+      "emptyAreas": [
+        { "axis": "throughput", "kind": "unconfigured", "meaning": "속도를 높이는 구성이 없다. 느리다는 뜻은 아니다.", "howToConfirm": "세션 20회 이후 실측 대역 확인" }
+      ]
+    },
+    "changeTradeoffs": [
+      {
+        "changeIds": ["chg_000000000001"],
+        "expectedEffects": [
+          { "axis": "verification_gate_strength", "direction": "increase", "text": "쓰기 권한 없는 독립 리뷰 단계가 생겼다", "evidenceIds": ["ev_00000000000b", "ev_00000000000c"], "condition": "reviewer가 호출될 때", "confidence": "medium" },
+          { "axis": "cost_efficiency", "direction": "increase", "text": "리뷰를 haiku로 라우팅해 리뷰당 단가가 낮다", "evidenceIds": ["ev_00000000000d"], "condition": "같은 리뷰를 메인 모델로 하던 경우와 비교할 때", "confidence": "low" }
+        ],
+        "potentialLosses": [
+          { "axis": "throughput", "direction": "decrease", "text": "리뷰 호출만큼 완료 시간이 늘 수 있다", "evidenceIds": ["ev_00000000000b"], "condition": "매 작업마다 리뷰를 호출할 때", "confidence": "low" }
+        ],
+        "unknownImpacts": [{ "axis": "verification_gate_strength", "text": "실제 결함 탐지율 변화는 CI·PR 데이터 없이 알 수 없다" }],
+        "validation": ["세션 기록의 subagent 위치 토큰 비중 추이 확인", "reviewer 지적 사항 중 실제 수정으로 이어진 비율 기록"],
+        "multiChangeCaveat": false
+      }
+    ],
+    "limitations": ["리뷰 품질과 테스트 충분성은 정적 분석으로 판단할 수 없다."]
+  },
+  "validation": {
+    "status": "valid",
+    "validatorVersion": "0.1.0",
+    "checkedAt": "2026-11-27T09:18:40Z",
+    "checks": [
+      { "checkId": "V-SCHEMA", "status": "pass", "message": null },
+      { "checkId": "V-REF-EVIDENCE", "status": "pass", "message": null },
+      { "checkId": "V-REF-COMPONENT", "status": "pass", "message": null },
+      { "checkId": "V-REF-CHANGE", "status": "pass", "message": null },
+      { "checkId": "V-REF-TENSION", "status": "pass", "message": null },
+      { "checkId": "V-REF-METRIC", "status": "pass", "message": null },
+      { "checkId": "V-SINGLE-ATTRIBUTION", "status": "pass", "message": null },
+      { "checkId": "V-AXIS-NOTES", "status": "pass", "message": null },
+      { "checkId": "V-EMPTY-AREAS", "status": "pass", "message": null },
+      { "checkId": "V-INVEST-FORGO", "status": "pass", "message": null },
+      { "checkId": "V-CHANGE-COVERAGE", "status": "pass", "message": null },
+      { "checkId": "V-RANGE", "status": "pass", "message": null },
+      { "checkId": "V-MATURITY", "status": "pass", "message": null },
+      { "checkId": "V-TOKEN-SUM", "status": "pass", "message": null },
+      { "checkId": "V-SECRET-RESCAN", "status": "pass", "message": null }
+    ]
+  }
+}

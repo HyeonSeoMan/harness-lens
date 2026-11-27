@@ -9,6 +9,11 @@ AI 코딩 에이전트 하네스(Hooks, Skills, MCP, Subagents 등)의 구성과
 ## 문서
 
 - 제품 요구사항: [harness-lens-prd.md](./harness-lens-prd.md)
+- MVP 1 명세(v0.1)
+  - 결과 스키마: [skills/harness-analyze/schemas/analysis.schema.json](./skills/harness-analyze/schemas/analysis.schema.json) (예시: [examples/analysis.example.json](./examples/analysis.example.json))
+  - 평가 루브릭: [skills/harness-analyze/references/evaluation-rubric.md](./skills/harness-analyze/references/evaluation-rubric.md)
+  - 분석 프로토콜: [skills/harness-analyze/references/analysis-protocol.md](./skills/harness-analyze/references/analysis-protocol.md)
+  - 엔진 CLI: [docs/spec/engine-cli.md](./docs/spec/engine-cli.md)
 - 기여 안내: [CONTRIBUTING.md](./CONTRIBUTING.md)
 
 ## 저장소 구조
@@ -18,7 +23,7 @@ AI 코딩 에이전트 하네스(Hooks, Skills, MCP, Subagents 등)의 구성과
 | `.claude-plugin/` | Claude Code 플러그인·마켓플레이스 메타데이터 |
 | `skills/harness-analyze/` | 배포 단위 Skill. 엔진 번들(`scripts/`), 스키마, 참고 문서, 리포트 템플릿 포함 |
 | `engine/` | 엔진 소스 (Node.js 20 이상, ESM, 런타임 의존성 없음) |
-| `tests/`, `examples/` | 테스트와 예시 하네스 |
+| `tests/`, `examples/` | 테스트와 예시. `node --test tests/*.test.mjs`로 실행한다(의존성 없음) |
 
 ## 라이선스
 
