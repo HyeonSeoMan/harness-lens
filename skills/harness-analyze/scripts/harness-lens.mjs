@@ -35,11 +35,14 @@ var TABLE = {
   "claude-haiku-4-5": [1e4, 5e4, 1e3]
 };
 var REF_INPUT = TABLE[REFERENCE_MODEL][0];
-function priceKey(model) {
+function modelKey(model) {
   if (typeof model !== "string") return null;
-  let m = model.toLowerCase().replace(/\[[^\]]*\]$/, "").replace(/@.*$/, "").replace(/^(?:[a-z]{2}\.)?anthropic\./, "");
-  m = m.replace(/-\d{8}$/, "").replace(/-v\d+(?::\d+)?$/, "");
-  return Object.hasOwn(TABLE, m) ? m : null;
+  const m = model.toLowerCase().replace(/\[[^\]]*\]$/, "").replace(/@.*$/, "").replace(/^(?:[a-z]{2}\.)?anthropic\./, "");
+  return m.replace(/-\d{8}$/, "").replace(/-v\d+(?::\d+)?$/, "");
+}
+function priceKey(model) {
+  const m = modelKey(model);
+  return m !== null && Object.hasOwn(TABLE, m) ? m : null;
 }
 function weightedUnits(model, bucket) {
   const key = priceKey(model);
@@ -51,11 +54,11 @@ function weightedUnits(model, bucket) {
 var unitsToWeighted = (units) => units / REF_INPUT;
 
 // src/constants.mjs
-var ENGINE_VERSION = "0.3.0";
-var VALIDATOR_VERSION = "0.3.0";
+var ENGINE_VERSION = "0.4.0";
+var VALIDATOR_VERSION = "0.4.0";
 var SCHEMA_VERSION = "0.1";
-var RUBRIC_VERSION = "0.2";
-var SESSION_PARSER_VERSION = "2";
+var RUBRIC_VERSION = "0.3";
+var SESSION_PARSER_VERSION = "3";
 var MIN_NODE_MAJOR = 20;
 var SUPPORTED_PLATFORMS = ["darwin", "linux", "win32"];
 var AXES = [
@@ -85,7 +88,8 @@ var MATURITY_RULES = {
   verification_gate_strength: { measurable: false, blockedReason: "needs_ci_pr_data" },
   execution_stability: { measurable: true, unit: "tool_calls", required: 500 },
   throughput: { measurable: true, unit: "sessions", required: 20 },
-  cost_efficiency: { measurable: true, unit: "sessions", required: 20 },
+  // 0.3: cache_hit_ratio를 참고 지표로 내렸다(클라이언트 동작 영향이 커서 하네스 축 실측으로 약하다). 대역 지표가 정해질 때까지 예측.
+  cost_efficiency: { measurable: false, blockedReason: "band_metric_undefined" },
   context_efficiency: { measurable: true, unit: "sessions", required: 20 },
   autonomy: { measurable: true, unit: "tool_calls", required: 500 },
   safety_boundary: { measurable: false, blockedReason: "session_format_unconfirmed" }
@@ -334,7 +338,18 @@ var ROLES = [
 ];
 var VERIFY_CMD = ["test", "lint", "eslint", "prettier --check", "tsc", "typecheck", "pytest", "ruff", "cargo clippy", "go vet", "mvn verify", "gradle check"];
 var SPEC_CMD = ["spec", "prd", "acceptance", "requirements", "명세"];
-var BLOCK = ["exit 2", '"decision": "block"', '"permissionDecision": "deny"', '"continue": false'];
+var BLOCK_KEYS = [["decision", "block"], ["permissionDecision", "deny"]];
+var BLOCK = [
+  "exit 2",
+  "process.exit(2)",
+  "process.exitCode = 2",
+  "sys.exit(2)",
+  "os.Exit(2)",
+  ...BLOCK_KEYS.flatMap(([k, v]) => [`"${k}": "${v}"`, `'${k}': '${v}'`, `${k}: "${v}"`, `${k}: '${v}'`]),
+  '"continue": false',
+  "'continue': False",
+  "continue: false"
+];
 var REENTRY = ["stop_hook_active"];
 var norm = (s) => s.normalize("NFC").toLowerCase();
 function hasAny(text, words) {
@@ -348,9 +363,14 @@ function hasBlockMarker(text) {
 function narrativeAxes(line) {
   return NARRATIVE.filter(([, words]) => hasAny(line, words)).map(([axis]) => axis);
 }
+var NEGATION = /않|없이|없다|없음|말고|말 것|아니|n't\b|\b(?:not|never|without|no)\b/i;
+function affirmativeClauses(text) {
+  return String(text ?? "").split(/[.!?;。\n]+|,\s+/).filter((c) => !NEGATION.test(c.normalize("NFC"))).join(" ");
+}
 function detectRole(name, description) {
-  const text = `${name ?? ""} ${description ?? ""}`;
-  for (const [role, words] of ROLES) if (hasAny(text, words)) return role;
+  for (const text of [name ?? "", affirmativeClauses(description)]) {
+    for (const [role, words] of ROLES) if (hasAny(text, words)) return role;
+  }
   return null;
 }
 var AXIS_LABEL = {
@@ -527,6 +547,36 @@ function hookScriptPath(command) {
   if (!sub.includes("/") && !/\.(sh|bash|js|mjs|cjs|ts|py|rb)$/.test(sub)) return null;
   return sub;
 }
+var MAX_HOOK_IMPORTS = 16;
+function hookImports(text) {
+  const out = [];
+  const add = (spec, names, rootRel = false) => {
+    if (out.length >= MAX_HOOK_IMPORTS || /[$()`*?]/.test(spec) || !rootRel && !/^\.{1,2}\//.test(spec)) return;
+    if (!out.some((o) => o.spec === spec && o.rootRel === rootRel)) out.push({ spec, names, rootRel });
+  };
+  for (const m of text.matchAll(/\bimport\s*(?:([\w$]+)\s*,?\s*)?(?:\{([^}]*)\}|\*\s*as\s+[\w$]+)?\s*(?:from\s*)?["']([^"'\n]+)["']/g)) {
+    const named = m[2] !== void 0 && !m[1] ? m[2].split(",").map((x) => x.trim().split(/\s+as\s+/)[0]).filter((n) => /^[\w$]+$/.test(n)) : null;
+    add(m[3], named);
+  }
+  for (const m of text.matchAll(/\b(?:require|import)\s*\(\s*["']([^"'\n]+)["']\s*\)/g)) add(m[1], null);
+  for (const m of text.matchAll(/^\s*(?:source|\.)\s+["']?(\$\{?CLAUDE_PROJECT_DIR\}?\/)?([^"'\s;]+)/gm)) {
+    if (m[1]) add(m[2], null, true);
+    else add(/^\.{1,2}\//.test(m[2]) ? m[2] : `./${m[2]}`, null);
+  }
+  for (const m of text.matchAll(/^\s*from\s+\.([\w.]*)\s+import\b/gm)) if (m[1] && !m[1].includes(".")) add(`./${m[1]}.py`, null);
+  return out;
+}
+function blockingExports(source) {
+  const text = source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/(^|\s)\/\/.*$/gm, "$1");
+  const marks = /^export\s+(?:default\s+)?(?:async\s+)?(?:function\*?\s*([\w$]+)|(?:const|let|var|class)\s+([\w$]+))/gm;
+  const starts = [...text.matchAll(marks)].map((m) => ({ at: m.index, name: m[1] ?? m[2] }));
+  const names = /* @__PURE__ */ new Set();
+  if (hasBlockMarker(text.slice(0, starts.length ? starts[0].at : text.length))) names.add("*");
+  starts.forEach((st, i) => {
+    if (hasBlockMarker(text.slice(st.at, i + 1 < starts.length ? starts[i + 1].at : text.length))) names.add(st.name);
+  });
+  return names;
+}
 var Collector = class {
   constructor({ projectRoot, scope, configDir, skillDir: skillDir2, platform = process.platform }) {
     this.projectRoot = projectRoot;
@@ -582,7 +632,8 @@ var Collector = class {
     this.sources.set(key, { path: disp, origin, status, reason });
   }
   // root 기준 rel 파일을 읽는다. R1·크기·경계 검사를 모두 거친다.
-  readFile(root, rel, origin, limit = TEXT_LIMIT_BYTES) {
+  // probe: 확장자 후보를 찾는 시도라 없는 파일은 출처로 남기지 않는다.
+  readFile(root, rel, origin, limit = TEXT_LIMIT_BYTES, probe = false) {
     const abs = path2.join(root, rel);
     const disp = displayPath(abs, this.projectRoot);
     const cacheKey = `${disp}|${origin}`;
@@ -601,6 +652,7 @@ var Collector = class {
         if (/\.json$/i.test(rel)) this.countJsonSecrets(raw);
         result = { text, raw, disp, status: "ok" };
       } else if (r.status === "absent") {
+        if (probe) return { status: "absent", disp };
         this.addSource(disp, origin, "absent");
         result = { status: "absent", disp };
       } else if (r.status === "escape") {
@@ -876,6 +928,7 @@ var Collector = class {
     }
   }
   collectHook({ event, matcher, h, g, hi, ord, settingsDisp, origin, scriptRoot }) {
+    var _a;
     const type = typeof h.type === "string" ? h.type : "command";
     const command = typeof h.command === "string" ? h.command : "";
     const promptText = typeof h.prompt === "string" ? h.prompt : "";
@@ -902,7 +955,28 @@ var Collector = class {
     const text = `${command}
 ${script ?? ""}
 ${promptText}`;
-    const block = hasBlockMarker(text);
+    let block = hasBlockMarker(text);
+    const imports = [];
+    let blockVia = block ? "script" : null;
+    if (script !== null) {
+      const dir = path2.posix.dirname(path2.posix.normalize(scriptRel));
+      for (const imp of hookImports(script)) {
+        const target = path2.posix.normalize(imp.rootRel ? imp.spec : path2.posix.join(dir, imp.spec));
+        if (target.startsWith("..") || path2.posix.isAbsolute(target)) continue;
+        const cands = /\.[a-z]+$/i.test(target) ? [target] : [".mjs", ".js", ".cjs", ".ts", ".sh"].map((ext) => target + ext);
+        const f = ((_a = cands.map((c) => [c, this.readFile(scriptRoot, c, origin, SCRIPT_LIMIT_BYTES, cands.length > 1)]).find(([, r]) => r.status === "ok")) == null ? void 0 : _a[1]) ?? this.readFile(scriptRoot, cands[0], origin, SCRIPT_LIMIT_BYTES);
+        if (f.status !== "ok") continue;
+        imports.push({ disp: f.disp, hash: sha256hex(f.raw) });
+        if (block) continue;
+        const exported = blockingExports(f.text);
+        const called = (n) => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, "\\$")}\\s*\\(`).test(script.replace(/^\s*import\b[^;]*?from\s*["'][^"']*["'];?/gm, ""));
+        const hit = imp.names === null ? exported.size > 0 : exported.has("*") || imp.names.some((n) => exported.has(n) && called(n));
+        if (hit) {
+          block = true;
+          blockVia = f.disp;
+        }
+      }
+    }
     const verify = hasAny(text, VERIFY_CMD);
     const spec = hasAny(text, SPEC_CMD);
     const reentry = hasAny(`${command}
@@ -963,14 +1037,15 @@ ${script ?? ""}`, REENTRY);
       origin,
       key: `${event}|${matcher ?? ""}|${ord}`,
       name: `${event}${matcher ? `(${this.clean(matcher, 60)})` : ""} ${label}`,
-      paths: [settingsDisp, ...scriptDisp ? [scriptDisp] : []],
-      contentHash: sha256tag(hashInput({ event, matcher, handler: h, script: scriptRaw === null ? null : sha256hex(scriptRaw) })),
+      paths: [settingsDisp, ...scriptDisp ? [scriptDisp] : [], ...blockVia && blockVia !== "script" ? [blockVia] : []],
+      contentHash: sha256tag(hashInput({ event, matcher, handler: h, script: scriptRaw === null ? null : sha256hex(scriptRaw), ...imports.length ? { imports: imports.map((x) => x.hash) } : {} })),
       attributes: {
         event,
         matcher: matcher && this.clean(matcher, 120),
         type,
         timeoutSec: typeof h.timeout === "number" ? h.timeout : null,
         blockingMarker: block,
+        blockingMarkerVia: blockVia === null ? null : blockVia === "script" ? "script" : "import",
         verifyCommand: verify,
         specCommand: spec,
         reentryGuard: reentry,
@@ -979,7 +1054,7 @@ ${script ?? ""}`, REENTRY);
       }
     });
     const keyBase = pointer("hooks", event, g, "hooks", hi);
-    const describe = [block ? "차단 표지 있음" : "차단 표지 없음", verify ? "검증 명령 어휘" : null, levelCap ? "스크립트 확인 불가" : null].filter(Boolean).join(", ");
+    const describe = [block ? blockVia && blockVia !== "script" ? `차단 표지 있음(import ${path2.posix.basename(blockVia)})` : "차단 표지 있음" : "차단 표지 없음", verify ? "검증 명령 어휘" : null, levelCap ? "스크립트 확인 불가" : null].filter(Boolean).join(", ");
     this.addEvidence({
       comp,
       path: settingsDisp,
@@ -1470,6 +1545,7 @@ function reportClient() {
   var BLOCKED = {
     needs_ci_pr_data: "CI·PR 데이터 필요(MVP 3)",
     session_format_unconfirmed: "세션 기록 형식 미확인",
+    band_metric_undefined: "대역 지표 미정(캐시 적중률은 참고 지표)",
     sessions_disabled: "세션 집계 꺼짐",
     no_session_logs: "세션 기록 없음",
     session_format_unsupported: "세션 기록 형식 미지원",
@@ -1483,19 +1559,24 @@ function reportClient() {
   var METHOD = { direct: "직접", worktree: "워크트리 gitdir", inferred: "추정(삭제된 워크트리)", configured: "설정 매핑", auto: "자동 귀속" };
   var TOKTYPE = [["freshInput", "새 입력"], ["cacheWrite", "캐시 쓰기"], ["cacheRead", "캐시 읽기"], ["output", "출력"]];
   var METRIC = {
-    tool_error_rate: "도구 오류율",
+    non_bash_tool_error_rate: "도구 오류율(Bash 제외)",
+    bash_error_rate: "Bash 비정상 종료율(참고)",
+    tool_error_rate: "도구 오류율(전체, 참고)",
     tool_error_recovery_rate: "오류 뒤 회복률",
     hook_errors_per_session: "세션당 Hook 실패",
     api_retries_per_session: "세션당 API 재시도",
     turn_duration_p50_ms: "턴 시간 중앙값",
     session_duration_p50_ms: "세션 길이 중앙값",
-    cache_hit_ratio: "캐시 적중률",
+    cache_hit_ratio: "캐시 적중률(참고)",
     weighted_tokens_per_session: "세션당 환산 토큰",
-    context_p90_tokens: "요청 입력 크기 p90",
+    context_p90_window_ratio: "요청 입력 크기 p90 ÷ 모델 창",
+    context_p90_tokens: "요청 입력 크기 p90(참고)",
     compactions_per_session: "세션당 컨텍스트 압축",
     tool_calls_between_prompts_p50: "사람 입력 사이 도구 호출 중앙값",
     human_prompts_per_session: "세션당 사람 입력",
-    hook_blocks_per_session: "세션당 Hook 차단(VG 대리 지표)"
+    hook_blocks_per_session: "세션당 Hook 차단(VG 대리 지표)",
+    bot_weighted_share: "봇 채팅 환산값 비중(참고)",
+    worker_weighted_share: "워커 환산값 비중(참고)"
   };
   function num(v) {
     if (v === null || v === void 0) return "—";
@@ -1869,6 +1950,15 @@ function reportClient() {
       sSec2.appendChild(table(["축", "지표", "값", "표본", "범위"], sess.axisMetrics.map(function(m) {
         return [AXIS[m.axis], METRIC[m.metricId] || m.metricId, metricValue(m), num(m.sampleSize), m.sinceConfig ? "현재 구성 이후" : "전체"];
       })));
+    }
+    if (sess.toolUsage && sess.toolUsage.length) {
+      sSec2.appendChild(el("details", null, [
+        el("summary", null, "도구별 호출·오류"),
+        el("p", { class: "muted" }, "Bash 비정상 종료는 테스트 실패처럼 명령의 정상 결과일 수 있어 실행 안정성 대역에서 뺐습니다. Hook 차단·사용자 거절도 오류로 기록될 수 있습니다."),
+        table(["도구", "호출", "오류", "오류율"], sess.toolUsage.map(function(u) {
+          return [u.tool, num(u.calls), num(u.errors), u.calls ? pct(u.errors / u.calls) : "—"];
+        }))
+      ]));
     }
   }
   function trendChart(series) {
@@ -2257,6 +2347,30 @@ function skillDir() {
 }
 function loadSchema() {
   return JSON.parse(readFileSync2(path3.join(skillDir(), "schemas", "analysis.schema.json"), "utf8"));
+}
+
+// src/model-windows.mjs
+var M = 1e6;
+var WINDOWS = {
+  "claude-fable-5-2": M,
+  "claude-fable-5-1": M,
+  "claude-mythos-5-1": M,
+  "claude-fable-5": M,
+  "claude-mythos-5": M,
+  "claude-opus-5-5": M,
+  "claude-opus-5": M,
+  "claude-opus-4-8": M,
+  "claude-opus-4-7": M,
+  "claude-opus-4-6": M,
+  "claude-sonnet-5-5": M,
+  "claude-sonnet-5": M,
+  "claude-sonnet-4-6": M,
+  "claude-haiku-5-5": M,
+  "claude-haiku-4-5": 2e5
+};
+function contextWindow(model) {
+  const k = modelKey(model);
+  return k !== null && Object.hasOwn(WINDOWS, k) ? WINDOWS[k] : null;
 }
 
 // src/sessions.mjs
@@ -3012,8 +3126,16 @@ function newFileState(kind) {
     durations: [],
     gaps: [],
     openGap: null,
-    pendingError: false
+    pendingError: false,
+    // 도구 분류별 [호출, 오류](메인+서브에이전트). openTools: 결과를 아직 못 본 tool_use(id 해시 → 분류).
+    tools: {},
+    openTools: {}
   };
+}
+function toolCategory(name) {
+  if (typeof name !== "string") return "other";
+  if (name.startsWith("mcp__")) return "mcp";
+  return /^[A-Z][A-Za-z]{1,39}$/.test(name) ? name : "other";
 }
 function mentionsRoot(value, roots, depth = 0) {
   if (depth > 8 || value === null || value === void 0) return false;
@@ -3133,7 +3255,7 @@ var Parser = class {
     else this.attachment(o, fs);
   }
   assistant(o, fs, fileHash, side, ts) {
-    var _a;
+    var _a, _b;
     const c = fs.c;
     const msg2 = o.message;
     if (!msg2 || typeof msg2 !== "object") {
@@ -3154,6 +3276,9 @@ var Parser = class {
         if (!b || b.type !== "tool_use") continue;
         if (!fs.botMention && ((_a = fs.cls) == null ? void 0 : _a.kind) === "bot" && mentionsRoot(b.input, this.env.roots)) fs.botMention = true;
         if (!this.once("tool_use", b.id)) continue;
+        const cat = toolCategory(b.name);
+        ((_b = fs.tools)[cat] ?? (_b[cat] = [0, 0]))[0]++;
+        if (typeof b.id === "string" && b.id) fs.openTools[h16(b.id)] = cat;
         if (side) c.subToolUse++;
         else {
           c.toolUse++;
@@ -3180,6 +3305,7 @@ var Parser = class {
     this.state.responses.merge(hi, lo, fresh, cw, w1, cr, out, model, session, side, Number.isFinite(ts) ? ts : 0);
   }
   user(o, fs, side) {
+    var _a;
     const c = fs.c;
     const content = o.message && typeof o.message === "object" ? o.message.content : void 0;
     let hasResult = false;
@@ -3188,6 +3314,10 @@ var Parser = class {
         if (!b || b.type !== "tool_result") continue;
         hasResult = true;
         if (!this.once("tool_result", b.tool_use_id)) continue;
+        const idh = typeof b.tool_use_id === "string" && b.tool_use_id ? h16(b.tool_use_id) : null;
+        const cat = (idh && fs.openTools[idh]) ?? "unknown";
+        if (idh) delete fs.openTools[idh];
+        if (b.is_error === true) ((_a = fs.tools)[cat] ?? (_a[cat] = [0, 0]))[1]++;
         if (side) {
           if (b.is_error === true) c.subToolErrors++;
           continue;
@@ -3475,14 +3605,13 @@ function emptyBucket() {
   return { freshInput: 0, cacheWrite: 0, cacheRead: 0, output: 0, weighted: 0 };
 }
 var BAND_RULES = {
-  execution_stability: { ruleId: "ES-M-01", metric: "tool_error_rate", band: (v) => v <= 0.02 ? 3 : v <= 0.05 ? 2 : v <= 0.1 ? 1 : 0 },
+  execution_stability: { ruleId: "ES-M-02", metric: "non_bash_tool_error_rate", band: (v) => v <= 0.02 ? 3 : v <= 0.05 ? 2 : v <= 0.1 ? 1 : 0 },
   throughput: { ruleId: "TP-M-01", metric: "turn_duration_p50_ms", band: (v) => v <= 3e4 ? 3 : v <= 9e4 ? 2 : v <= 3e5 ? 1 : 0 },
-  cost_efficiency: { ruleId: "CE-M-01", metric: "cache_hit_ratio", band: (v) => v >= 0.9 ? 3 : v >= 0.75 ? 2 : v >= 0.5 ? 1 : 0 },
   context_efficiency: {
-    ruleId: "CX-M-01",
-    metric: "context_p90_tokens",
+    ruleId: "CX-M-02",
+    metric: "context_p90_window_ratio",
     band: (v, m) => {
-      const b = v <= 5e4 ? 3 : v <= 1e5 ? 2 : v <= 15e4 ? 1 : 0;
+      const b = v <= 0.25 ? 3 : v <= 0.5 ? 2 : v <= 0.75 ? 1 : 0;
       const cps = m.compactions_per_session;
       return cps !== void 0 && cps > 0.5 ? Math.min(b, 1) : b;
     }
@@ -3530,7 +3659,8 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
     },
     tokens: null,
     contextPerTurn: null,
-    axisMetrics: []
+    axisMetrics: [],
+    toolUsage: []
   };
   const info = { unknownModels: false, estimatedShare: 0, samples: {}, sinceSessions: 0 };
   const unavailable = (reason) => ({ sessions: { ...base, status: "unavailable", reason }, info });
@@ -3683,10 +3813,28 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
   const subTool = fsum(sinceFiles, "subToolUse") + sinceSubs.reduce((s, [, f]) => s + f.c.subToolUse, 0);
   const allTool = mainTool + subTool;
   const allErr = fsum(sinceFiles, "toolErrors") + fsum(sinceFiles, "subToolErrors") + sinceSubs.reduce((s, [, f]) => s + f.c.subToolErrors, 0);
+  const toolCats = /* @__PURE__ */ new Map();
+  for (const f of [...sinceFiles, ...sinceSubs.map(([, x]) => x)]) {
+    for (const [cat, [calls, errs]] of Object.entries(f.tools ?? {})) {
+      const t = toolCats.get(cat) ?? [0, 0];
+      t[0] += calls;
+      t[1] += errs;
+      toolCats.set(cat, t);
+    }
+  }
+  const bash = toolCats.get("Bash") ?? [0, 0];
+  let nbCalls = 0;
+  let nbErr = 0;
+  for (const [cat, [calls, errs]] of toolCats) if (cat !== "Bash") {
+    nbCalls += calls;
+    nbErr += errs;
+  }
   const metrics = [];
-  const push = (axis, metricId, value, unit, sampleSize) => {
-    if (sampleSize > 0 && Number.isFinite(value)) metrics.push({ axis, metricId, value, unit, sampleSize, sinceConfig: configSinceMs2 !== null });
+  const push = (axis, metricId, value, unit, sampleSize, sinceConfig = configSinceMs2 !== null) => {
+    if (sampleSize > 0 && Number.isFinite(value)) metrics.push({ axis, metricId, value, unit, sampleSize, sinceConfig });
   };
+  push("execution_stability", "non_bash_tool_error_rate", nbCalls ? r4(nbErr / nbCalls) : NaN, "ratio", nbCalls);
+  push("execution_stability", "bash_error_rate", bash[0] ? r4(bash[1] / bash[0]) : NaN, "ratio", bash[0]);
   push("execution_stability", "tool_error_rate", allTool ? r4(allErr / allTool) : NaN, "ratio", allTool);
   const mainErr = fsum(sinceFiles, "toolErrors");
   push("execution_stability", "tool_error_recovery_rate", mainErr ? r4(fsum(sinceFiles, "recovered") / mainErr) : NaN, "ratio", mainErr);
@@ -3705,6 +3853,7 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
   let inSum = 0;
   let respN = 0;
   const sinceCtx = [];
+  const sinceRatio = [];
   const sinceWeight = /* @__PURE__ */ new Map();
   for (const i of slots) {
     if (!sinceKeys.has(rs.session(i))) continue;
@@ -3713,19 +3862,30 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
     crSum += v[3];
     inSum += rs.ctx(i);
     addTo(sinceWeight, rs.model(i), v);
-    if (!rs.side(i)) sinceCtx.push(rs.ctx(i));
+    if (!rs.side(i)) {
+      sinceCtx.push(rs.ctx(i));
+      const win = contextWindow(rs.model(i));
+      if (win) sinceRatio.push(rs.ctx(i) / win);
+    }
   }
   push("cost_efficiency", "cache_hit_ratio", inSum ? r4(crSum / inSum) : NaN, "ratio", respN);
   push("cost_efficiency", "weighted_tokens_per_session", r1(bucketOut(sinceWeight).bucket.weighted / n), "tokens", n);
   const sc = sortNum(sinceCtx);
+  const sr = sortNum(sinceRatio);
+  push("context_efficiency", "context_p90_window_ratio", sr.length ? r4(quantile(sr, 0.9)) : NaN, "ratio", sr.length);
   push("context_efficiency", "context_p90_tokens", quantile(sc, 0.9), "tokens", sc.length);
   push("context_efficiency", "compactions_per_session", r4(fsum(sinceFiles, "compactions") / n), "per_session", n);
   const gaps = sortNum(sinceFiles.flatMap((f) => f.openGap !== null ? [...f.gaps, f.openGap] : f.gaps));
   push("autonomy", "tool_calls_between_prompts_p50", quantile(gaps, 0.5), "count", gaps.length);
   push("autonomy", "human_prompts_per_session", r4(fsum(sinceFiles, "humanPrompts") / n), "per_session", n);
   push("verification_gate_strength", "hook_blocks_per_session", r4(fsum(sinceFiles, "hookBlocks") / n), "per_session", n);
+  for (const l of ["bot", "worker"]) {
+    const x = base.tokens.byLocation.find((b) => b.location === l);
+    push("cost_efficiency", `${l}_weighted_share`, x.weightedShare, "ratio", x.sessions, false);
+  }
   base.axisMetrics = metrics;
-  info.samples = { sessions: n, tool_calls_all: allTool, tool_calls_main: mainTool };
+  base.toolUsage = [...toolCats.keys()].sort(compareCodeUnits).map((tool) => ({ tool, calls: toolCats.get(tool)[0], errors: toolCats.get(tool)[1] }));
+  info.samples = { sessions: n, tool_calls_all: allTool, tool_calls_non_bash: nbCalls, tool_calls_main: mainTool };
   info.sinceSessions = n;
   if (skippedRatio > 0.05) {
     base.status = "partial";
@@ -3893,7 +4053,7 @@ function computeMaturity(axes, sessions, info = {}) {
       a.maturity = { state: "predicted", measurable: true, requirement, current: null, progress: null, blockedReason: blocked };
       continue;
     }
-    const current = m.unit === "sessions" ? samples.sessions ?? 0 : a.axis === "execution_stability" ? samples.tool_calls_all ?? 0 : samples.tool_calls_main ?? 0;
+    const current = m.unit === "sessions" ? samples.sessions ?? 0 : a.axis === "execution_stability" ? samples.tool_calls_non_bash ?? 0 : samples.tool_calls_main ?? 0;
     const progress = roundHalfEven(Math.min(1, current / m.required), 4);
     const rule = BAND_RULES[a.axis];
     const main2 = rule && metric(rule.metric);
@@ -3922,6 +4082,12 @@ function computeMaturity(axes, sessions, info = {}) {
     };
   }
   return axes;
+}
+function emptyAreaKind(a) {
+  var _a;
+  if (a.levelStatus === "unknown") return "unknown";
+  if (a.levelStatus === "assessed" && a.level === 0 && ((_a = a.maturity) == null ? void 0 : _a.state) !== "measured") return "unconfigured";
+  return null;
 }
 function computeTensions(col, axes) {
   const evs = col.evidence.filter((e) => !e.void);
@@ -4006,7 +4172,8 @@ function emptySessions(status, reason) {
     dedup: { assistantLines: 0, uniqueResponses: 0, excludedSynthetic: 0, excludedApiError: 0 },
     tokens: null,
     contextPerTurn: null,
-    axisMetrics: []
+    axisMetrics: [],
+    toolUsage: []
   };
 }
 var NO_INFO = { unknownModels: false, estimatedShare: 0, samples: {}, sinceSessions: 0 };
@@ -4142,8 +4309,8 @@ function runSemanticChecks(doc) {
   {
     const expected = /* @__PURE__ */ new Map();
     for (const a of engine.axes) {
-      if (a.levelStatus === "assessed" && a.level === 0) expected.set(a.axis, "unconfigured");
-      if (a.levelStatus === "unknown") expected.set(a.axis, "unknown");
+      const kind = emptyAreaKind(a);
+      if (kind) expected.set(a.axis, kind);
     }
     const problems = [];
     const actual = new Map(llm.currentTradeoffs.emptyAreas.map((e) => [e.axis, e.kind]));
@@ -4615,7 +4782,7 @@ function interpretationTemplate(axes, comparison) {
       investForgo: { summary: "", invested: [], forgone: [], evidenceIds: [] },
       componentTradeoffs: [],
       axisTensions: [],
-      emptyAreas: axes.filter((a) => a.levelStatus === "assessed" && a.level === 0 || a.levelStatus === "unknown").map((a) => ({ axis: a.axis, kind: a.levelStatus === "unknown" ? "unknown" : "unconfigured", meaning: "", howToConfirm: "" }))
+      emptyAreas: axes.filter((a) => emptyAreaKind(a)).map((a) => ({ axis: a.axis, kind: emptyAreaKind(a), meaning: "", howToConfirm: "" }))
     },
     changeTradeoffs: comparison ? [] : null,
     limitations: []

@@ -3,7 +3,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
-import { analyze, engine, exampleInterpretation, makeProject, readJson, repoRoot, swapFixture } from './helpers.mjs';
+import { alignedInterpretation, analyze, engine, exampleInterpretation, makeProject, readJson, repoRoot, swapFixture } from './helpers.mjs';
 import { appendResponse, writeDenseLogs, writeSyntheticLogs } from './support/synth-sessions.mjs';
 
 test('재분석 엔진 시간·메모리·LLM 입력 인벤토리가 예산 안에 있다', (t) => {
@@ -45,7 +45,7 @@ test('큰 세션 기록: 최초 집계 메모리 200MiB 이하, 증분 재분석
   const draft1 = readJson(path.join(path.dirname(first.json.compactInventoryPath), 'draft.json'));
   assert.equal(draft1.engine.sessions.status, 'available');
   assert.equal(draft1.engine.sessions.coverage.sessionsAttributed, 300);
-  writeFileSync(first.json.interpretationPath, readFileSync(exampleInterpretation('harness-before')));
+  writeFileSync(first.json.interpretationPath, alignedInterpretation(exampleInterpretation('harness-before'), first.json.interpretationTemplatePath));
   const fin = engine(['finalize', '--project', p.project, '--out', p.out, '--run', first.json.runId, '--now', '2026-11-27T09:00:00Z', '--no-open', '--json'], { configDir });
   assert.equal(fin.code, 0, fin.stdout);
   appendResponse(files[1], { sid: 'syn-session-1', project: p.project, id: 'msg_perf_new', t: Date.parse('2026-11-27T10:00:00Z'), usage: { input_tokens: 1, cache_creation_input_tokens: 1, cache_read_input_tokens: 1, output_tokens: 1 } });
@@ -75,7 +75,7 @@ function denseBudget(t, { events }) {
   assert.equal(draft1.engine.sessions.dedup.uniqueResponses, 120000);
   assert.ok(rss(draft1) <= 200 * 1024 * 1024, `최초 RSS ${rss(draft1)}`);
   if (events) assert.equal(draft1.engine.sessions.axisMetrics.find((m) => m.metricId === 'tool_error_rate').sampleSize, 240000);
-  writeFileSync(first.json.interpretationPath, readFileSync(exampleInterpretation('harness-before')));
+  writeFileSync(first.json.interpretationPath, alignedInterpretation(exampleInterpretation('harness-before'), first.json.interpretationTemplatePath));
   const fin = engine(['finalize', '--project', p.project, '--out', p.out, '--run', first.json.runId, '--now', '2026-11-27T09:00:00Z', '--no-open', '--json'], { configDir });
   assert.equal(fin.code, 0, fin.stdout);
   // 확정 상태(응답 12만 개, 이벤트 키)를 읽어 들이는 증분 재분석

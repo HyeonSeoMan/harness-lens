@@ -3,7 +3,7 @@
 사용자 LLM이 Harness Lens 분석을 수행하는 표준 절차다. `SKILL.md`가 호출되면 이 문서를 처음부터 끝까지 순서대로 따른다.
 
 - 결과 계약: `schemas/analysis.schema.json` (schemaVersion `0.1`)
-- 수준 판정 기준: `references/evaluation-rubric.md` (rubricVersion `0.2`)
+- 수준 판정 기준: `references/evaluation-rubric.md` (rubricVersion `0.3`)
 - 엔진 명령: `docs/spec/engine-cli.md` (저장소 문서. 배포본에는 아래 요약만 있다)
 
 ## 0. 역할 분담
@@ -59,7 +59,7 @@ LLM은 수준, 범위, 지표, 변경 목록을 만들거나 고치지 않는다
 
 ### 2.2 압축 인벤토리 읽기
 
-엔진은 세션 기록을 숫자로만 집계한다(`engine.sessions`). `sessions.status`가 `unavailable`이거나 `disabled`면 모든 축이 예측 상태이고 `measured` finding을 쓰지 않는다. `available`·`partial`이면 `axisMetrics`의 `metricId`를 `metricRefs`로 인용해 `measured` finding을 쓸 수 있다. 실측 대역 임계값은 휴리스틱이고, 구성과 지표의 관계는 상관관계로만 쓴다. 봇 채팅이 토큰 대부분을 차지하면(`byLocation`의 `bot`) 조율 비용임을 밝힌다.
+엔진은 세션 기록을 숫자로만 집계한다(`engine.sessions`). `sessions.status`가 `unavailable`이거나 `disabled`면 모든 축이 예측 상태이고 `measured` finding을 쓰지 않는다. `available`·`partial`이면 `axisMetrics`의 `metricId`를 `metricRefs`로 인용해 `measured` finding을 쓸 수 있다. 실측 대역 임계값은 휴리스틱이고, 구성과 지표의 관계는 상관관계로만 쓴다. 봇 채팅이 토큰 대부분을 차지하면(`byLocation`의 `bot`) 조율 비용임을 밝히고, 그 finding은 참고 지표 `bot_weighted_share`(워커는 `worker_weighted_share`)를 `metricRefs`로 인용한다. 참고 지표(대역 없음: `cache_hit_ratio`, `tool_error_rate`, `bash_error_rate`, `context_p90_tokens` 등)는 실측 대역의 근거로 쓰지 않는다. 도구별 호출·오류는 `sessions.toolUsage`에 있다(Bash 비정상 종료는 정상 결과일 수 있다).
 
 - `compactInventoryPath` 파일 하나만 읽는다. 이 파일에는 다음이 들어 있다.
   - `meta`
@@ -87,7 +87,7 @@ LLM은 수준, 범위, 지표, 변경 목록을 만들거나 고치지 않는다
 | `currentTradeoffs.investForgo` | `invested`는 엔진 수준 2 이상인 축만, `forgone`은 1 이하이거나 판정 불가인 축만 쓴다. 한 축을 양쪽에 넣지 않는다 |
 | `currentTradeoffs.componentTradeoffs` | 득(`gains`)과 실(`costs`)이 함께 있는 구성 요소. 각 항목에 근거 1개 이상 |
 | `currentTradeoffs.axisTensions` | `engine.tensionCandidates`에 있는 `tensionId`만 쓴다. 후보가 현재 구성에서 의미가 없다고 판단하면 빼도 된다. 새 긴장을 만들지 않는다 |
-| `currentTradeoffs.emptyAreas` | 엔진 수준이 0인 축은 `unconfigured`로, `levelStatus: "unknown"`인 축은 `unknown`으로 **빠짐없이**, 그 외 축은 넣지 않는다 |
+| `currentTradeoffs.emptyAreas` | 엔진 수준이 0이고 실측 상태(`maturity.state: "measured"`)가 아닌 축은 `unconfigured`로, `levelStatus: "unknown"`인 축은 `unknown`으로 **빠짐없이**, 그 외 축은 넣지 않는다. 실측 상태 축은 구조 수준이 0이어도 실측이 있으므로 빈 영역이 아니다(0.3) |
 | `changeTradeoffs` | `engine.comparison`이 `null`이면 `null`이다. 아니면 `componentChanges`의 모든 `changeId`를 하나 이상의 항목에서 다룬다. 한 항목이 여러 변경을 묶으면 `multiChangeCaveat: true`로 두고, 개별 효과를 단정하지 않는다(PRD §7.3) |
 | `limitations` | 엔진 `limitations`에 없는 해석상의 한계만 쓴다 |
 

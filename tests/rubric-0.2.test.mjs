@@ -17,7 +17,8 @@ test('사용자 설정 파일이 없으면 가능 범위를 프로젝트 근거�
   const p = makeProject('harness-before');
   t.after(p.cleanup);
   const d = draftOf(p);
-  assert.equal(d.rubricVersion, '0.2');
+  // 0.2 결정(가능 범위)은 0.3에서도 그대로다.
+  assert.equal(d.rubricVersion, '0.3');
   for (const a of d.engine.axes) {
     assert.equal(a.range.max, a.level, `${a.axis} ${JSON.stringify(a.range)}`);
     assert.ok(!a.range.reasonCodes.includes('user_scope_not_collected'));

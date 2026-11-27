@@ -22,7 +22,13 @@ export const ROLES = [
 
 export const VERIFY_CMD = ['test', 'lint', 'eslint', 'prettier --check', 'tsc', 'typecheck', 'pytest', 'ruff', 'cargo clippy', 'go vet', 'mvn verify', 'gradle check'];
 export const SPEC_CMD = ['spec', 'prd', 'acceptance', 'requirements', '명세'];
-export const BLOCK = ['exit 2', '"decision": "block"', '"permissionDecision": "deny"', '"continue": false'];
+// 0.3: 언어별 종료 관례와 따옴표 없는·작은따옴표 키(JS 객체, Python dict)를 더했다.
+const BLOCK_KEYS = [['decision', 'block'], ['permissionDecision', 'deny']];
+export const BLOCK = [
+  'exit 2', 'process.exit(2)', 'process.exitCode = 2', 'sys.exit(2)', 'os.Exit(2)',
+  ...BLOCK_KEYS.flatMap(([k, v]) => [`"${k}": "${v}"`, `'${k}': '${v}'`, `${k}: "${v}"`, `${k}: '${v}'`]),
+  '"continue": false', "'continue': False", 'continue: false',
+];
 export const REENTRY = ['stop_hook_active'];
 
 const norm = (s) => s.normalize('NFC').toLowerCase();
@@ -42,9 +48,19 @@ export function narrativeAxes(line) {
   return NARRATIVE.filter(([, words]) => hasAny(line, words)).map(([axis]) => axis);
 }
 
+// 부정 표현(LEX-NEG, 0.3). 이 표현이 든 설명 절은 역할 판정에서 뺀다("독립 리뷰어는 쓰지 않는다").
+export const NEGATION = /않|없이|없다|없음|말고|말 것|아니|n't\b|\b(?:not|never|without|no)\b/i;
+
+// 설명을 절(문장 부호·줄바꿈·쉼표)로 나누고 부정 표현이 든 절을 버린다.
+export function affirmativeClauses(text) {
+  return String(text ?? '').split(/[.!?;。\n]+|,\s+/).filter((c) => !NEGATION.test(c.normalize('NFC'))).join(' ');
+}
+
+// 0.3: name을 먼저 본다. name에 역할이 없을 때만 부정 절을 뺀 description을 본다.
 export function detectRole(name, description) {
-  const text = `${name ?? ''} ${description ?? ''}`;
-  for (const [role, words] of ROLES) if (hasAny(text, words)) return role;
+  for (const text of [name ?? '', affirmativeClauses(description)]) {
+    for (const [role, words] of ROLES) if (hasAny(text, words)) return role;
+  }
   return null;
 }
 

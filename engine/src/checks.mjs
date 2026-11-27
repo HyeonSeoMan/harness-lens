@@ -1,4 +1,5 @@
 // docs/spec/engine-cli.md §9 validate 의미 검사(V-*). 스키마로 표현할 수 없는 교차 참조·일관성 규칙을 확인한다.
+import { emptyAreaKind } from './rubric.mjs';
 
 const AXES = [
   'spec_clarity', 'verification_gate_strength', 'execution_stability', 'throughput',
@@ -115,12 +116,12 @@ export function runSemanticChecks(doc) {
     record('V-AXIS-NOTES', problems);
   }
 
-  // V-EMPTY-AREAS: 빈 영역은 엔진의 수준 0(unconfigured)·판정 불가(unknown) 축과 정확히 일치한다.
+  // V-EMPTY-AREAS: 빈 영역은 엔진의 수준 0(unconfigured, 실측 상태 제외)·판정 불가(unknown) 축과 정확히 일치한다.
   {
     const expected = new Map();
     for (const a of engine.axes) {
-      if (a.levelStatus === 'assessed' && a.level === 0) expected.set(a.axis, 'unconfigured');
-      if (a.levelStatus === 'unknown') expected.set(a.axis, 'unknown');
+      const kind = emptyAreaKind(a);
+      if (kind) expected.set(a.axis, kind);
     }
     const problems = [];
     const actual = new Map(llm.currentTradeoffs.emptyAreas.map((e) => [e.axis, e.kind]));

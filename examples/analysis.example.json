@@ -1,6 +1,6 @@
 {
   "schemaVersion": "0.1",
-  "rubricVersion": "0.2",
+  "rubricVersion": "0.3",
   "meta": {
     "snapshotId": "20261127T091500Z-3f9a1c2e",
     "analyzedAt": "2026-11-27T09:15:00Z",
@@ -183,9 +183,9 @@
           "current": 640, "progress": 1, "blockedReason": null
         },
         "measured": {
-          "band": 2, "bandRuleId": "ES-M-01", "heuristic": true,
+          "band": 2, "bandRuleId": "ES-M-02", "heuristic": true,
           "metrics": [
-            { "metricId": "tool_error_rate", "value": 0.031, "unit": "ratio" },
+            { "metricId": "non_bash_tool_error_rate", "value": 0.031, "unit": "ratio" },
             { "metricId": "tool_error_recovery_rate", "value": 0.9, "unit": "ratio" }
           ],
           "predictedLevel": 3, "deltaFromPredicted": -1, "sampleSize": 640
@@ -207,9 +207,8 @@
         "source": { "ruleId": "CE-L2-01", "evidenceIds": ["ev_00000000000d"], "capRuleIds": [] },
         "range": { "min": 2, "max": 3, "reasonCodes": ["user_scope_not_collected"] },
         "maturity": {
-          "state": "predicted", "measurable": true,
-          "requirement": { "unit": "sessions", "required": 20, "heuristic": true },
-          "current": 12, "progress": 0.6, "blockedReason": null
+          "state": "predicted", "measurable": false,
+          "requirement": null, "current": null, "progress": null, "blockedReason": "band_metric_undefined"
         },
         "measured": null
       },
@@ -319,14 +318,25 @@
         ]
       },
       "axisMetrics": [
-        { "axis": "execution_stability", "metricId": "tool_error_rate", "value": 0.031, "unit": "ratio", "sampleSize": 640, "sinceConfig": true },
+        { "axis": "execution_stability", "metricId": "non_bash_tool_error_rate", "value": 0.031, "unit": "ratio", "sampleSize": 640, "sinceConfig": true },
+        { "axis": "execution_stability", "metricId": "bash_error_rate", "value": 0.12, "unit": "ratio", "sampleSize": 250, "sinceConfig": true },
+        { "axis": "execution_stability", "metricId": "tool_error_rate", "value": 0.0562, "unit": "ratio", "sampleSize": 890, "sinceConfig": true },
         { "axis": "execution_stability", "metricId": "tool_error_recovery_rate", "value": 0.9, "unit": "ratio", "sampleSize": 20, "sinceConfig": true },
         { "axis": "throughput", "metricId": "turn_duration_p50_ms", "value": 41000, "unit": "ms", "sampleSize": 98, "sinceConfig": true },
         { "axis": "cost_efficiency", "metricId": "cache_hit_ratio", "value": 0.934, "unit": "ratio", "sampleSize": 3105, "sinceConfig": false },
+        { "axis": "context_efficiency", "metricId": "context_p90_window_ratio", "value": 0.092, "unit": "ratio", "sampleSize": 1480, "sinceConfig": false },
         { "axis": "context_efficiency", "metricId": "context_p90_tokens", "value": 92000, "unit": "tokens", "sampleSize": 1480, "sinceConfig": false },
         { "axis": "context_efficiency", "metricId": "compactions_per_session", "value": 0.1, "unit": "per_session", "sampleSize": 31, "sinceConfig": false },
         { "axis": "autonomy", "metricId": "tool_calls_between_prompts_p50", "value": 6, "unit": "count", "sampleSize": 98, "sinceConfig": true },
-        { "axis": "autonomy", "metricId": "human_prompts_per_session", "value": 8.2, "unit": "per_session", "sampleSize": 12, "sinceConfig": true }
+        { "axis": "autonomy", "metricId": "human_prompts_per_session", "value": 8.2, "unit": "per_session", "sampleSize": 12, "sinceConfig": true },
+        { "axis": "cost_efficiency", "metricId": "bot_weighted_share", "value": 0.21, "unit": "ratio", "sampleSize": 3, "sinceConfig": false },
+        { "axis": "cost_efficiency", "metricId": "worker_weighted_share", "value": 0.18, "unit": "ratio", "sampleSize": 6, "sinceConfig": false }
+      ],
+      "toolUsage": [
+        { "tool": "Bash", "calls": 250, "errors": 30 },
+        { "tool": "Edit", "calls": 210, "errors": 9 },
+        { "tool": "Read", "calls": 380, "errors": 10 },
+        { "tool": "mcp", "calls": 50, "errors": 1 }
       ]
     },
     "selfCost": {

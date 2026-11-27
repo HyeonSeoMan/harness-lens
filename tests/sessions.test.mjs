@@ -65,6 +65,10 @@ test('귀속: cwd 기준 direct·worker(gitdir·추정)·subagent, 매핑 없는
   assert.equal(draft.meta.analysisType, 'static_with_sessions');
   assert.ok(draft.engine.limitations.some((l) => l.code === 'estimated_attribution_included'));
   assert.ok(draft.engine.limitations.some((l) => l.code === 'unattributed_sessions'));
+  // #9(0.3): 위치별 환산값 비중을 CE 참고 지표(대역 없음, 누적 전체)로 싣는다. measured finding이 인용할 수 있다.
+  const share = (id) => s.axisMetrics.find((m) => m.metricId === id);
+  assert.deepEqual(share('bot_weighted_share'), { axis: 'cost_efficiency', metricId: 'bot_weighted_share', value: loc(s, 'bot').weightedShare, unit: 'ratio', sampleSize: 1, sinceConfig: false });
+  assert.deepEqual(share('worker_weighted_share'), { axis: 'cost_efficiency', metricId: 'worker_weighted_share', value: loc(s, 'worker').weightedShare, unit: 'ratio', sampleSize: 2, sinceConfig: false });
   const ex = draft.engine.limitations.find((l) => l.code === 'unrelated_sessions_excluded');
   assert.ok(ex && ex.message.includes('1개'), '제외 세션 수를 limitations에 투명하게 남긴다');
 });
@@ -207,11 +211,16 @@ test('성숙도: 표본이 요구량에 닿은 축만 실측으로 바뀌고, �
   assert.equal(tp.maturity.progress, 0.8);
 
   writeSyntheticLogs(logs.configDir, { project: p.project, sessions: 30, prefix: 'more' });
-  const r = analyze({ project: p.project, out: p.out, now: NOW, interpretation: exampleInterpretation('harness-before'), configDir: logs.configDir });
+  // 0.3: 실측 상태가 된 축(throughput 수준 0)은 빈 영역에서 빠진다.
+  const r = analyze({ project: p.project, out: p.out, now: NOW, interpretation: exampleInterpretation('harness-before'), configDir: logs.configDir, align: true });
   assert.equal(r.fin.code, 0, r.fin.stdout);
+  assert.ok(!readJson(r.prep.json.interpretationTemplatePath).currentTradeoffs.emptyAreas.some((e) => e.axis === 'throughput'), '실측 축은 빈 영역이 아니다');
   const axes = readJson(r.fin.json.analysisPath).engine.axes;
   const measured = axes.filter((a) => a.maturity.state === 'measured').map((a) => a.axis).sort();
-  assert.deepEqual(measured, ['autonomy', 'context_efficiency', 'cost_efficiency', 'execution_stability', 'throughput']);
+  assert.deepEqual(measured, ['autonomy', 'context_efficiency', 'execution_stability', 'throughput']);
+  // 0.3: CE는 대역 지표가 정해질 때까지 예측(cache_hit_ratio는 참고 지표).
+  const ce = axes.find((a) => a.axis === 'cost_efficiency');
+  assert.deepEqual([ce.maturity.measurable, ce.maturity.state, ce.maturity.blockedReason], [false, 'predicted', 'band_metric_undefined']);
   for (const a of axes.filter((x) => !x.maturity.measurable)) assert.equal(a.maturity.state, 'predicted');
   for (const a of axes.filter((x) => x.measured)) {
     assert.equal(a.measured.heuristic, true);

@@ -3,7 +3,7 @@
 - 대상: MVP 1 결정론적 엔진 `skills/harness-analyze/scripts/harness-lens.mjs`(소스 `engine/`)
 - 관련: PRD v0.3 §5, FR-02~FR-11, §6.1, §9, §11, §11.1, §14.1 / `docs/research/01~03`
 - 데이터 계약: `skills/harness-analyze/schemas/analysis.schema.json` (schemaVersion `0.1`)
-- 수준 규칙: `skills/harness-analyze/references/evaluation-rubric.md` (rubricVersion `0.2`)
+- 수준 규칙: `skills/harness-analyze/references/evaluation-rubric.md` (rubricVersion `0.3`)
 - LLM 절차: `skills/harness-analyze/references/analysis-protocol.md`
 
 ## 1. 원칙
@@ -344,8 +344,8 @@ finalize = validate → snapshot → render
 ### 8.1 읽는 필드(허용 목록)
 
 - 공통: `type`, `uuid`, `sessionId`, `isSidechain`, `agentId`, `timestamp`, `cwd`, `version`, `origin.kind`
-- `assistant`: `message.id`, `requestId`, `message.model`, `isApiErrorMessage`, `message.usage`의 `input_tokens`, `cache_creation_input_tokens`, `cache_creation.ephemeral_5m_input_tokens`, `cache_creation.ephemeral_1h_input_tokens`, `cache_read_input_tokens`, `output_tokens`, `message.content[].type`, `tool_use`의 `name`
-- `user`: `message.content[]`의 `tool_result.is_error`, 사람 입력 여부(`origin.kind`)
+- `assistant`: `message.id`, `requestId`, `message.model`, `isApiErrorMessage`, `message.usage`의 `input_tokens`, `cache_creation_input_tokens`, `cache_creation.ephemeral_5m_input_tokens`, `cache_creation.ephemeral_1h_input_tokens`, `cache_read_input_tokens`, `output_tokens`, `message.content[].type`, `tool_use`의 `name`·`id`
+- `user`: `message.content[]`의 `tool_result.is_error`·`tool_use_id`, 사람 입력 여부(`origin.kind`)
 - `system`: `subtype`, `durationMs`(turn_duration), `compactMetadata.preTokens`·`postTokens`·`trigger`, `retryAttempt`
 - `attachment`: `attachment.type`, `attachment.hookEvent`, `attachment.exitCode`
 - 봇 자동 귀속(§8.3 규칙 4)에서만 `tool_use.input`의 문자열 값에 프로젝트 루트 경로가 들어 있는지 부분 문자열로 확인한다. 결과는 불리언 하나만 남기고 값을 저장하지 않는다.
@@ -395,7 +395,7 @@ finalize = validate → snapshot → render
 - 파일 찾기: `<config-dir>/projects/*/*.jsonl`(메인)과 `<config-dir>/projects/*/<sessionId>/subagents/agent-*.jsonl`. `tool-results/`, `memory/`, `*.meta.json`은 열지 않는다.
 - 읽기: 1MiB 단위 `readSync`로 줄을 나눈다. 16MiB를 넘는 줄은 버퍼에 모으지 않고 건너뛴다(`linesSkipped`). 256KiB를 넘는 줄은 앞 120바이트의 `"type"`만 보고, 해석하지 않는 타입(§8.1 밖, 예: `api-request-blob`)이면 파싱하지 않는다.
 - 키 파일 무결성: `cursor.json`의 `keyFiles`에 `archived-keys.bin`·`events.bin`의 키 개수와 sha256 앞 8바이트를 적는다. 읽을 때 길이(8의 배수, 개수 일치), 해시, 엄격한 오름차순을 확인한다. 하나라도 어긋나면(잘림·비움·삭제·덮어쓰기·정렬 깨짐) 누적 상태 전체를 손상으로 보고 처음부터 다시 만든다(`limitations`의 `session_state_rebuilt`, 원문 없이 코드와 고정 문구만).
-- 커서(`cursor.json`): `{ parserVersion, rootPathHash, keyFiles, files: { <파일 경로 해시>[~g<세대>]: { kind, gen, inode, size, mtimeMs, offset, fp, present, session, cls, botMention, versions, firstTs, lastTs, c: {카운터}, durations, gaps, openGap, pendingError } } }`
+- 커서(`cursor.json`): `{ parserVersion, rootPathHash, keyFiles, files: { <파일 경로 해시>[~g<세대>]: { kind, gen, inode, size, mtimeMs, offset, fp, present, session, cls, botMention, versions, firstTs, lastTs, c: {카운터}, durations, gaps, openGap, pendingError, tools, openTools } } }`
   - 지문(`fp`): 커서까지 읽은 앞부분의 첫 4KiB와 커서 직전 4KiB의 해시다. inode·크기·수정 시각이 모두 같으면 읽지 않는다. 하나라도 바뀌면 지문을 다시 계산해, 크기가 offset 이상이고 지문이 같으면(이어 쓰기, 같은 내용으로 원자적 교체) 커서부터 이어 읽는다.
   - 크기가 offset보다 작아졌거나 지문이 다르면(같은 경로로 회전, copytruncate 뒤 재성장, 재작성) 새 세대로 보고 처음부터 읽는다. 이전 세대는 `<경로 해시>~g<세대>` 항목(`present: false`)으로 남겨 그 세션의 귀속과 카운터를 보존한다. 응답과 이벤트는 전역으로 한 번만 세므로 같은 내용을 다시 읽어도 늘지 않는다.
   - 파일을 읽다 실패하면 그 파일의 상태와 새 이벤트 키를 반영하지 않고 다음 실행에서 다시 읽는다.
@@ -424,10 +424,12 @@ finalize = validate → snapshot → render
 
 ### 8.6 축 지표와 성숙도
 
-- 축 지표(`axisMetrics`)는 `configSince` 이후에 시작한 프로젝트·워커 세션만으로 계산한다(`sinceConfig: true`). 봇 채팅은 조율 비용이라 넣지 않는다. 서브에이전트는 `tool_error_rate`와 `cache_hit_ratio`에만 넣는다(루브릭 §1.9).
+- 축 지표(`axisMetrics`)는 `configSince` 이후에 시작한 프로젝트·워커 세션만으로 계산한다(`sinceConfig: true`). 봇 채팅은 조율 비용이라 넣지 않는다. 서브에이전트는 도구 오류 지표와 `cache_hit_ratio`, `toolUsage`에만 넣는다(루브릭 §1.9). 예외로 `bot_weighted_share`·`worker_weighted_share`는 누적 집계 전체의 위치별 비중이다(`sinceConfig: false`).
 - 표본이 0인 지표는 싣지 않는다. 지표 목록과 정의는 루브릭 §1.9 표다.
 - `configSince` = min(같은 구성 해시가 이어진 마지막 스냅샷 묶음의 첫 `analyzedAt`, 수집한 프로젝트 설정 파일의 최근 수정 시각(초 단위로 내림)), 그리고 `--now`를 넘지 않는다. 첫 분석과 두 번째 분석이 같은 값을 갖도록 수정 시각을 함께 본다.
-- 성숙도: 표본(세션 수, 또는 도구 호출 수 — ES는 서브에이전트 포함, AU는 메인 스레드만)이 요구량에 닿고 대역 지표가 있으면 `measured`다. 닿지 않으면 `blockedReason: "insufficient_samples"`, 지표가 없으면 `"metric_unavailable"`이다.
+- 도구별 집계 `toolUsage`: 축 지표와 같은 범위의 도구 분류별 `{ tool, calls, errors }`(루브릭 §1.9). `tool_result`의 도구는 `tool_use_id`로 잇고, 결과를 아직 못 본 호출은 커서의 `openTools`(id 해시 → 분류)에 둔다.
+- 컨텍스트 창 크기: `engine/src/model-windows.mjs`(`CONTEXT_WINDOW_TABLE_VERSION` `2026-11-27`). 모델 이름 정규화는 가격표와 같다.
+- 성숙도: 표본(세션 수, 또는 도구 호출 수 — ES는 Bash를 뺀 도구 호출(서브에이전트 포함), AU는 메인 스레드만)이 요구량에 닿고 대역 지표가 있으면 `measured`다. 닿지 않으면 `blockedReason: "insufficient_samples"`, 지표가 없으면 `"metric_unavailable"`이다.
 - 직전 분석 자기 비용: 이전 스냅샷의 `meta.analyzedAt` ~ `validation.checkedAt` 구간에 시각이 있는, 이 프로젝트(direct·worker)에 귀속된 메인 스레드 응답을 더한다. 같은 시간대의 다른 작업도 함께 들어간다.
 
 ## 9. 검증 검사 목록 (`validate`)
@@ -447,7 +449,7 @@ finalize = validate → snapshot → render
 | V-REF-METRIC | `findings[].metricRefs`가 `sessions.axisMetrics[].metricId`에 있다 |
 | V-SINGLE-ATTRIBUTION | 축 판정 근거가 그 축을 주 축으로 가지며, 무력화되지 않았고, 두 축에 쓰이지 않는다 |
 | V-AXIS-NOTES | `axisNotes`가 8개 축을 정확히 하나씩 덮는다 |
-| V-EMPTY-AREAS | `emptyAreas`가 수준 0 축(`unconfigured`)과 판정 불가 축(`unknown`)과 정확히 같다 |
+| V-EMPTY-AREAS | `emptyAreas`가 실측 상태가 아닌 수준 0 축(`unconfigured`)과 판정 불가 축(`unknown`)과 정확히 같다 |
 | V-INVEST-FORGO | `invested` 축은 수준 2 이상, `forgone` 축은 1 이하 또는 판정 불가, 서로 겹치지 않는다 |
 | V-RANGE | 표시 값(실측이면 band, 아니면 level)이 `range` 안에 있고 `min ≤ max`다 |
 | V-MATURITY | 진행도 = min(1, current ÷ required), 상태와 진행도가 맞고, `deltaFromPredicted` = band − predictedLevel이다 |
