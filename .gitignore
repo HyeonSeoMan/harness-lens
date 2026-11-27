@@ -1,3 +1,4 @@
 .DS_Store
 .harness-lens/
 node_modules/
+.bundle-check/

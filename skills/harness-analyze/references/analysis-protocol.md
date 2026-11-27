@@ -50,12 +50,14 @@ LLM은 수준, 범위, 지표, 변경 목록을 만들거나 고치지 않는다
 
    | 코드 | 행동 |
    |---|---|
-   | 0 | 다음 단계로 간다. stdout JSON의 `runId`, `compactInventoryPath`, `interpretationPath`를 기억한다 |
+   | 0 | 다음 단계로 간다. stdout JSON의 `runId`, `compactInventoryPath`, `interpretationTemplatePath`, `interpretationPath`(절대 경로)를 기억한다 |
    | 10 | 엔진이 출력한 설치 안내 한 줄을 그대로 전하고 **종료한다**. LLM만으로 대체 분석하지 않는다 |
    | 11 | 다른 분석이 진행 중이거나 결과 디렉터리에 쓸 수 없다. 메시지를 전하고 종료한다 |
    | 그 외 | 엔진 메시지를 한 줄로 전하고 종료한다. 부분 결과를 해석하지 않는다 |
 
 ### 2.2 압축 인벤토리 읽기
+
+세션 기록 실측 집계(`aggregate-sessions`)는 엔진 v0.1.0에서 아직 구현되지 않았다. 이때 `sessions.status`는 `unavailable`(`reason: session_aggregation_not_implemented`)이고 모든 축이 예측 상태다. `measured` finding을 쓰지 않는다.
 
 - `compactInventoryPath` 파일 하나만 읽는다. 이 파일에는 다음이 들어 있다.
   - `meta`
@@ -72,7 +74,7 @@ LLM은 수준, 범위, 지표, 변경 목록을 만들거나 고치지 않는다
 
 ### 2.3 해석 작성
 
-`interpretationPath`에 `interpretation` 객체 하나만 JSON으로 쓴다(최상위 문서 전체가 아니다). 모든 서술은 한국어로, 식별자(축 ID, 규칙 ID, 근거 ID, 키 이름)는 원문대로 쓴다.
+`interpretationTemplatePath`의 골격을 읽어 채운 뒤 `interpretationPath`에 `interpretation` 객체 하나만 JSON으로 쓴다(최상위 문서 전체가 아니다). 골격에는 8개 축의 `axisNotes`와 엔진이 정한 `emptyAreas`의 `axis`·`kind`가 미리 들어 있다. 빈 문자열과 빈 배열을 채우고, 미리 채운 `axis`·`kind`는 바꾸지 않는다. 형식 예시는 저장소 `examples/interpretations/`에 있다. 모든 서술은 한국어로, 식별자(축 ID, 규칙 ID, 근거 ID, 키 이름)는 원문대로 쓴다.
 
 | 필드 | 작성 규칙 |
 |---|---|

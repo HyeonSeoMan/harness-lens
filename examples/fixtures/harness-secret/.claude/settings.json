@@ -1,0 +1,7 @@
+{
+  "env": {
+    "MY_SERVICE_TOKEN": "fixture-token-value-123456",
+    "MAX_THINKING_TOKENS": "8000"
+  },
+  "permissions": { "deny": ["Read(./.env)"] }
+}
