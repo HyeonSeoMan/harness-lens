@@ -1,0 +1,15 @@
+{
+  "name": "harness-lens",
+  "description": "Harness Lens 플러그인 마켓플레이스 (pre-alpha)",
+  "owner": {
+    "name": "HyeonSeoMan",
+    "url": "https://github.com/HyeonSeoMan"
+  },
+  "plugins": [
+    {
+      "name": "harness-lens",
+      "source": "./",
+      "description": "하네스 구성과 변경의 트레이드오프를 읽기 전용으로 분석해 로컬 HTML 리포트로 보여주는 Skill (pre-alpha)"
+    }
+  ]
+}

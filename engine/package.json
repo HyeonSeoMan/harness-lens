@@ -1,0 +1,13 @@
+{
+  "name": "harness-lens-engine",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Harness Lens 결정론적 엔진 소스 (수집·비밀정보 제거·해시·검증·비교·렌더링)",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "build": "echo \"build: 아직 구현되지 않음. 산출물은 ../skills/harness-analyze/scripts/harness-lens.mjs\""
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/HyeonSeoMan/harness-lens/schemas/analysis.schema.json",
+  "title": "Harness Lens analysis result (placeholder)",
+  "description": "자리 표시용 스키마. 실제 결과 데이터 계약은 Spec 단계에서 확정한다(PRD 9.2).",
+  "type": "object",
+  "required": ["schemaVersion"],
+  "properties": {
+    "schemaVersion": { "type": "string" }
+  }
+}
