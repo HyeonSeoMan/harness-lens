@@ -135,8 +135,10 @@ finalize = validate → snapshot → render
     - `sessions.contextPerTurn.series`
     - `sessions.tokens.byModel`
     - `inventory.sources` 중 `status: "absent"`인 항목
-    - 대신 `knowledgeBaseKeys`(§4.4.1)를 더한다.
-    - 목표 크기는 약 6,000토큰 이하다(§12).
+    - `inventory.components[].contentHash`(변경 탐지용이라 해석에 쓰지 않는다)
+    - 값이 `null`이거나 빈 배열인 키 전부(생략 규칙). 없는 키는 스키마상 그 필드의 `null` 또는 빈 배열로 읽는다
+    - 대신 `knowledgeBaseKeys`(§4.4.1)와 `compaction`(`omitted`, `factLimitPerAxis`, `omittedFacts`)을 더한다.
+    - 목표 크기는 6,000토큰 이하다(§12). 위 생략 뒤에도 넘으면 근거 `fact`를 축(`primaryAxis`, 없으면 미귀속 묶음)별 상위 N개만 남기고 나머지 근거는 `fact` 없이 ID·구성 요소·경로·규칙만 남긴다. 순위는 그 축 수준을 정한 규칙(`axes[].source.ruleId`)의 근거 → 규칙 수준 높은 순 → 근거 ID 순이고, N은 예산 안에 드는 가장 큰 값이다(1로도 넘으면 1, 예산 초과로 보고). `draft.json`·스냅샷에는 모든 `fact`가 그대로 남는다.
   - `interpretation.template.json`: 빈 해석 골격. 미리 채우는 것은 다음 두 가지다.
     - `axisNotes`: 8개 축의 `axis`
     - `emptyAreas`: 엔진이 정한 `axis`·`kind`
