@@ -323,7 +323,10 @@ export function reportClient() {
     var cpt = sess.contextPerTurn;
     if (cpt) {
       sSec2.appendChild(el('h3', null, '턴별 컨텍스트 크기'));
-      sSec2.appendChild(el('p', null, '메인 스레드 요청 ' + num(cpt.requests) + '개의 입력 크기(새 입력+캐시 쓰기+캐시 읽기): 중앙값 ' + num(cpt.p50) + ' · p90 ' + num(cpt.p90) + ' · 최대 ' + num(cpt.max) + ' 토큰. 세션 첫 요청 중앙값 ' + num(cpt.firstRequestP50) + ' · 컨텍스트 압축 ' + cpt.compactions + '회.'));
+      var dist = cpt.distribution;
+      if (cpt.p50 === null) sSec2.appendChild(el('p', { class: 'notice' }, '최근 ' + dist.retentionDays + '일 안의 원시 요청이 없어 분포(중앙값·p90·최대)는 미확인입니다. 아래 일별 추이는 접어 둔 누적 요약입니다. 컨텍스트 압축 ' + cpt.compactions + '회.'));
+      else sSec2.appendChild(el('p', null, '메인 스레드 요청 ' + num(cpt.requests) + '개(' + dist.from + ' ~ ' + dist.to + ', 최근 ' + dist.retentionDays + '일 원시 기록)의 입력 크기(새 입력+캐시 쓰기+캐시 읽기): 중앙값 ' + num(cpt.p50) + ' · p90 ' + num(cpt.p90) + ' · 최대 ' + num(cpt.max) + ' 토큰. 세션 첫 요청 중앙값 ' + num(cpt.firstRequestP50) + ' · 컨텍스트 압축 ' + cpt.compactions + '회.'));
+      if (cpt.series.some(function (p) { return p.source === 'archive'; })) sSec2.appendChild(el('p', { class: 'muted' }, '‘근사’ 표시 날은 ' + dist.retentionDays + '일이 지나 일별 요약으로 접은 날입니다. 요청 수·최대는 정확하고 중앙값은 근사일 수 있습니다.'));
       if (cpt.series.length) sSec2.appendChild(trendChart(cpt.series));
     }
     if (sess.axisMetrics.length) {
@@ -351,14 +354,14 @@ export function reportClient() {
     [['max', 'line-max'], ['p50', 'line-p50']].forEach(function (k) {
       if (n3 > 1) g.appendChild(s('polyline', { class: k[1], points: series.map(function (p, i) { return xOf(i) + ',' + yOf(p[k[0]]); }).join(' ') }));
       series.forEach(function (p, i) {
-        g.appendChild(s('circle', { class: 'dot ' + k[1], cx: xOf(i), cy: yOf(p[k[0]]), r: 4 }, s('title', null, p.date + ' ' + (k[0] === 'max' ? '최대 ' : '중앙값 ') + num(p[k[0]]) + ' 토큰 · 요청 ' + p.requests)));
+        g.appendChild(s('circle', { class: 'dot ' + k[1], cx: xOf(i), cy: yOf(p[k[0]]), r: 4 }, s('title', null, p.date + ' ' + (k[0] === 'max' ? '최대 ' : '중앙값 ') + num(p[k[0]]) + ' 토큰 · 요청 ' + p.requests + (p.source === 'archive' ? ' · 근사' : ''))));
       });
     });
     var lg = el('ul', { class: 'legend inline' }, [
       el('li', null, [el('span', { class: 'swatch line-p50', 'aria-hidden': 'true' }), '일별 중앙값(실선)']),
       el('li', null, [el('span', { class: 'swatch line-max dashed', 'aria-hidden': 'true' }), '일별 최대(점선)']),
     ]);
-    return el('div', null, [el('div', { class: 'panel' }, [g, lg]), el('details', null, [el('summary', null, '일별 표'), table(['날짜', '요청', '중앙값', '최대'], series.map(function (p) { return [p.date, num(p.requests), num(p.p50), num(p.max)]; }))])]);
+    return el('div', null, [el('div', { class: 'panel' }, [g, lg]), el('details', null, [el('summary', null, '일별 표'), table(['날짜', '요청', '중앙값', '최대', '출처'], series.map(function (p) { return [p.date, num(p.requests), num(p.p50), num(p.max), p.source === 'archive' ? '근사(누적 요약)' : '원시 기록']; }))])]);
   }
 
   // ---------- 변경 내역 ----------

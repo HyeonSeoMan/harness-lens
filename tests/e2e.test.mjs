@@ -90,7 +90,7 @@ test('세션 기록이 없으면 사유를 남기고 모든 축을 예측으로 
   assert.equal(draft.engine.sessions.status, 'unavailable');
   assert.equal(draft.engine.sessions.tokens, null);
   assert.equal(draft.meta.analysisType, 'static');
-  assert.equal(draft.meta.engineInfo.sessionParserVersion, '1');
+  assert.equal(draft.meta.engineInfo.sessionParserVersion, '2');
   assert.ok(draft.engine.axes.every((x) => x.maturity.state === 'predicted' && x.measured === null));
   assert.ok(draft.engine.axes.filter((x) => x.maturity.measurable).every((x) => x.maturity.blockedReason === 'no_session_logs'));
   assert.ok(draft.engine.limitations.some((l) => l.code === 'no_session_logs'));

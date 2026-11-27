@@ -11,11 +11,13 @@ function rng(seed) {
 
 const iso = (ms) => new Date(ms).toISOString();
 
-// opts: { project, sessions, toolsPerSession, startMs, seed, errorRate, botDir, padBytes, version }
+// opts: { project, sessions, toolsPerSession, startMs, endMs, seed, errorRate, botDir, padBytes, version }
 // padBytes: 응답마다 붙이는 의미 없는 본문 길이(큰 기록 성능 테스트용).
+// 세션 시작은 [startMs, endMs) 안에 둔다. 세션이 많으면 간격(기본 18시간)을 좁혀 분석 시각 이후로 넘어가지 않게 한다.
 export function writeSyntheticLogs(configDir, opts) {
   const {
-    project, sessions = 24, toolsPerSession = 25, startMs = Date.parse('2026-11-05T09:00:00Z'), seed = 7, errorRate = 0.03,
+    project, sessions = 24, toolsPerSession = 25, startMs = Date.parse('2026-11-05T09:00:00Z'), endMs = Date.parse('2026-11-26T09:00:00Z'),
+    seed = 7, errorRate = 0.03,
     botDir = null, padBytes = 0, version = '2.1.320', prefix = 'syn',
   } = opts;
   const rand = rng(seed);
@@ -23,11 +25,12 @@ export function writeSyntheticLogs(configDir, opts) {
   mkdirSync(dir, { recursive: true });
   const pad = padBytes ? 'x'.repeat(padBytes) : '';
   const files = [];
+  const gap = Math.min(18 * 3600 * 1000, Math.floor((endMs - startMs) / Math.max(1, sessions)));
   for (let s = 0; s < sessions; s++) {
     const sid = `${prefix}-session-${s}`;
     const file = path.join(dir, `${sid}.jsonl`);
     const lines = [];
-    let t = startMs + s * 18 * 3600 * 1000;
+    let t = startMs + s * gap;
     let ctx = 18000 + Math.floor(rand() * 4000);
     const common = { sessionId: sid, isSidechain: false, cwd: project, version, entrypoint: 'cli' };
     let msg = 0;
@@ -70,6 +73,30 @@ export function writeSyntheticLogs(configDir, opts) {
     writeFileSync(path.join(bdir, `${sid}.jsonl`), `${lines.map((l) => JSON.stringify(l)).join('\n')}\n`);
   }
   return files;
+}
+
+// 최근 며칠에 몰린 고유 응답이 많은 기록(응답 상태 자체의 메모리 확장을 본다). 응답마다 한 줄, 본문 textBytes.
+// 기본값은 검수 재현 규모: 7일 안 400세션 × 300응답 = 12만 응답, 약 166MB.
+export function writeDenseLogs(configDir, { project, sessions = 400, responses = 300, endMs = Date.parse('2026-11-27T08:00:00Z'), spanDays = 7, textBytes = 1000 }) {
+  const dir = path.join(configDir, 'projects', '-dense-project');
+  mkdirSync(dir, { recursive: true });
+  const text = 'x'.repeat(textBytes);
+  const span = spanDays * 24 * 3600 * 1000;
+  let bytes = 0;
+  for (let s = 0; s < sessions; s++) {
+    const start = endMs - span + Math.floor((s * span) / sessions);
+    const lines = [];
+    for (let m = 0; m < responses; m++) {
+      lines.push(JSON.stringify({
+        type: 'assistant', sessionId: `dense-${s}`, cwd: project, timestamp: iso(start + m * 1000), version: '2.1.320',
+        message: { id: `m-${s}-${m}`, model: 'claude-opus-5-5', usage: { input_tokens: 3, cache_creation_input_tokens: 100, cache_read_input_tokens: 20000, output_tokens: 100 }, content: [{ type: 'text', text }] },
+      }));
+    }
+    const body = `${lines.join('\n')}\n`;
+    bytes += Buffer.byteLength(body);
+    writeFileSync(path.join(dir, `dense-${s}.jsonl`), body);
+  }
+  return { bytes, responses: sessions * responses };
 }
 
 // 기존 세션 파일 끝에 응답 하나를 덧붙인다(증분 재실행 테스트).

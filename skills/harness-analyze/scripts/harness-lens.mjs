@@ -55,7 +55,7 @@ var ENGINE_VERSION = "0.3.0";
 var VALIDATOR_VERSION = "0.3.0";
 var SCHEMA_VERSION = "0.1";
 var RUBRIC_VERSION = "0.2";
-var SESSION_PARSER_VERSION = "1";
+var SESSION_PARSER_VERSION = "2";
 var MIN_NODE_MAJOR = 20;
 var SUPPORTED_PLATFORMS = ["darwin", "linux", "win32"];
 var AXES = [
@@ -1855,7 +1855,12 @@ function reportClient() {
     var cpt = sess.contextPerTurn;
     if (cpt) {
       sSec2.appendChild(el("h3", null, "턴별 컨텍스트 크기"));
-      sSec2.appendChild(el("p", null, "메인 스레드 요청 " + num(cpt.requests) + "개의 입력 크기(새 입력+캐시 쓰기+캐시 읽기): 중앙값 " + num(cpt.p50) + " · p90 " + num(cpt.p90) + " · 최대 " + num(cpt.max) + " 토큰. 세션 첫 요청 중앙값 " + num(cpt.firstRequestP50) + " · 컨텍스트 압축 " + cpt.compactions + "회."));
+      var dist = cpt.distribution;
+      if (cpt.p50 === null) sSec2.appendChild(el("p", { class: "notice" }, "최근 " + dist.retentionDays + "일 안의 원시 요청이 없어 분포(중앙값·p90·최대)는 미확인입니다. 아래 일별 추이는 접어 둔 누적 요약입니다. 컨텍스트 압축 " + cpt.compactions + "회."));
+      else sSec2.appendChild(el("p", null, "메인 스레드 요청 " + num(cpt.requests) + "개(" + dist.from + " ~ " + dist.to + ", 최근 " + dist.retentionDays + "일 원시 기록)의 입력 크기(새 입력+캐시 쓰기+캐시 읽기): 중앙값 " + num(cpt.p50) + " · p90 " + num(cpt.p90) + " · 최대 " + num(cpt.max) + " 토큰. 세션 첫 요청 중앙값 " + num(cpt.firstRequestP50) + " · 컨텍스트 압축 " + cpt.compactions + "회."));
+      if (cpt.series.some(function(p) {
+        return p.source === "archive";
+      })) sSec2.appendChild(el("p", { class: "muted" }, "‘근사’ 표시 날은 " + dist.retentionDays + "일이 지나 일별 요약으로 접은 날입니다. 요청 수·최대는 정확하고 중앙값은 근사일 수 있습니다."));
       if (cpt.series.length) sSec2.appendChild(trendChart(cpt.series));
     }
     if (sess.axisMetrics.length) {
@@ -1893,15 +1898,15 @@ function reportClient() {
         return xOf(i) + "," + yOf(p[k[0]]);
       }).join(" ") }));
       series.forEach(function(p, i) {
-        g.appendChild(s("circle", { class: "dot " + k[1], cx: xOf(i), cy: yOf(p[k[0]]), r: 4 }, s("title", null, p.date + " " + (k[0] === "max" ? "최대 " : "중앙값 ") + num(p[k[0]]) + " 토큰 · 요청 " + p.requests)));
+        g.appendChild(s("circle", { class: "dot " + k[1], cx: xOf(i), cy: yOf(p[k[0]]), r: 4 }, s("title", null, p.date + " " + (k[0] === "max" ? "최대 " : "중앙값 ") + num(p[k[0]]) + " 토큰 · 요청 " + p.requests + (p.source === "archive" ? " · 근사" : ""))));
       });
     });
     var lg = el("ul", { class: "legend inline" }, [
       el("li", null, [el("span", { class: "swatch line-p50", "aria-hidden": "true" }), "일별 중앙값(실선)"]),
       el("li", null, [el("span", { class: "swatch line-max dashed", "aria-hidden": "true" }), "일별 최대(점선)"])
     ]);
-    return el("div", null, [el("div", { class: "panel" }, [g, lg]), el("details", null, [el("summary", null, "일별 표"), table(["날짜", "요청", "중앙값", "최대"], series.map(function(p) {
-      return [p.date, num(p.requests), num(p.p50), num(p.max)];
+    return el("div", null, [el("div", { class: "panel" }, [g, lg]), el("details", null, [el("summary", null, "일별 표"), table(["날짜", "요청", "중앙값", "최대", "출처"], series.map(function(p) {
+      return [p.date, num(p.requests), num(p.p50), num(p.max), p.source === "archive" ? "근사(누적 요약)" : "원시 기록"];
     }))])]);
   }
   if (cmp) {
@@ -2263,7 +2268,8 @@ import {
   realpathSync as realpathSync3,
   renameSync as renameSync2,
   rmSync as rmSync2,
-  statSync as statSync4
+  statSync as statSync4,
+  writeSync as writeSync2
 } from "fs";
 import { homedir as homedir3 } from "os";
 import path5 from "path";
@@ -2390,6 +2396,7 @@ function pruneRuns(out, keepId) {
 }
 
 // src/sessions.mjs
+import { createHash as createHash3 } from "crypto";
 var CHUNK = 1 << 20;
 var MAX_LINE_BYTES = 16 * 1024 * 1024;
 var RESPONSE_RETENTION_DAYS = 90;
@@ -2419,7 +2426,17 @@ var KNOWN_IGNORED = /* @__PURE__ */ new Set([
 ]);
 var MODEL_RE = /^[A-Za-z0-9._:@/[\]-]{1,80}$/;
 var VERSION_RE = /^\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,30}$/;
-var h16 = (s) => sha256hex(String(s)).slice(0, 16);
+var labelCache = /* @__PURE__ */ new Map();
+function safeLabel(value, re) {
+  if (typeof value !== "string" || !re.test(value)) return null;
+  let ok = labelCache.get(value);
+  if (ok === void 0) {
+    ok = redactString(value, null, { wholeValue: true }) === value;
+    if (labelCache.size < 4096) labelCache.set(value, ok);
+  }
+  return ok ? value : null;
+}
+var h16 = (s) => createHash3("sha256").update(String(s)).digest().toString("hex", 0, 8);
 var toPosix2 = (p) => p.split(path5.sep).join("/").replace(/\\/g, "/");
 var isInt = (v) => Number.isInteger(v) && v >= 0;
 function compareVersions(a, b) {
@@ -2502,38 +2519,237 @@ function readSessionConfig(out) {
     botMap: Object.fromEntries(Object.entries(bots).filter(([, v]) => typeof v === "string").map(([k, v]) => [h16(k), toPosix2(realOrSelf(path5.resolve(expandHome(v))))]))
   };
 }
+var NCOL = 6;
+var F_SIDE = 1;
+var ResponseStore = class {
+  constructor() {
+    this.index = /* @__PURE__ */ new Map();
+    this.keys = [];
+    this.num = new Float64Array(NCOL * 1024);
+    this.meta = new Int32Array(3 * 1024);
+    this.n = 0;
+    this.strs = [];
+    this.strId = /* @__PURE__ */ new Map();
+    this.sorted = null;
+  }
+  get size() {
+    return this.index.size;
+  }
+  intern(s) {
+    let id = this.strId.get(s);
+    if (id === void 0) {
+      id = this.strs.length;
+      this.strs.push(s);
+      this.strId.set(s, id);
+    }
+    return id;
+  }
+  // 같은 키는 필드별 최댓값. 문자열 필드는 순서에 무관하게 최솟값으로 정해 증분·전체 결과를 같게 한다.
+  merge(key, fresh, cw, w1, cr, out, model, session, side, t) {
+    let i = this.index.get(key);
+    if (i === void 0) {
+      i = this.n++;
+      if (i * NCOL >= this.num.length) {
+        const num = new Float64Array(this.num.length * 2);
+        num.set(this.num);
+        this.num = num;
+        const meta = new Int32Array(this.meta.length * 2);
+        meta.set(this.meta);
+        this.meta = meta;
+      }
+      this.index.set(key, i);
+      this.keys[i] = key;
+      const b2 = i * NCOL;
+      this.num[b2] = fresh;
+      this.num[b2 + 1] = cw;
+      this.num[b2 + 2] = w1;
+      this.num[b2 + 3] = cr;
+      this.num[b2 + 4] = out;
+      this.num[b2 + 5] = t;
+      this.meta[i * 3] = this.intern(model);
+      this.meta[i * 3 + 1] = this.intern(session);
+      this.meta[i * 3 + 2] = side ? F_SIDE : 0;
+      this.sorted = null;
+      return;
+    }
+    const b = i * NCOL;
+    const nu = this.num;
+    nu[b] = Math.max(nu[b], fresh);
+    nu[b + 1] = Math.max(nu[b + 1], cw);
+    nu[b + 2] = Math.max(nu[b + 2], w1);
+    nu[b + 3] = Math.max(nu[b + 3], cr);
+    nu[b + 4] = Math.max(nu[b + 4], out);
+    nu[b + 5] = Math.max(nu[b + 5], t);
+    if (compareCodeUnits(model, this.model(i)) < 0) this.meta[i * 3] = this.intern(model);
+    if (compareCodeUnits(session, this.session(i)) < 0) this.meta[i * 3 + 1] = this.intern(session);
+    if (!side) this.meta[i * 3 + 2] &= ~F_SIDE;
+  }
+  remove(i) {
+    this.index.delete(this.keys[i]);
+    this.keys[i] = null;
+    this.sorted = null;
+  }
+  // 살아 있는 슬롯을 키 순서로. 결과는 바뀌기 전까지 재사용한다.
+  slots() {
+    if (!this.sorted) {
+      const list = [];
+      for (let i = 0; i < this.n; i++) if (this.keys[i] !== null) list.push(i);
+      const keys = this.keys;
+      list.sort((a, b) => compareCodeUnits(keys[a], keys[b]));
+      this.sorted = list;
+    }
+    return this.sorted;
+  }
+  // [freshInput, cacheWrite5m, cacheWrite1h, cacheRead, output]
+  vec(i) {
+    const b = i * NCOL;
+    const nu = this.num;
+    const w1 = Math.min(nu[b + 2], nu[b + 1]);
+    return [nu[b], nu[b + 1] - w1, w1, nu[b + 3], nu[b + 4]];
+  }
+  ctx(i) {
+    const b = i * NCOL;
+    return this.num[b] + this.num[b + 1] + this.num[b + 3];
+  }
+  t(i) {
+    return this.num[i * NCOL + 5];
+  }
+  model(i) {
+    return this.strs[this.meta[i * 3]];
+  }
+  session(i) {
+    return this.strs[this.meta[i * 3 + 1]];
+  }
+  side(i) {
+    return (this.meta[i * 3 + 2] & F_SIDE) !== 0;
+  }
+  row(i) {
+    const b = i * NCOL;
+    const nu = this.num;
+    return [this.keys[i], nu[b], nu[b + 1], nu[b + 2], nu[b + 3], nu[b + 4], this.model(i), this.session(i), this.side(i) ? 1 : 0, nu[b + 5]];
+  }
+};
+var KeySet = class _KeySet {
+  constructor(sorted = new Uint32Array(0)) {
+    this.sorted = sorted;
+    this.added = /* @__PURE__ */ new Set();
+  }
+  static fromBuffer(buf) {
+    const n = Math.floor(buf.length / 8);
+    const a = new Uint32Array(n * 2);
+    for (let i = 0; i < n * 2; i++) a[i] = buf.readUInt32BE(i * 4);
+    return new _KeySet(a);
+  }
+  get size() {
+    return this.sorted.length / 2 + this.added.size;
+  }
+  has(hex) {
+    if (this.added.has(hex)) return true;
+    const hi = Number.parseInt(hex.slice(0, 8), 16);
+    const lo = Number.parseInt(hex.slice(8, 16), 16);
+    const a = this.sorted;
+    let l = 0;
+    let r = a.length / 2 - 1;
+    while (l <= r) {
+      const m = l + r >>> 1;
+      const h = a[m * 2];
+      const x = a[m * 2 + 1];
+      if (h === hi && x === lo) return true;
+      if (h < hi || h === hi && x < lo) l = m + 1;
+      else r = m - 1;
+    }
+    return false;
+  }
+  add(hex) {
+    if (!this.has(hex)) this.added.add(hex);
+  }
+  toBuffer() {
+    const extra = [...this.added].sort(compareCodeUnits);
+    const a = this.sorted;
+    const out = Buffer.allocUnsafe((a.length / 2 + extra.length) * 8);
+    let i = 0;
+    let j = 0;
+    let o = 0;
+    const put = (hi, lo) => {
+      out.writeUInt32BE(hi, o);
+      out.writeUInt32BE(lo, o + 4);
+      o += 8;
+    };
+    while (i < a.length || j < extra.length) {
+      const eh = j < extra.length ? Number.parseInt(extra[j].slice(0, 8), 16) : Infinity;
+      const el = j < extra.length ? Number.parseInt(extra[j].slice(8, 16), 16) : Infinity;
+      if (i < a.length && (a[i] < eh || a[i] === eh && a[i + 1] < el)) {
+        put(a[i], a[i + 1]);
+        i += 2;
+      } else {
+        put(eh, el);
+        j++;
+      }
+    }
+    return out;
+  }
+};
 function emptyState(rootHash) {
-  return { parserVersion: SESSION_PARSER_VERSION, rootPathHash: rootHash, files: {}, attribution: {}, responses: /* @__PURE__ */ new Map(), archive: { days: {}, responses: 0 } };
+  return {
+    parserVersion: SESSION_PARSER_VERSION,
+    rootPathHash: rootHash,
+    files: {},
+    attribution: {},
+    responses: new ResponseStore(),
+    archive: { days: {}, responses: 0 },
+    archivedKeys: new KeySet(),
+    events: new KeySet()
+  };
 }
 function stateDir(out) {
   return path5.join(out, "sessions");
+}
+function forEachLine(file, fn) {
+  const fd = openSync2(file, "r");
+  try {
+    const buf = Buffer.allocUnsafe(CHUNK);
+    let carry = "";
+    let pos = 0;
+    for (; ; ) {
+      const n = readSync(fd, buf, 0, CHUNK, pos);
+      if (n <= 0) break;
+      pos += n;
+      const text = carry + buf.toString("utf8", 0, n);
+      const parts = text.split("\n");
+      carry = parts.pop();
+      for (const l of parts) if (l) fn(l);
+    }
+    if (carry) fn(carry);
+  } finally {
+    closeSync2(fd);
+  }
 }
 function loadState(dir, rootHash) {
   try {
     if (!existsSync4(path5.join(dir, "cursor.json"))) return { state: emptyState(rootHash), had: false };
     const cursor = JSON.parse(readFileSync4(path5.join(dir, "cursor.json"), "utf8"));
     if (cursor.parserVersion !== SESSION_PARSER_VERSION || cursor.rootPathHash !== rootHash) return { state: emptyState(rootHash), had: false };
-    const responses = /* @__PURE__ */ new Map();
+    const state = emptyState(rootHash);
     const rdir = path5.join(dir, "responses");
     if (existsSync4(rdir)) {
       for (const f of readdirSync4(rdir).sort(compareCodeUnits)) {
-        if (!f.endsWith(".json")) continue;
-        const obj = JSON.parse(readFileSync4(path5.join(rdir, f), "utf8"));
-        for (const [k, v] of Object.entries(obj)) responses.set(k, v);
+        if (!f.endsWith(".jsonl")) continue;
+        forEachLine(path5.join(rdir, f), (l) => {
+          const [k, fresh, cw, w1, cr, out, model, session, side, t] = JSON.parse(l);
+          state.responses.merge(k, fresh, cw, w1, cr, out, model, session, side === 1, t);
+        });
       }
     }
     const read = (f, d) => existsSync4(path5.join(dir, f)) ? JSON.parse(readFileSync4(path5.join(dir, f), "utf8")) : d;
-    return {
-      state: {
-        parserVersion: cursor.parserVersion,
-        rootPathHash: rootHash,
-        files: cursor.files ?? {},
-        attribution: read("attribution-cache.json", {}),
-        responses,
-        archive: read("archive.json", { days: {}, responses: 0 })
-      },
-      had: true
-    };
+    const keys = (f) => existsSync4(path5.join(dir, f)) ? KeySet.fromBuffer(readFileSync4(path5.join(dir, f))) : new KeySet();
+    Object.assign(state, {
+      files: cursor.files ?? {},
+      attribution: read("attribution-cache.json", {}),
+      archive: read("archive.json", { days: {}, responses: 0 }),
+      archivedKeys: keys("archived-keys.bin"),
+      events: keys("events.bin")
+    });
+    return { state, had: true };
   } catch {
     return { state: emptyState(rootHash), had: false, corrupted: true };
   }
@@ -2545,15 +2761,27 @@ function writeState(dir, state) {
   writeJson(path5.join(dir, "cursor.json"), { parserVersion: state.parserVersion, rootPathHash: state.rootPathHash, files: state.files });
   writeJson(path5.join(dir, "attribution-cache.json"), state.attribution);
   writeJson(path5.join(dir, "archive.json"), state.archive);
+  atomicWrite(path5.join(dir, "archived-keys.bin"), state.archivedKeys.toBuffer());
+  atomicWrite(path5.join(dir, "events.bin"), state.events.toBuffer());
+  const rs = state.responses;
   const months = /* @__PURE__ */ new Map();
-  for (const k of [...state.responses.keys()].sort(compareCodeUnits)) {
-    const v = state.responses.get(k);
-    const m = monthOf(v[8]);
-    if (!months.has(m)) months.set(m, {});
-    months.get(m)[k] = v;
+  for (const i of rs.slots()) {
+    const m = monthOf(rs.t(i));
+    if (!months.has(m)) months.set(m, []);
+    months.get(m).push(i);
   }
-  for (const [m, obj] of months) atomicWrite(path5.join(dir, "responses", `${m}.json`), `${JSON.stringify(obj)}
+  for (const [m, list] of months) {
+    const file = path5.join(dir, "responses", `${m}.jsonl`);
+    const fd = openSync2(file, "w");
+    try {
+      for (let s = 0; s < list.length; s += 2e3) {
+        writeSync2(fd, `${list.slice(s, s + 2e3).map((i) => JSON.stringify(rs.row(i))).join("\n")}
 `);
+      }
+    } finally {
+      closeSync2(fd);
+    }
+  }
 }
 function promoteState(out, stagingDir) {
   if (!existsSync4(path5.join(stagingDir, "cursor.json"))) return false;
@@ -2625,10 +2853,12 @@ var COUNTERS = [
 function newFileState(kind) {
   return {
     kind,
+    gen: 0,
     inode: null,
     size: 0,
     mtimeMs: 0,
     offset: 0,
+    fp: null,
     present: true,
     session: null,
     cwdHash: null,
@@ -2665,6 +2895,20 @@ var Parser = class {
   constructor(state, env) {
     this.state = state;
     this.env = env;
+    this.pending = /* @__PURE__ */ new Set();
+  }
+  // 도구 호출·결과·프롬프트·시스템 이벤트를 전역으로 한 번만 센다(resume/fork 복사, 회전, 같은 줄 반복).
+  // id가 없으면 구분할 수 없으니 센다.
+  once(kind, id) {
+    if (typeof id !== "string" || !id) return true;
+    const k = h16(`${kind}:${id}`);
+    if (this.pending.has(k) || this.state.events.has(k)) return false;
+    this.pending.add(k);
+    return true;
+  }
+  commit() {
+    for (const k of this.pending) this.state.events.add(k);
+    this.pending.clear();
   }
   classify(cwd) {
     const key = h16(cwd);
@@ -2712,11 +2956,12 @@ var Parser = class {
       }
       return;
     }
-    if (typeof o.version === "string" && VERSION_RE.test(o.version)) {
-      if (!fs.versions) fs.versions = [o.version, o.version];
+    const version = safeLabel(o.version, VERSION_RE);
+    if (version) {
+      if (!fs.versions) fs.versions = [version, version];
       else {
-        if (compareVersions(o.version, fs.versions[0]) < 0) fs.versions[0] = o.version;
-        if (compareVersions(o.version, fs.versions[1]) > 0) fs.versions[1] = o.version;
+        if (compareVersions(version, fs.versions[0]) < 0) fs.versions[0] = version;
+        if (compareVersions(version, fs.versions[1]) > 0) fs.versions[1] = version;
       }
     }
     const ts = typeof o.timestamp === "string" ? Date.parse(o.timestamp) : NaN;
@@ -2733,6 +2978,7 @@ var Parser = class {
     const side = fs.kind === "subagent" || o.isSidechain === true;
     if (o.type === "assistant") this.assistant(o, fs, fileHash, side, ts);
     else if (o.type === "user") this.user(o, fs, side);
+    else if (!this.once(`${o.type}:${o.subtype ?? ""}`, o.uuid)) return;
     else if (o.type === "system") this.system(o, fs);
     else this.attachment(o, fs);
   }
@@ -2756,12 +3002,13 @@ var Parser = class {
     if (Array.isArray(msg2.content)) {
       for (const b of msg2.content) {
         if (!b || b.type !== "tool_use") continue;
+        if (!fs.botMention && ((_a = fs.cls) == null ? void 0 : _a.kind) === "bot" && mentionsRoot(b.input, this.env.roots)) fs.botMention = true;
+        if (!this.once("tool_use", b.id)) continue;
         if (side) c.subToolUse++;
         else {
           c.toolUse++;
           if (fs.openGap !== null) fs.openGap++;
         }
-        if (!fs.botMention && ((_a = fs.cls) == null ? void 0 : _a.kind) === "bot" && mentionsRoot(b.input, this.env.roots)) fs.botMention = true;
       }
     }
     const u = msg2.usage;
@@ -2774,29 +3021,13 @@ var Parser = class {
       c.badUsage++;
       return;
     }
-    let w1 = 0;
-    if (u.cache_creation && typeof u.cache_creation === "object" && isInt(u.cache_creation.ephemeral_1h_input_tokens)) {
-      w1 = Math.min(cw, u.cache_creation.ephemeral_1h_input_tokens);
-    }
-    const w5 = cw - w1;
+    const w1 = u.cache_creation && typeof u.cache_creation === "object" && isInt(u.cache_creation.ephemeral_1h_input_tokens) ? u.cache_creation.ephemeral_1h_input_tokens : 0;
     const rawKey = typeof msg2.id === "string" && msg2.id || typeof o.requestId === "string" && o.requestId || `${fileHash}#${o.uuid ?? c.lines}`;
     const key = h16(rawKey);
-    const model = typeof msg2.model === "string" && MODEL_RE.test(msg2.model) ? msg2.model : "unknown";
+    if (this.state.archivedKeys.has(key)) return;
+    const model = safeLabel(msg2.model, MODEL_RE) ?? "unknown";
     const session = typeof o.sessionId === "string" && o.sessionId ? h16(o.sessionId) : fs.session ?? `f:${fileHash}`;
-    const t = Number.isFinite(ts) ? ts : 0;
-    const prev = this.state.responses.get(key);
-    if (!prev) this.state.responses.set(key, [fresh, w5, w1, cr, out, model, session, side ? 1 : 0, t]);
-    else {
-      prev[0] = Math.max(prev[0], fresh);
-      prev[1] = Math.max(prev[1], w5);
-      prev[2] = Math.max(prev[2], w1);
-      prev[3] = Math.max(prev[3], cr);
-      prev[4] = Math.max(prev[4], out);
-      if (compareCodeUnits(model, prev[5]) < 0) prev[5] = model;
-      if (compareCodeUnits(session, prev[6]) < 0) prev[6] = session;
-      prev[7] = prev[7] && (side ? 1 : 0);
-      prev[8] = Math.max(prev[8], t);
-    }
+    this.state.responses.merge(key, fresh, cw, w1, cr, out, model, session, side, Number.isFinite(ts) ? ts : 0);
   }
   user(o, fs, side) {
     const c = fs.c;
@@ -2806,6 +3037,7 @@ var Parser = class {
       for (const b of content) {
         if (!b || b.type !== "tool_result") continue;
         hasResult = true;
+        if (!this.once("tool_result", b.tool_use_id)) continue;
         if (side) {
           if (b.is_error === true) c.subToolErrors++;
           continue;
@@ -2823,7 +3055,7 @@ var Parser = class {
     let human;
     if (o.origin && typeof o.origin === "object") human = o.origin.kind === "human";
     else human = o.isMeta !== true && !hasResult && (typeof content === "string" || Array.isArray(content) && content.some((b) => b && b.type === "text"));
-    if (!human) return;
+    if (!human || !this.once("human", o.uuid)) return;
     c.humanPrompts++;
     if (fs.openGap !== null) fs.gaps.push(fs.openGap);
     fs.openGap = 0;
@@ -2892,6 +3124,28 @@ function readFrom(abs, fs, size, parser, fileHash) {
       }
       pos += n;
     }
+    fs.fp = fingerprint(fd, fs.offset);
+  } finally {
+    closeSync2(fd);
+  }
+}
+var FP_BYTES = 4096;
+function fingerprint(fd, offset) {
+  if (!offset) return null;
+  const part = (from, len2) => {
+    const b = Buffer.alloc(len2);
+    const n = readSync(fd, b, 0, len2, from);
+    return h16(b.subarray(0, n).toString("latin1"));
+  };
+  const len = Math.min(FP_BYTES, offset);
+  return `${part(0, len)}:${part(offset - len, len)}`;
+}
+function prefixIntact(abs, fs, size) {
+  if (size < fs.offset) return false;
+  if (!fs.offset) return true;
+  const fd = openSync2(abs, "r");
+  try {
+    return fingerprint(fd, fs.offset) === fs.fp;
   } finally {
     closeSync2(fd);
   }
@@ -2914,22 +3168,35 @@ function scanTranscripts({ configDir, state, env, fullRescan, log }) {
       unreadable++;
       continue;
     }
-    let fs = state.files[fh];
-    const reset = fullRescan || !fs || fs.inode !== st.ino || st.size < fs.offset || st.size === fs.size && st.mtimeMs !== fs.mtimeMs;
-    if (reset) fs = newFileState(f.kind);
-    else if (st.size === fs.size && st.mtimeMs === fs.mtimeMs) {
-      fs.present = true;
-      state.files[fh] = fs;
+    const prev = fullRescan ? void 0 : state.files[fh];
+    if (prev && st.ino === prev.inode && st.size === prev.size && st.mtimeMs === prev.mtimeMs) {
+      prev.present = true;
       continue;
     }
-    const before = JSON.stringify(fs);
+    let fs;
+    let retire = false;
+    if (!prev) fs = newFileState(f.kind);
+    else {
+      try {
+        retire = !prefixIntact(f.abs, prev, st.size);
+      } catch {
+        unreadable++;
+        continue;
+      }
+      if (retire) {
+        fs = newFileState(f.kind);
+        fs.gen = prev.gen + 1;
+      } else fs = JSON.parse(JSON.stringify(prev));
+    }
     try {
       readFrom(f.abs, fs, st.size, parser, fh);
     } catch {
       unreadable++;
-      if (!reset) state.files[fh] = JSON.parse(before);
+      parser.pending.clear();
       continue;
     }
+    parser.commit();
+    if (retire) state.files[`${fh}~g${prev.gen}`] = { ...prev, present: false };
     fs.inode = st.ino;
     fs.size = st.size;
     fs.mtimeMs = st.mtimeMs;
@@ -2997,34 +3264,36 @@ function resolveAttribution(state, env) {
   }
   return { sessions, subs };
 }
-function responseLocation(r, attr) {
-  const s = attr.sessions.get(r[6]);
-  const parentLoc = s ? s.location : attr.subBySession.get(r[6]) ?? null;
+function responseLocation(rs, i, attr) {
+  const sk = rs.session(i);
+  const s = attr.sessions.get(sk);
+  const parentLoc = s ? s.location : attr.subBySession.get(sk) ?? null;
   if (!parentLoc) return null;
-  return r[7] ? "subagent" : parentLoc;
+  return rs.side(i) ? "subagent" : parentLoc;
 }
 function pruneResponses(state, env, nowMs) {
   var _a, _b, _c;
   const cutoff = nowMs - RESPONSE_RETENTION_DAYS * DAY_MS;
   const attr = withSubIndex(resolveAttribution(state, env));
-  const old = [...state.responses.keys()].filter((k) => {
-    const t = state.responses.get(k)[8];
+  const rs = state.responses;
+  const old = rs.slots().filter((i) => {
+    const t = rs.t(i);
     return t > 0 && t < cutoff;
-  }).sort(compareCodeUnits);
+  });
   const raw = /* @__PURE__ */ new Map();
-  for (const k of old) {
-    const r = state.responses.get(k);
-    const day = dateOf(r[8]);
-    const loc = responseLocation(r, attr) ?? "unattributed";
+  for (const i of old) {
+    const day = dateOf(rs.t(i));
+    const loc = responseLocation(rs, i, attr) ?? "unattributed";
     const d = (_a = state.archive.days)[day] ?? (_a[day] = { tokens: {}, ctx: null });
-    const slot = (_b = d.tokens)[_c = `${loc}|${r[5]}`] ?? (_b[_c] = zero5());
-    add5(slot, r.slice(0, 5));
-    if (!r[7] && (loc === "direct" || loc === "worker")) {
+    const slot = (_b = d.tokens)[_c = `${loc}|${rs.model(i)}`] ?? (_b[_c] = zero5());
+    add5(slot, rs.vec(i));
+    if (!rs.side(i) && (loc === "direct" || loc === "worker")) {
       if (!raw.has(day)) raw.set(day, []);
-      raw.get(day).push(r[0] + r[1] + r[2] + r[3]);
+      raw.get(day).push(rs.ctx(i));
     }
     state.archive.responses++;
-    state.responses.delete(k);
+    state.archivedKeys.add(rs.keys[i]);
+    rs.remove(i);
   }
   for (const day of [...raw.keys()].sort(compareCodeUnits)) {
     const s = sortNum(raw.get(day));
@@ -3125,25 +3394,32 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
     add5(t, v);
     map.set(model, t);
   };
-  const respKeys = [...state.responses.keys()].sort(compareCodeUnits);
-  for (const k of respKeys) {
-    const r = state.responses.get(k);
-    const v = r.slice(0, 5);
-    const loc = responseLocation(r, attr);
+  const rs = state.responses;
+  const slots = rs.slots();
+  let rawFrom = null;
+  let rawTo = null;
+  for (const i of slots) {
+    const v = rs.vec(i);
+    const model = rs.model(i);
+    const loc = responseLocation(rs, i, attr);
     if (!loc) {
-      addTo(unattrModel, r[5], v);
+      addTo(unattrModel, model, v);
       continue;
     }
-    addTo(byLocModel.get(loc), r[5], v);
-    if (!r[7] && (loc === "direct" || loc === "worker")) {
-      const size = r[0] + r[1] + r[2] + r[3];
+    addTo(byLocModel.get(loc), model, v);
+    if (!rs.side(i) && (loc === "direct" || loc === "worker")) {
+      const size = rs.ctx(i);
+      const t = rs.t(i);
       ctxAll.push(size);
-      if (r[8] > 0) {
-        const day = dateOf(r[8]);
+      if (t > 0) {
+        const day = dateOf(t);
+        if (rawFrom === null || day < rawFrom) rawFrom = day;
+        if (rawTo === null || day > rawTo) rawTo = day;
         if (!ctxByDay.has(day)) ctxByDay.set(day, []);
         ctxByDay.get(day).push(size);
-        const f = firstBySession.get(r[6]);
-        if (!f || r[8] < f[0] || r[8] === f[0] && compareCodeUnits(k, f[1]) < 0) firstBySession.set(r[6], [r[8], k, size]);
+        const sk = rs.session(i);
+        const f = firstBySession.get(sk);
+        if (!f || t < f[0]) firstBySession.set(sk, [t, size]);
       }
     }
   }
@@ -3174,10 +3450,9 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
   }
   {
     const est = /* @__PURE__ */ new Map();
-    for (const k of respKeys) {
-      const r = state.responses.get(k);
-      const s = attr.sessions.get(r[6]);
-      if (s && (s.method === "inferred" || s.method === "auto")) addTo(est, r[5], r.slice(0, 5));
+    for (const i of slots) {
+      const s = attr.sessions.get(rs.session(i));
+      if (s && (s.method === "inferred" || s.method === "auto")) addTo(est, rs.model(i), rs.vec(i));
     }
     info.estimatedShare = totalUnits ? r4(bucketOut(est).units / totalUnits) : 0;
   }
@@ -3208,26 +3483,28 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
   const series = [];
   for (const day of archDays) {
     const c = state.archive.days[day].ctx;
-    if (c && !ctxByDay.has(day)) series.push({ date: day, ...c });
+    if (c && !ctxByDay.has(day)) series.push({ date: day, ...c, source: "archive" });
   }
   for (const day of [...ctxByDay.keys()].sort(compareCodeUnits)) {
     const s = sortNum(ctxByDay.get(day));
-    series.push({ date: day, requests: s.length, p50: quantile(s, 0.5), max: s[s.length - 1] });
+    series.push({ date: day, requests: s.length, p50: quantile(s, 0.5), max: s[s.length - 1], source: "raw" });
   }
   series.sort((a, b) => compareCodeUnits(a.date, b.date));
-  base.contextPerTurn = ctxSorted.length ? {
+  const raw = ctxSorted.length > 0;
+  base.contextPerTurn = raw || series.length ? {
     requests: ctxSorted.length,
-    p50: quantile(ctxSorted, 0.5),
-    p90: quantile(ctxSorted, 0.9),
-    max: ctxSorted[ctxSorted.length - 1],
-    firstRequestP50: quantile(sortNum([...firstBySession.values()].map((f) => f[2])), 0.5) ?? 0,
+    p50: raw ? quantile(ctxSorted, 0.5) : null,
+    p90: raw ? quantile(ctxSorted, 0.9) : null,
+    max: raw ? ctxSorted[ctxSorted.length - 1] : null,
+    firstRequestP50: raw ? quantile(sortNum([...firstBySession.values()].map((f) => f[1])), 0.5) ?? 0 : null,
+    distribution: { from: rawFrom, to: rawTo, retentionDays: RESPONSE_RETENTION_DAYS },
     compactions: workFiles.reduce((s, [, f]) => s + f.c.compactions, 0),
     series: series.slice(-90)
   } : null;
   let fromMs = null;
   let toMs = null;
-  for (const k of respKeys) {
-    const t = state.responses.get(k)[8];
+  for (const i of slots) {
+    const t = rs.t(i);
     if (t <= 0) continue;
     if (fromMs === null || t < fromMs) fromMs = t;
     if (toMs === null || t > toMs) toMs = t;
@@ -3276,14 +3553,14 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
   let respN = 0;
   const sinceCtx = [];
   const sinceWeight = /* @__PURE__ */ new Map();
-  for (const k of respKeys) {
-    const r = state.responses.get(k);
-    if (!sinceKeys.has(r[6])) continue;
+  for (const i of slots) {
+    if (!sinceKeys.has(rs.session(i))) continue;
+    const v = rs.vec(i);
     respN++;
-    crSum += r[3];
-    inSum += r[0] + r[1] + r[2] + r[3];
-    addTo(sinceWeight, r[5], r.slice(0, 5));
-    if (!r[7]) sinceCtx.push(r[0] + r[1] + r[2] + r[3]);
+    crSum += v[3];
+    inSum += rs.ctx(i);
+    addTo(sinceWeight, rs.model(i), v);
+    if (!rs.side(i)) sinceCtx.push(rs.ctx(i));
   }
   push("cost_efficiency", "cache_hit_ratio", inSum ? r4(crSum / inSum) : NaN, "ratio", respN);
   push("cost_efficiency", "weighted_tokens_per_session", r1(bucketOut(sinceWeight).bucket.weighted / n), "tokens", n);
@@ -3308,14 +3585,15 @@ function analysisWindowTokens(state, env, startMs, endMs) {
   const attr = withSubIndex(resolveAttribution(state, env));
   const parts = /* @__PURE__ */ new Map();
   let n = 0;
-  for (const k of [...state.responses.keys()].sort(compareCodeUnits)) {
-    const r = state.responses.get(k);
-    if (r[7] || r[8] < startMs || r[8] > endMs) continue;
-    const loc = responseLocation(r, attr);
+  const rs = state.responses;
+  for (const i of rs.slots()) {
+    const t = rs.t(i);
+    if (rs.side(i) || t < startMs || t > endMs) continue;
+    const loc = responseLocation(rs, i, attr);
     if (loc !== "direct" && loc !== "worker") continue;
-    const t = parts.get(r[5]) ?? zero5();
-    add5(t, r.slice(0, 5));
-    parts.set(r[5], t);
+    const p = parts.get(rs.model(i)) ?? zero5();
+    add5(p, rs.vec(i));
+    parts.set(rs.model(i), p);
     n++;
   }
   return n ? bucketOut(parts).bucket : null;

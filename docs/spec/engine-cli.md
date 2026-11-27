@@ -282,9 +282,11 @@ finalize = validate → snapshot → render
 │       ├── analysis.json       # 검증 통과본. 이후 바꾸지 않는다
 │       └── report.html
 └── sessions/                   # 세션 집계 누적 저장(원문 없음). snapshot 성공 때만 교체한다
-    ├── cursor.json             # 파서 버전, R 해시, 파일 경로 해시별 {inode, size, mtimeMs, offset, 카운터}
-    ├── responses/<YYYY-MM>.json # 응답 키 해시 → 병합 토큰(중복 제거용). 90일 지나면 archive로 접는다
+    ├── cursor.json             # 파서 버전, R 해시, 파일 경로 해시별 {세대, inode, size, mtimeMs, offset, 지문, 카운터}
+    ├── responses/<YYYY-MM>.jsonl # 응답 키 해시 → 병합 토큰(중복 제거용), 한 줄에 응답 하나. 90일 지나면 archive로 접는다
     ├── archive.json            # 접힌 응답의 일별·위치별·모델별 토큰과 일별 컨텍스트 요약
+    ├── archived-keys.bin       # archive로 접힌 응답 키 해시(8바이트씩 정렬). 같은 응답을 다시 읽어도 더하지 않는다
+    ├── events.bin              # 이미 센 도구 호출·결과·프롬프트·시스템 이벤트 키 해시(8바이트씩 정렬)
     └── attribution-cache.json  # cwd 해시 → 귀속 분류
 ```
 
@@ -337,7 +339,7 @@ finalize = validate → snapshot → render
 
 ## 8. 세션 기록 집계
 
-근거: `docs/research/02-session-logs.md`. 형식이 공식 계약이 아니므로 파서 규칙에 `sessionParserVersion`(정수 문자열, v0.1은 `"1"`)을 붙인다.
+근거: `docs/research/02-session-logs.md`. 형식이 공식 계약이 아니므로 파서 규칙에 `sessionParserVersion`(정수 문자열)을 붙인다. `"1"`은 PR #8 초안, `"2"`는 캐시 분할 병합·이벤트 중복 제거·세대 보존·archive 키 보존을 반영한 현재 규칙이다. 버전이 바뀌면 누적 상태를 처음부터 다시 만든다.
 
 ### 8.1 읽는 필드(허용 목록)
 
@@ -358,8 +360,10 @@ finalize = validate → snapshot → render
   - `isApiErrorMessage == true` → `excludedApiError`
 - 키: `message.id`. 없으면 `requestId`, 둘 다 없으면 `파일 해시#uuid`로 개별 취급한다.
 - 병합: 같은 키의 줄마다 토큰 필드를 각각 `max()`로 취한다. `timestamp`는 최댓값을 쓴다. `model`·`sessionId`는 줄 순서와 무관하게 코드 유닛 순 최솟값, 사이드체인 여부는 모든 줄이 사이드체인일 때만 참이다. 줄 순서에 기대지 않아야 증분 결과가 전체 재집계와 같다(구현 v1, 초안의 "첫 줄 값"을 대신한다).
-- `cache_creation_input_tokens`는 `cache_creation.ephemeral_1h_input_tokens`가 있으면 그만큼을 1시간, 나머지를 5분 쓰기로 나눈다. 없으면 모두 5분이다.
-- 범위: 전역이다(파일 사이 복사 대비). 이미 집계한 키가 다시 나오면 차이분만 반영한다.
+- 캐시 쓰기 분할: 줄마다 총량 `cache_creation_input_tokens`와 1시간 분량 `cache_creation.ephemeral_1h_input_tokens`(없으면 0)를 각각 `max()`로 병합한 뒤, 1시간 = min(병합 1시간, 병합 총량), 5분 = 병합 총량 − 1시간으로 나눈다. 분할 합은 병합 총량과 같다(불변식). 분할이 있는 줄과 총량만 있는 줄이 섞여도 줄 순서와 무관하다.
+- 범위: 전역이다(파일 사이 복사 대비). 이미 집계한 키가 다시 나오면 차이분만 반영한다. archive로 접힌 응답의 키는 `archived-keys.bin`에 남겨, 원본 복사·회전·재스캔으로 다시 나와도 더하지 않는다(정확히 한 번).
+- 이벤트 중복 제거: 축 지표에 쓰는 이벤트도 전역으로 한 번만 센다. 키는 `tool_use.id`(도구 호출), `tool_result.tool_use_id`(도구 결과·오류), 레코드 `uuid`(사람 프롬프트, `system`·`attachment` 이벤트: turn_duration, 압축, API 재시도, Hook 오류·차단)다. 같은 응답 안의 서로 다른 `tool_use` 블록은 id가 달라 각각 센다. id가 없는 이벤트는 구분할 수 없어 센다. 본 키는 `events.bin`에 해시로만 남긴다.
+- 집계 문자열 정화: 원문으로 저장하는 `message.model`과 `version`은 형식 정규식에 더해 비밀정보 검사(R3, 값 전체를 토큰으로 보는 고엔트로피 검사 포함)를 통과할 때만 남긴다. 걸리면 모델은 `unknown`, 버전은 버린다. 파서 단계에서 적용하므로 raw `sessions.json`, `aggregate-sessions` 출력, 스테이징, 확정 상태 모두에 원문이 남지 않는다.
 - `usage.iterations[]`는 최상위 값과 합이 같으므로 더하지 않는다.
 - 서브에이전트 기록은 별개 응답이라 합산한다. 부모 쪽 요약 수치(`attachment.usage.totalTokens`, `toolUseResult` 안의 토큰)는 쓰지 않는다.
 - 사이드체인은 별도 파일 배치(`subagents/agent-*.jsonl`)와 메인 파일 혼재 배치 모두 `isSidechain`·`agentId`로 판별한다.
@@ -386,12 +390,14 @@ finalize = validate → snapshot → render
 
 - 파일 찾기: `<config-dir>/projects/*/*.jsonl`(메인)과 `<config-dir>/projects/*/<sessionId>/subagents/agent-*.jsonl`. `tool-results/`, `memory/`, `*.meta.json`은 열지 않는다.
 - 읽기: 1MiB 단위 `readSync`로 줄을 나눈다. 16MiB를 넘는 줄은 버퍼에 모으지 않고 건너뛴다(`linesSkipped`). 256KiB를 넘는 줄은 앞 120바이트의 `"type"`만 보고, 해석하지 않는 타입(§8.1 밖, 예: `api-request-blob`)이면 파싱하지 않는다.
-- 커서(`cursor.json`): `{ parserVersion, rootPathHash, files: { <파일 경로 해시>: { kind, inode, size, mtimeMs, offset, present, session, cls, botMention, versions, firstTs, lastTs, c: {카운터}, durations, gaps, openGap, pendingError } } }`
-  - inode가 바뀌었거나, 크기가 offset보다 작아졌거나, 크기는 같은데 수정 시각이 바뀌었으면 그 파일을 처음부터 다시 읽는다. 다시 읽을 때 그 파일의 카운터만 초기화한다. 응답 맵은 최댓값 병합이라 다시 읽어도 같다.
+- 커서(`cursor.json`): `{ parserVersion, rootPathHash, files: { <파일 경로 해시>[~g<세대>]: { kind, gen, inode, size, mtimeMs, offset, fp, present, session, cls, botMention, versions, firstTs, lastTs, c: {카운터}, durations, gaps, openGap, pendingError } } }`
+  - 지문(`fp`): 커서까지 읽은 앞부분의 첫 4KiB와 커서 직전 4KiB의 해시다. inode·크기·수정 시각이 모두 같으면 읽지 않는다. 하나라도 바뀌면 지문을 다시 계산해, 크기가 offset 이상이고 지문이 같으면(이어 쓰기, 같은 내용으로 원자적 교체) 커서부터 이어 읽는다.
+  - 크기가 offset보다 작아졌거나 지문이 다르면(같은 경로로 회전, copytruncate 뒤 재성장, 재작성) 새 세대로 보고 처음부터 읽는다. 이전 세대는 `<경로 해시>~g<세대>` 항목(`present: false`)으로 남겨 그 세션의 귀속과 카운터를 보존한다. 응답과 이벤트는 전역으로 한 번만 세므로 같은 내용을 다시 읽어도 늘지 않는다.
+  - 파일을 읽다 실패하면 그 파일의 상태와 새 이벤트 키를 반영하지 않고 다음 실행에서 다시 읽는다.
   - 마지막 줄이 개행 없이 끝나면 쓰는 중인 줄로 보고 offset을 그 앞에 둔다.
   - `parserVersion` 또는 R(메인 저장소 경로) 해시가 바뀌면 전체를 다시 읽는다. `--full-rescan`도 같다.
   - 원본 파일이 사라져도 카운터는 남긴다(`present: false`).
-- 응답 맵(`responses/<YYYY-MM>.json`): 키 해시 → `[freshInput, cacheWrite5m, cacheWrite1h, cacheRead, output, model, 세션 해시, 사이드체인(0|1), 시각(ms)]`. `--now`보다 90일 넘게 오래된 응답은 `archive.json`의 일별·위치별·모델별 토큰과 일별 컨텍스트 요약(`requests`, `p50`, `max`)으로 접는다. 축 지표는 응답 맵(최근 90일)만 쓴다.
+- 응답 맵(`responses/<YYYY-MM>.jsonl`): 한 줄에 `[키 해시, freshInput, cacheCreation 총량, 1시간 쓰기(병합 최댓값), cacheRead, output, model, 세션 해시, 사이드체인(0|1), 시각(ms)]`. 메모리에서는 응답마다 객체를 만들지 않고 열 단위 typed array에 두며, 쓰기·읽기도 줄 단위로 나눠 한다(메모리 예산 200MiB). `--now`보다 90일 넘게 오래된 응답은 `archive.json`의 일별·위치별·모델별 토큰과 일별 컨텍스트 요약(`requests`, `p50`, `max`)으로 접고 키를 `archived-keys.bin`에 남긴다. 축 지표는 응답 맵(최근 90일)만 쓴다.
 - 귀속은 저장하지 않고 실행마다 다시 정한다. 파일마다 첫 `cwd`의 분류(`direct`·`worktree`·`inferred`·`bot`(봇 이름 해시)·`none`)와 봇 세션의 프로젝트 경로 언급 여부(불리언)만 저장하므로, `config.json`의 봇 매핑을 바꾸면 다음 실행에 바로 반영된다. cwd 분류는 `attribution-cache.json`에 남겨 워크트리가 지워져도 같은 결과를 낸다.
 - 스테이징과 확정: `prepare`는 확정 상태(`sessions/`)를 읽어 새 바이트를 더한 상태를 `runs/<runId>/sessions.staging/`에 쓴다. `snapshot`이 성공하면 `sessions/`를 그것으로 바꾼다(이름 바꾸기). 검증이 실패하면 커서가 전진하지 않으므로 다음 실행에서 같은 구간을 다시 읽는다.
 - 분위수는 원값을 정렬한 최근접 순위(nearest-rank)다. 정확하고 결정론적이다(초안의 히스토그램 근사를 대신한다).
@@ -407,6 +413,8 @@ finalize = validate → snapshot → render
   - 청구액으로 표시하지 않는다.
 - 위치별: `direct`, `worker`, `subagent`, `bot`. 위치끼리 겹치지 않는다(서브에이전트 토큰은 부모 위치에 넣지 않는다). `subagent`의 `sessions`는 서브에이전트 기록 수다.
 - 턴별 컨텍스트 크기: 프로젝트·워커 세션의 메인 스레드 요청마다 freshInput + cacheWrite + cacheRead다. 분포(p50, p90, max), 첫 요청 p50, 압축 수, 일별 추이(최대 90점)를 낸다.
+  - 분포는 응답 맵(최근 90일 원시 응답)에서만 정확히 낸다. 범위는 `distribution: { from, to, retentionDays }`다. 원시 응답이 없으면 분포 값은 `null`(미확인)이다.
+  - 일별 추이는 분포와 별개로 archive로 접힌 날까지 잇는다. 원시 응답이 모두 접혀도 남는다. 점마다 `source`(`raw` | `archive`)를 붙인다. `archive` 날의 `requests`·`max`는 정확하고, 같은 날이 여러 번 접히면 `p50`은 근사다. 리포트는 그 날을 "근사"로 표시한다.
 - 서브에이전트는 부모 세션이 귀속됐을 때만 `subagent` 위치에 들어간다. 봇 세션의 서브에이전트도 `subagent`다(축 지표에서는 뺀다).
 
 ### 8.6 축 지표와 성숙도

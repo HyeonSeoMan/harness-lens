@@ -59,32 +59,35 @@ function resolveAttribution(state, env) {
 }
 
 // 응답 하나의 위치. 서브에이전트 응답은 부모가 귀속됐을 때만 subagent다.
-function responseLocation(r, attr) {
-  const s = attr.sessions.get(r[6]);
-  const parentLoc = s ? s.location : attr.subBySession.get(r[6]) ?? null;
+function responseLocation(rs, i, attr) {
+  const sk = rs.session(i);
+  const s = attr.sessions.get(sk);
+  const parentLoc = s ? s.location : attr.subBySession.get(sk) ?? null;
   if (!parentLoc) return null;
-  return r[7] ? 'subagent' : parentLoc;
+  return rs.side(i) ? 'subagent' : parentLoc;
 }
 
 // 90일보다 오래된 응답은 일별 누적(archive)으로 접어 둔다. 원본 기록이 정리된 뒤에도 추이가 남는다.
 export function pruneResponses(state, env, nowMs) {
   const cutoff = nowMs - RESPONSE_RETENTION_DAYS * DAY_MS;
   const attr = withSubIndex(resolveAttribution(state, env));
-  const old = [...state.responses.keys()].filter((k) => { const t = state.responses.get(k)[8]; return t > 0 && t < cutoff; }).sort(compareCodeUnits);
+  const rs = state.responses;
+  const old = rs.slots().filter((i) => { const t = rs.t(i); return t > 0 && t < cutoff; });
   const raw = new Map();
-  for (const k of old) {
-    const r = state.responses.get(k);
-    const day = dateOf(r[8]);
-    const loc = responseLocation(r, attr) ?? 'unattributed';
+  for (const i of old) {
+    const day = dateOf(rs.t(i));
+    const loc = responseLocation(rs, i, attr) ?? 'unattributed';
     const d = (state.archive.days[day] ??= { tokens: {}, ctx: null });
-    const slot = (d.tokens[`${loc}|${r[5]}`] ??= zero5());
-    add5(slot, r.slice(0, 5));
-    if (!r[7] && (loc === 'direct' || loc === 'worker')) {
+    const slot = (d.tokens[`${loc}|${rs.model(i)}`] ??= zero5());
+    add5(slot, rs.vec(i));
+    if (!rs.side(i) && (loc === 'direct' || loc === 'worker')) {
       if (!raw.has(day)) raw.set(day, []);
-      raw.get(day).push(r[0] + r[1] + r[2] + r[3]);
+      raw.get(day).push(rs.ctx(i));
     }
     state.archive.responses++;
-    state.responses.delete(k);
+    // 접은 응답의 키는 남긴다. 같은 응답을 다시 읽어도(복사·회전·재스캔) 두 번 더하지 않는다.
+    state.archivedKeys.add(rs.keys[i]);
+    rs.remove(i);
   }
   // 일별 분포는 요청 수·p50·max만 남긴다. 같은 날이 다시 접히면 근사로 합친다.
   for (const day of [...raw.keys()].sort(compareCodeUnits)) {
@@ -177,22 +180,30 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
   const ctxByDay = new Map();
   const firstBySession = new Map();
   const addTo = (map, model, v) => { const t = map.get(model) ?? zero5(); add5(t, v); map.set(model, t); };
-  const respKeys = [...state.responses.keys()].sort(compareCodeUnits);
-  for (const k of respKeys) {
-    const r = state.responses.get(k);
-    const v = r.slice(0, 5);
-    const loc = responseLocation(r, attr);
-    if (!loc) { addTo(unattrModel, r[5], v); continue; }
-    addTo(byLocModel.get(loc), r[5], v);
-    if (!r[7] && (loc === 'direct' || loc === 'worker')) {
-      const size = r[0] + r[1] + r[2] + r[3];
+  const rs = state.responses;
+  const slots = rs.slots();
+  let rawFrom = null;
+  let rawTo = null;
+  for (const i of slots) {
+    const v = rs.vec(i);
+    const model = rs.model(i);
+    const loc = responseLocation(rs, i, attr);
+    if (!loc) { addTo(unattrModel, model, v); continue; }
+    addTo(byLocModel.get(loc), model, v);
+    if (!rs.side(i) && (loc === 'direct' || loc === 'worker')) {
+      const size = rs.ctx(i);
+      const t = rs.t(i);
       ctxAll.push(size);
-      if (r[8] > 0) {
-        const day = dateOf(r[8]);
+      if (t > 0) {
+        const day = dateOf(t);
+        if (rawFrom === null || day < rawFrom) rawFrom = day;
+        if (rawTo === null || day > rawTo) rawTo = day;
         if (!ctxByDay.has(day)) ctxByDay.set(day, []);
         ctxByDay.get(day).push(size);
-        const f = firstBySession.get(r[6]);
-        if (!f || r[8] < f[0] || (r[8] === f[0] && compareCodeUnits(k, f[1]) < 0)) firstBySession.set(r[6], [r[8], k, size]);
+        // 슬롯은 키 순서로 돌므로 같은 시각이면 먼저 본 응답이 키가 가장 작다.
+        const sk = rs.session(i);
+        const f = firstBySession.get(sk);
+        if (!f || t < f[0]) firstBySession.set(sk, [t, size]);
       }
     }
   }
@@ -218,10 +229,9 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
   // 추정 귀속(inferred·auto)이 환산값에서 차지하는 비중
   {
     const est = new Map();
-    for (const k of respKeys) {
-      const r = state.responses.get(k);
-      const s = attr.sessions.get(r[6]);
-      if (s && (s.method === 'inferred' || s.method === 'auto')) addTo(est, r[5], r.slice(0, 5));
+    for (const i of slots) {
+      const s = attr.sessions.get(rs.session(i));
+      if (s && (s.method === 'inferred' || s.method === 'auto')) addTo(est, rs.model(i), rs.vec(i));
     }
     info.estimatedShare = totalUnits ? r4(bucketOut(est).units / totalUnits) : 0;
   }
@@ -247,19 +257,24 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
     return s && (s.location === 'direct' || s.location === 'worker') && pred(s, f);
   });
   const workFiles = mainAttributedFiles(() => true);
+  // 일별 추이는 최근 원시 분포와 별개로 archive까지 이어 낸다. archive 날은 요청 수·max는 정확하고 p50은 근사일 수 있다.
   const series = [];
   for (const day of archDays) {
     const c = state.archive.days[day].ctx;
-    if (c && !ctxByDay.has(day)) series.push({ date: day, ...c });
+    if (c && !ctxByDay.has(day)) series.push({ date: day, ...c, source: 'archive' });
   }
   for (const day of [...ctxByDay.keys()].sort(compareCodeUnits)) {
     const s = sortNum(ctxByDay.get(day));
-    series.push({ date: day, requests: s.length, p50: quantile(s, 0.5), max: s[s.length - 1] });
+    series.push({ date: day, requests: s.length, p50: quantile(s, 0.5), max: s[s.length - 1], source: 'raw' });
   }
   series.sort((a, b) => compareCodeUnits(a.date, b.date));
-  base.contextPerTurn = ctxSorted.length ? {
-    requests: ctxSorted.length, p50: quantile(ctxSorted, 0.5), p90: quantile(ctxSorted, 0.9), max: ctxSorted[ctxSorted.length - 1],
-    firstRequestP50: quantile(sortNum([...firstBySession.values()].map((f) => f[2])), 0.5) ?? 0,
+  // 분포(p50·p90·max·첫 요청)는 최근 원시 응답(최근 90일)에서만 정확히 낸다. 원시 응답이 없으면 미확인(null)이다.
+  const raw = ctxSorted.length > 0;
+  base.contextPerTurn = raw || series.length ? {
+    requests: ctxSorted.length,
+    p50: raw ? quantile(ctxSorted, 0.5) : null, p90: raw ? quantile(ctxSorted, 0.9) : null, max: raw ? ctxSorted[ctxSorted.length - 1] : null,
+    firstRequestP50: raw ? quantile(sortNum([...firstBySession.values()].map((f) => f[1])), 0.5) ?? 0 : null,
+    distribution: { from: rawFrom, to: rawTo, retentionDays: RESPONSE_RETENTION_DAYS },
     compactions: workFiles.reduce((s, [, f]) => s + f.c.compactions, 0),
     series: series.slice(-90),
   } : null;
@@ -267,8 +282,8 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
   // ---- 창 ----
   let fromMs = null;
   let toMs = null;
-  for (const k of respKeys) {
-    const t = state.responses.get(k)[8];
+  for (const i of slots) {
+    const t = rs.t(i);
     if (t <= 0) continue;
     if (fromMs === null || t < fromMs) fromMs = t;
     if (toMs === null || t > toMs) toMs = t;
@@ -315,14 +330,14 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
   let respN = 0;
   const sinceCtx = [];
   const sinceWeight = new Map();
-  for (const k of respKeys) {
-    const r = state.responses.get(k);
-    if (!sinceKeys.has(r[6])) continue;
+  for (const i of slots) {
+    if (!sinceKeys.has(rs.session(i))) continue;
+    const v = rs.vec(i);
     respN++;
-    crSum += r[3];
-    inSum += r[0] + r[1] + r[2] + r[3];
-    addTo(sinceWeight, r[5], r.slice(0, 5));
-    if (!r[7]) sinceCtx.push(r[0] + r[1] + r[2] + r[3]);
+    crSum += v[3];
+    inSum += rs.ctx(i);
+    addTo(sinceWeight, rs.model(i), v);
+    if (!rs.side(i)) sinceCtx.push(rs.ctx(i));
   }
   push('cost_efficiency', 'cache_hit_ratio', inSum ? r4(crSum / inSum) : NaN, 'ratio', respN);
   push('cost_efficiency', 'weighted_tokens_per_session', r1(bucketOut(sinceWeight).bucket.weighted / n), 'tokens', n);
@@ -347,14 +362,15 @@ export function analysisWindowTokens(state, env, startMs, endMs) {
   const attr = withSubIndex(resolveAttribution(state, env));
   const parts = new Map();
   let n = 0;
-  for (const k of [...state.responses.keys()].sort(compareCodeUnits)) {
-    const r = state.responses.get(k);
-    if (r[7] || r[8] < startMs || r[8] > endMs) continue;
-    const loc = responseLocation(r, attr);
+  const rs = state.responses;
+  for (const i of rs.slots()) {
+    const t = rs.t(i);
+    if (rs.side(i) || t < startMs || t > endMs) continue;
+    const loc = responseLocation(rs, i, attr);
     if (loc !== 'direct' && loc !== 'worker') continue;
-    const t = parts.get(r[5]) ?? zero5();
-    add5(t, r.slice(0, 5));
-    parts.set(r[5], t);
+    const p = parts.get(rs.model(i)) ?? zero5();
+    add5(p, rs.vec(i));
+    parts.set(rs.model(i), p);
     n++;
   }
   return n ? bucketOut(parts).bucket : null;
