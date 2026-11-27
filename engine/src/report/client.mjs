@@ -486,7 +486,7 @@ export function reportClient() {
   interp.components.forEach(function (c) { role[c.componentId] = c; });
   dSec.appendChild(el('h3', null, '구성 요소'));
   dSec.appendChild(table(['종류', '이름', '출처', '경로', '역할(해석)'], eng.inventory.components.map(function (c) {
-    var r = role[c.componentId];
+    var r = role[c.id];
     return [KIND[c.kind] || c.kind, c.name, ORIGIN[c.origin] || c.origin, c.paths.join(', '), r ? r.role : el('span', { class: 'muted' }, '—')];
   })));
 
