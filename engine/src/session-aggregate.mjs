@@ -4,7 +4,7 @@ import path from 'node:path';
 import { analysisWindowTokens, pruneResponses, summarize } from './session-metrics.mjs';
 import { h16, loadState, readSessionConfig, resolveMainRoot, scanTranscripts, stateDir, writeState } from './sessions.mjs';
 
-const COUNTS0 = { filesScanned: 0, linesRead: 0, linesSkipped: 0, skippedRatio: 0, sessionsAttributed: 0, sessionsUnattributed: 0, incremental: false, configSince: null };
+const COUNTS0 = { filesScanned: 0, linesRead: 0, linesSkipped: 0, skippedRatio: 0, sessionsAttributed: 0, sessionsUnattributed: 0, sessionsExcluded: 0, incremental: false, configSince: null };
 
 export function emptySessions(status, reason) {
   return {

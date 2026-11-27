@@ -54,14 +54,19 @@ test('귀속: cwd 기준 direct·worker(gitdir·추정)·subagent, 매핑 없는
   assert.deepEqual(four(loc(s, 'worker').tokens), [150, 2000, 15000, 500]);
   assert.deepEqual(loc(s, 'bot').attribution, { direct: 0, worktree: 0, inferred: 0, configured: 0, auto: 1 });
   assert.deepEqual(four(loc(s, 'bot').tokens), [1, 0, 100000, 50]);
-  // 매핑 없는 봇 2개(그중 하나는 `<project>-other`라는 비슷한 경로만 언급)와 다른 프로젝트는 미귀속
-  assert.equal(s.tokens.unattributed.sessions, 3);
+  // 매핑 없는 봇 2개(그중 하나는 `<project>-other`라는 비슷한 경로만 언급)만 미귀속(불확실)이다.
+  assert.equal(s.tokens.unattributed.sessions, 2);
   assert.equal(s.tokens.unattributed.botSessions, 2);
-  assert.deepEqual(four(s.tokens.unattributed.tokens), [14, 3009, 900009, 399]);
-  assert.deepEqual(four(s.tokens.total), [176, 3800, 271100, 1250], '미귀속은 합계에 섞지 않는다');
+  assert.deepEqual(four(s.tokens.unattributed.tokens), [5, 3000, 900000, 390]);
+  // 다른 프로젝트 세션(cwd /elsewhere/...)은 합계·미귀속 어디에도 넣지 않고 개수만 남긴다(§8.3 5행).
+  assert.equal(s.coverage.sessionsExcluded, 1);
+  assert.equal(s.coverage.sessionsUnattributed, 2);
+  assert.deepEqual(four(s.tokens.total), [176, 3800, 271100, 1250], '미귀속·제외는 합계에 섞지 않는다');
   assert.equal(draft.meta.analysisType, 'static_with_sessions');
   assert.ok(draft.engine.limitations.some((l) => l.code === 'estimated_attribution_included'));
   assert.ok(draft.engine.limitations.some((l) => l.code === 'unattributed_sessions'));
+  const ex = draft.engine.limitations.find((l) => l.code === 'unrelated_sessions_excluded');
+  assert.ok(ex && ex.message.includes('1개'), '제외 세션 수를 limitations에 투명하게 남긴다');
 });
 
 test('귀속: 설정의 봇↔저장소 매핑이 우선한다', (t) => {
@@ -71,10 +76,24 @@ test('귀속: 설정의 봇↔저장소 매핑이 우선한다', (t) => {
   const { sessions: s } = prepare(p, logs.configDir);
   assert.deepEqual(loc(s, 'bot').attribution, { direct: 0, worktree: 0, inferred: 0, configured: 1, auto: 1 });
   assert.deepEqual(four(loc(s, 'bot').tokens), [5, 3000, 920000, 400]);
-  assert.equal(s.tokens.unattributed.sessions, 2);
+  assert.equal(s.tokens.unattributed.sessions, 1);
   assert.equal(s.tokens.unattributed.botSessions, 1);
+  assert.equal(s.coverage.sessionsExcluded, 1);
   // 봇 채팅은 축 지표(조율 비용 제외)에 들어가지 않는다: 도구 호출은 direct 4 + worker 1 + subagent 1
   assert.equal(s.axisMetrics.find((m) => m.metricId === 'tool_error_rate').sampleSize, 6);
+});
+
+test('귀속: 다른 저장소에 매핑된 봇은 미귀속이 아니라 제외한다', (t) => {
+  const p = makeProject('harness-after');
+  t.after(p.cleanup);
+  const logs = makeSessionLogs(p, { botMap: { 'other-bot': '/elsewhere/another-project' } });
+  const { sessions: s } = prepare(p, logs.configDir);
+  // other-bot(S-bot-3)은 매핑으로 무관함이 확실하다. 남은 미귀속은 매핑·언급 없는 mapped-bot 하나뿐이다.
+  assert.equal(s.coverage.sessionsExcluded, 2);
+  assert.equal(s.tokens.unattributed.sessions, 1);
+  assert.equal(s.tokens.unattributed.botSessions, 1);
+  assert.deepEqual(four(s.tokens.unattributed.tokens), [4, 3000, 820000, 350]);
+  assert.deepEqual(four(s.tokens.total), [176, 3800, 271100, 1250]);
 });
 
 test('원문 누출 없음: 출력 어디에도 본문·코드·도구 입력·제목·식별자·경로 원문이 없다', (t) => {

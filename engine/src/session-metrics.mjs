@@ -5,6 +5,8 @@ import { DAY_MS, RESPONSE_RETENTION_DAYS, compareVersions } from './sessions.mjs
 import { compareCodeUnits, roundHalfEven } from './util.mjs';
 
 export const LOCATIONS = ['direct', 'worker', 'subagent', 'bot'];
+// 이 프로젝트와 무관한 것이 확실한 세션(다른 프로젝트 cwd, 다른 저장소에 매핑된 봇). 합계·미귀속 어디에도 넣지 않는다(§8.3).
+const EXCLUDED = 'excluded';
 const METHODS = ['direct', 'worktree', 'inferred', 'configured', 'auto'];
 
 const r4 = (x) => roundHalfEven(x, 4);
@@ -22,7 +24,7 @@ const sortNum = (a) => Float64Array.from(a).sort();
 const zero5 = () => [0, 0, 0, 0, 0];
 function add5(t, v) { for (let i = 0; i < 5; i++) t[i] += v[i]; }
 
-// 세션 → { location, method } 귀속(§8.3). 미귀속이면 location null.
+// 세션 → { location, method, excluded } 귀속(§8.3). 미귀속(불확실)이면 location null, 무관하면 excluded.
 function resolveAttribution(state, env) {
   const sessions = new Map(); // sessionKey → { files: [fh], cls, botMention, location, method }
   const subagents = [];
@@ -37,16 +39,18 @@ function resolveAttribution(state, env) {
     s.botMention = s.botMention || fs.botMention;
   }
   const decide = (cls, botMention) => {
+    // cwd가 없으면 판정할 수 없다(불확실 → 미귀속).
     if (!cls) return { location: null, method: null, bot: false };
     if (cls.kind === 'direct') return { location: 'direct', method: 'direct', bot: false };
     if (cls.kind === 'worktree') return { location: 'worker', method: 'worktree', bot: false };
     if (cls.kind === 'inferred') return { location: 'worker', method: 'inferred', bot: false };
     if (cls.kind === 'bot') {
       const mapped = env.cfg.botMap[cls.bot];
-      if (mapped !== undefined) return env.roots.includes(mapped) ? { location: 'bot', method: 'configured', bot: true } : { location: null, method: null, bot: true };
+      if (mapped !== undefined) return env.roots.includes(mapped) ? { location: 'bot', method: 'configured', bot: true } : { location: null, method: null, bot: true, excluded: true };
       return botMention ? { location: 'bot', method: 'auto', bot: true } : { location: null, method: null, bot: true };
     }
-    return { location: null, method: null, bot: false };
+    // kind 'none': cwd가 이 저장소·워크트리·봇 어디에도 해당하지 않는다(다른 프로젝트).
+    return { location: null, method: null, bot: false, excluded: true };
   };
   for (const s of sessions.values()) Object.assign(s, decide(s.cls, s.botMention));
   // 서브에이전트는 부모 세션의 귀속을 따른다. 부모 기록이 없으면 자기 cwd로 판정한다.
@@ -54,7 +58,7 @@ function resolveAttribution(state, env) {
   for (const [fh, fs, key] of subagents) {
     const parent = sessions.get(key);
     const d = parent ?? decide(fs.cls, fs.botMention);
-    subs.set(fh, { key, parentLocation: d.location, method: d.method, bot: d.bot });
+    subs.set(fh, { key, parentLocation: d.location, method: d.method, bot: d.bot, excluded: !!d.excluded });
   }
   return { sessions, subs };
 }
@@ -63,8 +67,8 @@ function resolveAttribution(state, env) {
 function responseLocation(rs, i, attr) {
   const sk = rs.session(i);
   const s = attr.sessions.get(sk);
-  const parentLoc = s ? s.location : attr.subBySession.get(sk) ?? null;
-  if (!parentLoc) return null;
+  const parentLoc = s ? (s.excluded ? EXCLUDED : s.location) : attr.subBySession.get(sk) ?? null;
+  if (!parentLoc || parentLoc === EXCLUDED) return parentLoc;
   return rs.side(i) ? 'subagent' : parentLoc;
 }
 
@@ -79,8 +83,8 @@ export function pruneResponses(state, env, nowMs) {
     const day = dateOf(rs.t(i));
     const loc = responseLocation(rs, i, attr) ?? 'unattributed';
     const d = (state.archive.days[day] ??= { tokens: {}, ctx: null });
-    const slot = (d.tokens[`${loc}|${rs.model(i)}`] ??= zero5());
-    add5(slot, rs.vec(i));
+    // 무관한 세션의 토큰은 접어 두지 않는다(어디에도 집계하지 않으므로).
+    if (loc !== EXCLUDED) add5((d.tokens[`${loc}|${rs.model(i)}`] ??= zero5()), rs.vec(i));
     if (!rs.side(i) && (loc === 'direct' || loc === 'worker')) {
       if (!raw.has(day)) raw.set(day, []);
       raw.get(day).push(rs.ctx(i));
@@ -101,7 +105,7 @@ export function pruneResponses(state, env, nowMs) {
 
 function withSubIndex(attr) {
   attr.subBySession = new Map();
-  for (const s of attr.subs.values()) if (!attr.sessions.has(s.key) && !attr.subBySession.has(s.key)) attr.subBySession.set(s.key, s.parentLocation);
+  for (const s of attr.subs.values()) if (!attr.sessions.has(s.key) && !attr.subBySession.has(s.key)) attr.subBySession.set(s.key, s.excluded ? EXCLUDED : s.parentLocation);
   return attr;
 }
 
@@ -152,7 +156,8 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
   const attr = withSubIndex(resolveAttribution(state, env));
   const mainSessions = [...attr.sessions.entries()].sort((a, b) => compareCodeUnits(a[0], b[0]));
   const attributed = mainSessions.filter(([, s]) => s.location);
-  const unattributed = mainSessions.filter(([, s]) => !s.location);
+  const unattributed = mainSessions.filter(([, s]) => !s.location && !s.excluded);
+  const excluded = mainSessions.filter(([, s]) => s.excluded);
 
   const base = {
     status: 'available', reason: null,
@@ -160,7 +165,7 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
     window: null,
     coverage: {
       filesScanned: scan.present, linesRead, linesSkipped, skippedRatio,
-      sessionsAttributed: attributed.length, sessionsUnattributed: unattributed.length, incremental,
+      sessionsAttributed: attributed.length, sessionsUnattributed: unattributed.length, sessionsExcluded: excluded.length, incremental,
       configSince: configSinceMs === null ? null : new Date(configSinceMs).toISOString().replace(/\.\d+Z$/, 'Z'),
     },
     dedup: {
@@ -189,6 +194,7 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
     const v = rs.vec(i);
     const model = rs.model(i);
     const loc = responseLocation(rs, i, attr);
+    if (loc === EXCLUDED) continue;
     if (!loc) { addTo(unattrModel, model, v); continue; }
     addTo(byLocModel.get(loc), model, v);
     if (!rs.side(i) && (loc === 'direct' || loc === 'worker')) {

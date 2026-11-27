@@ -1807,7 +1807,7 @@ function reportClient() {
       ["Claude Code 버전", sess.clientVersions ? sess.clientVersions.min + " ~ " + sess.clientVersions.max : "미확인"],
       ["읽은 기록", "파일 " + num(cov.filesScanned) + "개 · 줄 " + num(cov.linesRead) + " (건너뜀 " + num(cov.linesSkipped) + ")" + (cov.incremental ? " · 증분" : " · 전체")],
       ["중복 제거", "assistant 줄 " + num(sess.dedup.assistantLines) + " → 응답 " + num(sess.dedup.uniqueResponses) + " (합성 " + sess.dedup.excludedSynthetic + " · API 오류 " + sess.dedup.excludedApiError + " 제외)"],
-      ["귀속", "귀속 세션 " + num(cov.sessionsAttributed) + " · 미귀속 " + num(cov.sessionsUnattributed) + (cov.configSince ? " · 현재 구성 이후 " + cov.configSince.slice(0, 10) : "")]
+      ["귀속", "귀속 세션 " + num(cov.sessionsAttributed) + " · 미귀속(불확실) " + num(cov.sessionsUnattributed) + (cov.sessionsExcluded ? " · 무관한 프로젝트 제외 " + num(cov.sessionsExcluded) : "") + (cov.configSince ? " · 현재 구성 이후 " + cov.configSince.slice(0, 10) : "")]
     ].map(function(kv) {
       return el("div", null, [el("b", null, kv[0]), kv[1]]);
     })));
@@ -1844,8 +1844,9 @@ function reportClient() {
         return bucketRow(LOC[l.location], l.tokens).concat([pct(l.weightedShare), num(l.sessions), meth || "—"]);
       }).concat([
         bucketRow(el("b", null, "합계(귀속분)"), tk.total).concat(["100%", num(cov.sessionsAttributed), ""]),
-        bucketRow(el("span", { class: "muted" }, "미귀속(합계 제외)"), tk.unattributed.tokens).concat(["—", num(tk.unattributed.sessions), "봇 " + tk.unattributed.botSessions])
+        bucketRow(el("span", { class: "muted" }, "미귀속(불확실, 합계 제외)"), tk.unattributed.tokens).concat(["—", num(tk.unattributed.sessions), "봇 " + tk.unattributed.botSessions])
       ])));
+      if (cov.sessionsExcluded) sSec2.appendChild(el("p", { class: "muted" }, "이 프로젝트와 무관한 세션 " + num(cov.sessionsExcluded) + "개(다른 프로젝트 경로, 다른 저장소에 매핑된 봇)는 위 표 어디에도 넣지 않았습니다."));
       if (tk.byModel.length) {
         sSec2.appendChild(el("details", null, [el("summary", null, "모델별"), table(TOKH, tk.byModel.map(function(m) {
           return bucketRow(m.model, m.tokens);
@@ -3360,6 +3361,7 @@ function scanTranscripts({ configDir, state, env, fullRescan, log }) {
 
 // src/session-metrics.mjs
 var LOCATIONS = ["direct", "worker", "subagent", "bot"];
+var EXCLUDED = "excluded";
 var METHODS = ["direct", "worktree", "inferred", "configured", "auto"];
 var r4 = (x) => roundHalfEven(x, 4);
 var r1 = (x) => roundHalfEven(x, 1);
@@ -3399,25 +3401,25 @@ function resolveAttribution(state, env) {
     if (cls.kind === "inferred") return { location: "worker", method: "inferred", bot: false };
     if (cls.kind === "bot") {
       const mapped = env.cfg.botMap[cls.bot];
-      if (mapped !== void 0) return env.roots.includes(mapped) ? { location: "bot", method: "configured", bot: true } : { location: null, method: null, bot: true };
+      if (mapped !== void 0) return env.roots.includes(mapped) ? { location: "bot", method: "configured", bot: true } : { location: null, method: null, bot: true, excluded: true };
       return botMention ? { location: "bot", method: "auto", bot: true } : { location: null, method: null, bot: true };
     }
-    return { location: null, method: null, bot: false };
+    return { location: null, method: null, bot: false, excluded: true };
   };
   for (const s of sessions.values()) Object.assign(s, decide(s.cls, s.botMention));
   const subs = /* @__PURE__ */ new Map();
   for (const [fh, fs, key] of subagents) {
     const parent = sessions.get(key);
     const d = parent ?? decide(fs.cls, fs.botMention);
-    subs.set(fh, { key, parentLocation: d.location, method: d.method, bot: d.bot });
+    subs.set(fh, { key, parentLocation: d.location, method: d.method, bot: d.bot, excluded: !!d.excluded });
   }
   return { sessions, subs };
 }
 function responseLocation(rs, i, attr) {
   const sk = rs.session(i);
   const s = attr.sessions.get(sk);
-  const parentLoc = s ? s.location : attr.subBySession.get(sk) ?? null;
-  if (!parentLoc) return null;
+  const parentLoc = s ? s.excluded ? EXCLUDED : s.location : attr.subBySession.get(sk) ?? null;
+  if (!parentLoc || parentLoc === EXCLUDED) return parentLoc;
   return rs.side(i) ? "subagent" : parentLoc;
 }
 function pruneResponses(state, env, nowMs) {
@@ -3434,8 +3436,7 @@ function pruneResponses(state, env, nowMs) {
     const day = dateOf(rs.t(i));
     const loc = responseLocation(rs, i, attr) ?? "unattributed";
     const d = (_a = state.archive.days)[day] ?? (_a[day] = { tokens: {}, ctx: null });
-    const slot = (_b = d.tokens)[_c = `${loc}|${rs.model(i)}`] ?? (_b[_c] = zero5());
-    add5(slot, rs.vec(i));
+    if (loc !== EXCLUDED) add5((_b = d.tokens)[_c = `${loc}|${rs.model(i)}`] ?? (_b[_c] = zero5()), rs.vec(i));
     if (!rs.side(i) && (loc === "direct" || loc === "worker")) {
       if (!raw.has(day)) raw.set(day, []);
       raw.get(day).push(rs.ctx(i));
@@ -3453,7 +3454,7 @@ function pruneResponses(state, env, nowMs) {
 }
 function withSubIndex(attr) {
   attr.subBySession = /* @__PURE__ */ new Map();
-  for (const s of attr.subs.values()) if (!attr.sessions.has(s.key) && !attr.subBySession.has(s.key)) attr.subBySession.set(s.key, s.parentLocation);
+  for (const s of attr.subs.values()) if (!attr.sessions.has(s.key) && !attr.subBySession.has(s.key)) attr.subBySession.set(s.key, s.excluded ? EXCLUDED : s.parentLocation);
   return attr;
 }
 function bucketOut(parts) {
@@ -3503,7 +3504,8 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
   const attr = withSubIndex(resolveAttribution(state, env));
   const mainSessions = [...attr.sessions.entries()].sort((a, b) => compareCodeUnits(a[0], b[0]));
   const attributed = mainSessions.filter(([, s]) => s.location);
-  const unattributed = mainSessions.filter(([, s]) => !s.location);
+  const unattributed = mainSessions.filter(([, s]) => !s.location && !s.excluded);
+  const excluded = mainSessions.filter(([, s]) => s.excluded);
   const base = {
     status: "available",
     reason: null,
@@ -3516,6 +3518,7 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
       skippedRatio,
       sessionsAttributed: attributed.length,
       sessionsUnattributed: unattributed.length,
+      sessionsExcluded: excluded.length,
       incremental,
       configSince: configSinceMs2 === null ? null : new Date(configSinceMs2).toISOString().replace(/\.\d+Z$/, "Z")
     },
@@ -3551,6 +3554,7 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
     const v = rs.vec(i);
     const model = rs.model(i);
     const loc = responseLocation(rs, i, attr);
+    if (loc === EXCLUDED) continue;
     if (!loc) {
       addTo(unattrModel, model, v);
       continue;
@@ -3991,7 +3995,7 @@ function knowledgeBaseKeys(col) {
 
 // src/session-aggregate.mjs
 import path6 from "path";
-var COUNTS0 = { filesScanned: 0, linesRead: 0, linesSkipped: 0, skippedRatio: 0, sessionsAttributed: 0, sessionsUnattributed: 0, incremental: false, configSince: null };
+var COUNTS0 = { filesScanned: 0, linesRead: 0, linesSkipped: 0, skippedRatio: 0, sessionsAttributed: 0, sessionsUnattributed: 0, sessionsExcluded: 0, incremental: false, configSince: null };
 function emptySessions(status, reason) {
   return {
     status,
@@ -4520,6 +4524,7 @@ function engineLimitations(col, ctx, sessions, info, extra = []) {
     if (sessions.tokens) out.push({ code: "weighted_not_a_bill", message: `환산값은 공개 가격표(${sessions.tokens.weighting.pricingTableVersion}) 기준 ${sessions.tokens.weighting.referenceModel} 새 입력 토큰 환산 상대값이며 청구액이 아닙니다.` });
     if (info.unknownModels) out.push({ code: "unknown_model_pricing", message: "가격표에 없는 모델의 토큰은 환산값에서 뺐습니다(토큰 수에는 포함)." });
     if (sessions.coverage.sessionsUnattributed) out.push({ code: "unattributed_sessions", message: `귀속이 불확실한 세션 ${sessions.coverage.sessionsUnattributed}개(봇 ${((_a = sessions.tokens) == null ? void 0 : _a.unattributed.botSessions) ?? 0}개)는 합계에 넣지 않았습니다.` });
+    if (sessions.coverage.sessionsExcluded) out.push({ code: "unrelated_sessions_excluded", message: `이 프로젝트와 무관한 세션 ${sessions.coverage.sessionsExcluded}개(다른 프로젝트 경로, 다른 저장소에 매핑된 봇)는 합계·미귀속 어디에도 넣지 않았습니다.` });
     if (info.estimatedShare > 0) out.push({ code: "estimated_attribution_included", message: `합계에 추정 귀속(삭제된 워크트리 추정·봇 자동 귀속) 환산값 ${(info.estimatedShare * 100).toFixed(1)}%가 포함돼 있습니다.` });
     if (info.unreadableFiles) out.push({ code: "session_files_unreadable", message: `세션 기록 파일 ${info.unreadableFiles}개를 읽지 못했습니다.` });
     if (info.stateCorrupted) out.push({ code: "session_state_rebuilt", message: "세션 누적 집계 파일이 손상돼 처음부터 다시 만들었습니다. 원본 기록이 정리된 구간은 빠졌을 수 있습니다." });

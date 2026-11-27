@@ -380,12 +380,15 @@ finalize = validate → snapshot → render
 | 3 | `inferred` | `cwd`가 없어졌고 `<orcaPaths.workspaces>/<repoName>/<worktree>` 규약에서 `repoName`이 `R`의 디렉터리 이름과 같음 | `worker` |
 | 4a | `configured` | `cwd`가 `<orcaPaths.bots>/<bot>/` 아래이고 `config.json`이 그 봇을 `R`에 매핑 | `bot` |
 | 4b | `auto` | 4a 매핑이 없고, 그 봇 세션의 `tool_use.input`에 `R` 경로가 1회 이상 나옴 | `bot` |
-| 5 | 미귀속 | 그 외 | 합계에 넣지 않고 `unattributed`에 개수와 토큰만 |
+| 5 | 제외 | 이 프로젝트와 무관한 것이 확실함: 첫 `cwd`가 1~3과 봇 디렉터리 어디에도 해당하지 않음(다른 프로젝트), 또는 `config.json`이 그 봇을 다른 저장소에 매핑 | 집계하지 않는다. 합계·`unattributed` 어디에도 넣지 않고 `coverage.sessionsExcluded`에 개수만 |
+| 6 | 미귀속 | 실제로 불확실한 것: `cwd` 기록이 없는 세션, 매핑도 `R` 경로 언급도 없는 봇 세션 | 합계에 넣지 않고 `unattributed`에 개수와 토큰만 |
 
 - 디렉터리 이름 인코딩은 역변환할 수 없으므로 그룹 키로만 쓰고, 판정은 `cwd`로 한다.
 - `CLAUDE_CONFIG_DIR`을 반영한다.
 - 2의 결과는 `attribution-cache.json`에 저장한다. 워크트리가 나중에 지워져도 같은 결과를 낸다.
 - `inferred`·`auto`는 합계에 들어가지만, 리포트에 "추정 귀속 포함 N%"를 함께 표시한다.
+- 제외한 세션 수는 `limitations`의 `unrelated_sessions_excluded`와 리포트 "귀속" 칸에 표시한다. 다른 프로젝트의 사용량을 이 프로젝트 리포트에 싣지 않는다. 제외 세션의 서브에이전트도 제외하고, 90일이 지나 접을 때도 `archive.json`에 남기지 않는다(엔진 0.3.x 이전에 접힌 응답은 그때 규칙대로 `unattributed`에 남아 있을 수 있다).
+- PRD §6.1의 "귀속이 불확실하면 미귀속"과 같은 뜻이다(v0.1의 5행 "그 외 전부"는 다른 프로젝트 세션까지 미귀속에 넣어 PRD와 어긋났다). PRD 문장 보강 제안은 `docs/reviews/2026-11-27-diceforge-defects.md`의 "PRD 제안"에 있다.
 
 ### 8.4 증분 처리와 누적 보존
 
