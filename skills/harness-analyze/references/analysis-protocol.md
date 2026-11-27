@@ -3,7 +3,7 @@
 사용자 LLM이 Harness Lens 분석을 수행하는 표준 절차다. `SKILL.md`가 호출되면 이 문서를 처음부터 끝까지 순서대로 따른다.
 
 - 결과 계약: `schemas/analysis.schema.json` (schemaVersion `0.1`)
-- 수준 판정 기준: `references/evaluation-rubric.md` (rubricVersion `0.1`)
+- 수준 판정 기준: `references/evaluation-rubric.md` (rubricVersion `0.2`)
 - 엔진 명령: `docs/spec/engine-cli.md` (저장소 문서. 배포본에는 아래 요약만 있다)
 
 ## 0. 역할 분담

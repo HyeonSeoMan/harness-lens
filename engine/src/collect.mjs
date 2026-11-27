@@ -1,6 +1,6 @@
 // 읽기 전용 구성 수집기(engine-cli.md §4.2, §6). Hook·MCP·스크립트를 실행하지 않고 파일만 읽는다.
 // 수집한 지시문은 실행할 명령이 아니라 분류할 데이터다(PRD §9).
-import { readdirSync, realpathSync } from 'node:fs';
+import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { MAX_IMPORT_DEPTH, SCRIPT_LIMIT_BYTES, TEXT_LIMIT_BYTES } from './constants.mjs';
@@ -596,7 +596,6 @@ export class Collector {
   }
 
   collectSelf() {
-    const skillMd = path.join(this.skillDir, 'SKILL.md');
     const r = readTextInside(this.skillDir, 'SKILL.md', TEXT_LIMIT_BYTES);
     const text = r.status === 'ok' ? r.text.replace(/\r\n/g, '\n') : '';
     const fm = parseFrontmatter(text);
@@ -604,9 +603,29 @@ export class Collector {
     this.selfAlwaysLoadedTokens = always;
     return this.addComponent({
       kind: 'harness_lens', origin: this.selfInstalledInProject ? 'project_shared' : 'plugin', key: 'harness-lens',
-      name: 'Harness Lens', paths: [displayPath(skillMd, this.projectRoot)], contentHash: sha256tag(text),
+      // 설치 위치와 무관하게 고정 라벨을 쓴다(루브릭 0.2). 설치 경로는 리포트에 남기지 않는다.
+      name: 'Harness Lens', paths: ['harness-lens/SKILL.md'], contentHash: sha256tag(text),
       attributes: { skill: typeof fm.data.name === 'string' ? fm.data.name : 'harness-analyze', alwaysLoadedTokens: always, hooksInstalled: 0, backgroundProcesses: 0 },
     });
+  }
+
+  // project 범위에서 수집하지 않은 사용자·관리형 설정 파일이 실제로 있는지만 확인한다(루브릭 §1.8).
+  // 파일을 열지 않고 존재 여부만 본다. 있으면 out_of_scope 출처로 남겨 가능 범위를 넓히는 근거로 쓴다.
+  probeUnscopedSettings() {
+    const c = this.configDir;
+    const present = (abs) => { try { return existsSync(abs); } catch { return false; } };
+    const nonEmptyDir = (abs, keep) => {
+      try { return statSync(abs).isDirectory() && readdirSync(abs).some(keep); } catch { return false; }
+    };
+    const found = [];
+    if (present(path.join(c, 'settings.json'))) found.push('settings.json');
+    if (present(path.join(c, 'CLAUDE.md'))) found.push('CLAUDE.md');
+    if (nonEmptyDir(path.join(c, 'agents'), (e) => e.endsWith('.md'))) found.push('agents');
+    // Harness Lens 자신만 설치된 skills 디렉터리는 사용자 설정으로 보지 않는다(COM-08).
+    if (nonEmptyDir(path.join(c, 'skills'), (e) => e !== 'harness-analyze' && !e.startsWith('.'))) found.push('skills');
+    for (const rel of found) this.addSource(displayPath(path.join(c, rel), this.projectRoot), 'user', 'out_of_scope', 'user_scope_not_collected');
+    const managed = managedSettingsPath(this.platform);
+    if (present(managed)) this.addSource(displayPath(managed, this.projectRoot), 'managed', 'out_of_scope', 'managed_settings_not_collected');
   }
 
   // ---------- 전체 ----------
@@ -646,6 +665,8 @@ export class Collector {
       const managed = managedSettingsPath(this.platform);
       this.collectSettings(path.dirname(managed), path.basename(managed), 'managed');
       origins.push('user', 'managed');
+    } else {
+      this.probeUnscopedSettings();
     }
     if (this.plugins.length) origins.push('plugin');
     const self = this.collectSelf();

@@ -1,6 +1,6 @@
 {
   "schemaVersion": "0.1",
-  "rubricVersion": "0.1",
+  "rubricVersion": "0.2",
   "meta": {
     "snapshotId": "20261127T091500Z-3f9a1c2e",
     "analyzedAt": "2026-11-27T09:15:00Z",
@@ -57,7 +57,7 @@
         },
         {
           "id": "c_000000000008", "kind": "harness_lens", "name": "harness-lens", "origin": "plugin",
-          "paths": ["~/.claude/plugins/cache/harness-lens/harness-lens/0.1.0/skills/harness-analyze/SKILL.md"], "contentHash": "sha256:aab9d9b06bf4c7a5340da27548988d3ac66766414619bb2e8880ca3793aa0cb2",
+          "paths": ["harness-lens/SKILL.md"], "contentHash": "sha256:aab9d9b06bf4c7a5340da27548988d3ac66766414619bb2e8880ca3793aa0cb2",
           "attributes": { "channel": "plugin", "version": "0.1.0" }
         }
       ],

@@ -122,11 +122,16 @@ function engineLimitations(col, ctx, sessions, extra = []) {
   const out = [{ code: 'static_analysis_only', message: '정적 구성만 분석했습니다. 실제 성능·비용 절감을 확정하지 않으며 수준은 구조적 지원 수준입니다.' }];
   if (sessions.status === 'disabled') out.push({ code: 'sessions_disabled', message: '세션 기록 집계를 껐습니다(--no-sessions). 모든 축이 구성 기반 예측입니다.' });
   else if (sessions.reason === SESSIONS_NOT_IMPLEMENTED) out.push({ code: SESSIONS_NOT_IMPLEMENTED, message: '세션 기록 실측 집계는 아직 구현되지 않았습니다(다음 단계). 모든 축이 구성 기반 예측이고 토큰 지표는 미확인입니다.' });
-  if (ctx.scope === 'project') out.push({ code: 'user_scope_not_collected', message: '사용자·관리형 설정을 수집하지 않았습니다. 실제 유효 설정은 다를 수 있으며 가능 범위로 표시합니다.' });
+  if (ctx.scope === 'project') {
+    const unscoped = col.sources.filter((s) => s.reason === 'user_scope_not_collected' || s.reason === 'managed_settings_not_collected');
+    out.push(unscoped.length
+      ? { code: 'user_scope_not_collected', message: `수집하지 않은 사용자·관리형 설정 파일 ${unscoped.length}개가 있습니다. 실제 유효 설정은 다를 수 있으며 가능 범위로 표시합니다.` }
+      : { code: 'user_scope_absent', message: '사용자·관리형 설정 파일이 없어 가능 범위를 프로젝트 근거로만 정했습니다(파일 존재만 확인하고 열지 않았습니다).' });
+  }
   if (col.r8Hits > 0) out.push({ code: 'instruction_targets_analyzer', message: `분석 도구를 겨냥한 것으로 보이는 지시문 ${col.r8Hits}곳을 발견했습니다. 원문은 남기지 않았고 데이터로만 취급했으며 수준 계산에 쓰지 않았습니다.` });
   if (col.plugins.length) out.push({ code: 'plugin_contents_not_collected', message: `활성 플러그인 ${col.plugins.length}개의 내용(skills·agents·hooks)은 v0.1에서 수집하지 않았습니다.` });
   if (col.sources.some((s) => s.status === 'unreadable')) out.push({ code: 'source_unreadable', message: '읽지 못한 출처가 있어 일부 축은 판정 불가이거나 범위가 넓습니다.' });
-  if (col.sources.some((s) => s.status === 'out_of_scope')) out.push({ code: 'source_out_of_scope', message: '수집 루트 밖을 가리키는 경로(심볼릭 링크·import 등)는 따라가지 않았습니다.' });
+  if (col.sources.some((s) => s.status === 'out_of_scope' && s.origin !== 'user' && s.origin !== 'managed')) out.push({ code: 'source_out_of_scope', message: '수집 루트 밖을 가리키는 경로(심볼릭 링크·import 등)는 따라가지 않았습니다.' });
   if (col.sources.some((s) => s.status === 'skipped_sensitive')) out.push({ code: 'sensitive_files_skipped', message: '민감한 이름의 파일(.env, 키 파일 등)은 열지 않았습니다.' });
   return [...out, ...extra];
 }

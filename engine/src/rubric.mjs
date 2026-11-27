@@ -30,9 +30,10 @@ function axisCandidates(axis, prim, ctx) {
   if (axis === 'execution_stability') {
     const agents = ctx.allEvidence.filter((e) => e._tags.agent && !e.void);
     const maxTurns = prim.filter((e) => e._tags.maxTurns);
-    if (agents.length && agents.every((a) => !a._tags.noMaxTurns) && maxTurns.length) {
-      maxTurns.forEach((e) => addRule(e, 'ES-L3-03'));
-      push('ES-L3-03', maxTurns);
+    // ES-L3-04(0.2): Subagent가 2개 이상이고 모두 maxTurns를 가질 때만 3이다. 하나뿐이면 ES-L2-01(2)에 머문다.
+    if (agents.length >= 2 && agents.every((a) => !a._tags.noMaxTurns) && maxTurns.length) {
+      maxTurns.forEach((e) => addRule(e, 'ES-L3-04'));
+      push('ES-L3-04', maxTurns);
     }
   }
   if (axis === 'autonomy') {
@@ -65,7 +66,9 @@ export function computeAxes(col, { scope }) {
   const allEvidence = col.evidence;
   const ctx = { allEvidence };
   const unreadable = col.sources.some((s) => s.status === 'unreadable');
-  const outOfScope = col.sources.some((s) => s.status === 'out_of_scope');
+  const unscopedUser = col.sources.some((s) => s.reason === 'user_scope_not_collected');
+  const unscopedManaged = col.sources.some((s) => s.reason === 'managed_settings_not_collected');
+  const outOfScope = col.sources.some((s) => s.status === 'out_of_scope' && s.reason !== 'user_scope_not_collected' && s.reason !== 'managed_settings_not_collected');
   const totalAlwaysLines = col.alwaysLoaded.lines;
   return AXES.map((axis) => {
     const prefix = AXIS_PREFIX[axis];
@@ -92,11 +95,9 @@ export function computeAxes(col, { scope }) {
     const axisMax = AXIS_MAX[axis];
     const reasons = [];
     let max = level ?? 0;
-    if (scope === 'project') {
-      max = axisMax;
-      reasons.push('user_scope_not_collected');
-      if (axis === 'safety_boundary') reasons.push('managed_settings_not_collected');
-    }
+    // 0.2: 수집하지 않은 사용자·관리형 설정 파일이 실제로 있을 때만 넓힌다. 없으면 프로젝트 근거대로 좁게 둔다.
+    if (scope === 'project' && unscopedUser) { max = axisMax; reasons.push('user_scope_not_collected'); }
+    if (scope === 'project' && unscopedManaged && axis === 'safety_boundary') { max = axisMax; reasons.push('managed_settings_not_collected'); }
     if (unreadable) { max = axisMax; reasons.push('source_unreadable'); }
     if (outOfScope) { max = axisMax; reasons.push('source_out_of_scope'); }
     if (levelStatus === 'unknown') max = axisMax;
@@ -148,7 +149,7 @@ export function computeTensions(col, axes) {
   const ES = 'execution_stability';
   const SC = 'spec_clarity';
 
-  add('T1', 'tension', [VG, TP], evs.filter((e) => e._tags.hook && has(e, 'VG-L1-02', 'VG-L3-01', 'VG-L3-02')));
+  add('T1', 'tension', [VG, TP], evs.filter((e) => e._tags.hook && has(e, 'VG-L1-02', 'VG-L2-03', 'VG-L3-01', 'VG-L3-02')));
   add('T2', 'tension', [VG, CE], evs.filter((e) => has(e, 'VG-L2-01', 'VG-L2-02', 'VG-L3-03')));
   {
     const risky = aSet.filter((e) => ['auto', 'dontAsk', 'bypassPermissions'].includes(e._tags.defaultMode) || e._tags.bareBash);

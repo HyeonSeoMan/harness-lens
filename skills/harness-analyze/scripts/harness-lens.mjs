@@ -8,17 +8,17 @@ if (Number(process.versions.node.split('.')[0]) < 20) {
 
 // src/cli.mjs
 import { spawn } from "child_process";
-import { accessSync, constants as fsc, existsSync as existsSync4, readdirSync as readdirSync4, realpathSync as realpathSync3, rmSync as rmSync2, statSync as statSync3, writeFileSync as writeFileSync2 } from "fs";
+import { accessSync, constants as fsc, existsSync as existsSync5, readdirSync as readdirSync4, realpathSync as realpathSync3, rmSync as rmSync2, statSync as statSync4, writeFileSync as writeFileSync2 } from "fs";
 import { homedir as homedir3 } from "os";
 import path6 from "path";
 import { performance } from "perf_hooks";
 import { pathToFileURL } from "url";
 
 // src/constants.mjs
-var ENGINE_VERSION = "0.1.0";
-var VALIDATOR_VERSION = "0.1.0";
+var ENGINE_VERSION = "0.2.0";
+var VALIDATOR_VERSION = "0.2.0";
 var SCHEMA_VERSION = "0.1";
-var RUBRIC_VERSION = "0.1";
+var RUBRIC_VERSION = "0.2";
 var SESSION_PARSER_VERSION = null;
 var PRICING_TABLE_VERSION = null;
 var MIN_NODE_MAJOR = 20;
@@ -83,7 +83,7 @@ var MAX_IMPORT_DEPTH = 5;
 var RUNS_TO_KEEP = 5;
 
 // src/collect.mjs
-import { readdirSync as readdirSync2, realpathSync as realpathSync2 } from "fs";
+import { existsSync, readdirSync as readdirSync2, realpathSync as realpathSync2, statSync as statSync2 } from "fs";
 import { homedir as homedir2 } from "os";
 import path2 from "path";
 
@@ -1140,7 +1140,6 @@ ${script ?? ""}`, REENTRY);
     }
   }
   collectSelf() {
-    const skillMd = path2.join(this.skillDir, "SKILL.md");
     const r = readTextInside(this.skillDir, "SKILL.md", TEXT_LIMIT_BYTES);
     const text = r.status === "ok" ? r.text.replace(/\r\n/g, "\n") : "";
     const fm = parseFrontmatter(text);
@@ -1150,11 +1149,39 @@ ${script ?? ""}`, REENTRY);
       kind: "harness_lens",
       origin: this.selfInstalledInProject ? "project_shared" : "plugin",
       key: "harness-lens",
+      // 설치 위치와 무관하게 고정 라벨을 쓴다(루브릭 0.2). 설치 경로는 리포트에 남기지 않는다.
       name: "Harness Lens",
-      paths: [displayPath(skillMd, this.projectRoot)],
+      paths: ["harness-lens/SKILL.md"],
       contentHash: sha256tag(text),
       attributes: { skill: typeof fm.data.name === "string" ? fm.data.name : "harness-analyze", alwaysLoadedTokens: always, hooksInstalled: 0, backgroundProcesses: 0 }
     });
+  }
+  // project 범위에서 수집하지 않은 사용자·관리형 설정 파일이 실제로 있는지만 확인한다(루브릭 §1.8).
+  // 파일을 열지 않고 존재 여부만 본다. 있으면 out_of_scope 출처로 남겨 가능 범위를 넓히는 근거로 쓴다.
+  probeUnscopedSettings() {
+    const c = this.configDir;
+    const present = (abs) => {
+      try {
+        return existsSync(abs);
+      } catch {
+        return false;
+      }
+    };
+    const nonEmptyDir = (abs, keep) => {
+      try {
+        return statSync2(abs).isDirectory() && readdirSync2(abs).some(keep);
+      } catch {
+        return false;
+      }
+    };
+    const found = [];
+    if (present(path2.join(c, "settings.json"))) found.push("settings.json");
+    if (present(path2.join(c, "CLAUDE.md"))) found.push("CLAUDE.md");
+    if (nonEmptyDir(path2.join(c, "agents"), (e) => e.endsWith(".md"))) found.push("agents");
+    if (nonEmptyDir(path2.join(c, "skills"), (e) => e !== "harness-analyze" && !e.startsWith("."))) found.push("skills");
+    for (const rel of found) this.addSource(displayPath(path2.join(c, rel), this.projectRoot), "user", "out_of_scope", "user_scope_not_collected");
+    const managed = managedSettingsPath(this.platform);
+    if (present(managed)) this.addSource(displayPath(managed, this.projectRoot), "managed", "out_of_scope", "managed_settings_not_collected");
   }
   // ---------- 전체 ----------
   run() {
@@ -1197,6 +1224,8 @@ ${script ?? ""}`, REENTRY);
       const managed = managedSettingsPath(this.platform);
       this.collectSettings(path2.dirname(managed), path2.basename(managed), "managed");
       origins.push("user", "managed");
+    } else {
+      this.probeUnscopedSettings();
     }
     if (this.plugins.length) origins.push("plugin");
     const self = this.collectSelf();
@@ -1934,7 +1963,7 @@ function renderReport(analysis) {
 }
 
 // src/resources.mjs
-import { existsSync, readFileSync as readFileSync2 } from "fs";
+import { existsSync as existsSync2, readFileSync as readFileSync2 } from "fs";
 import path3 from "path";
 import { fileURLToPath } from "url";
 var cachedSkillDir = null;
@@ -1942,7 +1971,7 @@ function skillDir() {
   if (cachedSkillDir) return cachedSkillDir;
   const here = path3.dirname(fileURLToPath(import.meta.url));
   const candidates = [path3.resolve(here, ".."), path3.resolve(here, "../../skills/harness-analyze")];
-  cachedSkillDir = candidates.find((d) => existsSync(path3.join(d, "schemas", "analysis.schema.json"))) ?? candidates[0];
+  cachedSkillDir = candidates.find((d) => existsSync2(path3.join(d, "schemas", "analysis.schema.json"))) ?? candidates[0];
   return cachedSkillDir;
 }
 function loadSchema() {
@@ -1978,9 +2007,9 @@ function axisCandidates(axis, prim, ctx) {
   if (axis === "execution_stability") {
     const agents = ctx.allEvidence.filter((e) => e._tags.agent && !e.void);
     const maxTurns = prim.filter((e) => e._tags.maxTurns);
-    if (agents.length && agents.every((a) => !a._tags.noMaxTurns) && maxTurns.length) {
-      maxTurns.forEach((e) => addRule(e, "ES-L3-03"));
-      push("ES-L3-03", maxTurns);
+    if (agents.length >= 2 && agents.every((a) => !a._tags.noMaxTurns) && maxTurns.length) {
+      maxTurns.forEach((e) => addRule(e, "ES-L3-04"));
+      push("ES-L3-04", maxTurns);
     }
   }
   if (axis === "autonomy") {
@@ -2012,7 +2041,9 @@ function computeAxes(col, { scope }) {
   const allEvidence = col.evidence;
   const ctx = { allEvidence };
   const unreadable = col.sources.some((s) => s.status === "unreadable");
-  const outOfScope = col.sources.some((s) => s.status === "out_of_scope");
+  const unscopedUser = col.sources.some((s) => s.reason === "user_scope_not_collected");
+  const unscopedManaged = col.sources.some((s) => s.reason === "managed_settings_not_collected");
+  const outOfScope = col.sources.some((s) => s.status === "out_of_scope" && s.reason !== "user_scope_not_collected" && s.reason !== "managed_settings_not_collected");
   const totalAlwaysLines = col.alwaysLoaded.lines;
   return AXES.map((axis) => {
     const prefix = AXIS_PREFIX[axis];
@@ -2039,10 +2070,13 @@ function computeAxes(col, { scope }) {
     const axisMax = AXIS_MAX[axis];
     const reasons = [];
     let max = level ?? 0;
-    if (scope === "project") {
+    if (scope === "project" && unscopedUser) {
       max = axisMax;
       reasons.push("user_scope_not_collected");
-      if (axis === "safety_boundary") reasons.push("managed_settings_not_collected");
+    }
+    if (scope === "project" && unscopedManaged && axis === "safety_boundary") {
+      max = axisMax;
+      reasons.push("managed_settings_not_collected");
     }
     if (unreadable) {
       max = axisMax;
@@ -2095,7 +2129,7 @@ function computeTensions(col, axes) {
   const CX = "context_efficiency";
   const ES = "execution_stability";
   const SC = "spec_clarity";
-  add("T1", "tension", [VG, TP], evs.filter((e) => e._tags.hook && has(e, "VG-L1-02", "VG-L3-01", "VG-L3-02")));
+  add("T1", "tension", [VG, TP], evs.filter((e) => e._tags.hook && has(e, "VG-L1-02", "VG-L2-03", "VG-L3-01", "VG-L3-02")));
   add("T2", "tension", [VG, CE], evs.filter((e) => has(e, "VG-L2-01", "VG-L2-02", "VG-L3-03")));
   {
     const risky = aSet.filter((e) => ["auto", "dontAsk", "bypassPermissions"].includes(e._tags.defaultMode) || e._tags.bareBash);
@@ -2175,14 +2209,14 @@ function aggregateSessions({ disabled = false } = {}) {
 // src/store.mjs
 import {
   closeSync,
-  existsSync as existsSync2,
+  existsSync as existsSync3,
   mkdirSync,
   openSync,
   readFileSync as readFileSync3,
   readdirSync as readdirSync3,
   renameSync,
   rmSync,
-  statSync as statSync2,
+  statSync as statSync3,
   writeFileSync,
   writeSync
 } from "fs";
@@ -2202,9 +2236,9 @@ function atomicWrite(file, content) {
 var writeJson = (file, value) => atomicWrite(file, stableStringify(value));
 var readJson = (file) => JSON.parse(readFileSync3(file, "utf8"));
 function ensureOutDir(out) {
-  const fresh = !existsSync2(out);
+  const fresh = !existsSync3(out);
   mkdirSync(out, { recursive: true });
-  if (fresh || !existsSync2(path4.join(out, ".gitignore"))) atomicWrite(path4.join(out, ".gitignore"), "*\n");
+  if (fresh || !existsSync3(path4.join(out, ".gitignore"))) atomicWrite(path4.join(out, ".gitignore"), "*\n");
 }
 function pidAlive(pid) {
   try {
@@ -2230,7 +2264,7 @@ function acquireLock(out, now) {
         const age = Date.now() - Date.parse(info.startedAt);
         stale = !pidAlive(info.pid) || !(age < 10 * 60 * 1e3);
       } catch {
-        stale = statSync2(file).mtimeMs < Date.now() - 10 * 60 * 1e3;
+        stale = statSync3(file).mtimeMs < Date.now() - 10 * 60 * 1e3;
       }
       if (!stale) throw new EngineError(11, "다른 Harness Lens 분석이 진행 중입니다. 끝난 뒤 다시 시도하세요.");
       rmSync(file, { force: true });
@@ -2242,23 +2276,23 @@ var runDir = (out, runId) => path4.join(out, "runs", runId);
 var snapshotDir = (out, id) => path4.join(out, "snapshots", id);
 function readIndex(out) {
   const file = path4.join(out, "snapshots", "index.json");
-  return existsSync2(file) ? readJson(file) : [];
+  return existsSync3(file) ? readJson(file) : [];
 }
 function latestSnapshotId(out) {
   const file = path4.join(out, "latest.json");
-  if (existsSync2(file)) return readJson(file).snapshotId;
+  if (existsSync3(file)) return readJson(file).snapshotId;
   const idx = readIndex(out);
   return idx.length ? idx[idx.length - 1].snapshotId : null;
 }
 function loadSnapshot(out, id) {
   const file = path4.join(snapshotDir(out, id), "analysis.json");
-  if (!existsSync2(file)) throw new EngineError(41, `스냅샷 ${id}이 없습니다.`);
+  if (!existsSync3(file)) throw new EngineError(41, `스냅샷 ${id}이 없습니다.`);
   return readJson(file);
 }
 function commitSnapshot(out, analysis) {
   const id = analysis.meta.snapshotId;
   const finalDir = snapshotDir(out, id);
-  if (existsSync2(finalDir)) throw new EngineError(40, `스냅샷 ${id}이 이미 있습니다.`);
+  if (existsSync3(finalDir)) throw new EngineError(40, `스냅샷 ${id}이 이미 있습니다.`);
   const staging = path4.join(out, "snapshots", `.staging-${id}`);
   try {
     rmSync(staging, { recursive: true, force: true });
@@ -2286,7 +2320,7 @@ function commitSnapshot(out, analysis) {
 }
 function pruneRuns(out, keepId) {
   const dir = path4.join(out, "runs");
-  if (!existsSync2(dir)) return;
+  if (!existsSync3(dir)) return;
   const runs = readdirSync3(dir).filter((d) => d !== keepId).sort(compareCodeUnits);
   for (const old of runs.slice(0, Math.max(0, runs.length - (RUNS_TO_KEEP - 1)))) {
     rmSync(path4.join(dir, old), { recursive: true, force: true });
@@ -2294,7 +2328,7 @@ function pruneRuns(out, keepId) {
 }
 
 // src/validate.mjs
-import { existsSync as existsSync3, readFileSync as readFileSync4 } from "fs";
+import { existsSync as existsSync4, readFileSync as readFileSync4 } from "fs";
 import path5 from "path";
 
 // src/checks.mjs
@@ -2626,7 +2660,7 @@ function validateDocument(doc, schema = loadSchema()) {
 }
 function validateRun({ out, runId, agent, model, now }) {
   const dir = runDir(out, runId);
-  if (!existsSync3(path5.join(dir, "run.json"))) throw new EngineError(41, `run ${runId}이 없습니다.`);
+  if (!existsSync4(path5.join(dir, "run.json"))) throw new EngineError(41, `run ${runId}이 없습니다.`);
   const run = readJson(path5.join(dir, "run.json"));
   const draft = readJson(path5.join(dir, "draft.json"));
   if (draftHash(draft) !== run.draftHash) {
@@ -2641,7 +2675,7 @@ function validateRun({ out, runId, agent, model, now }) {
   ];
   let interpretation = null;
   const interpFile = path5.join(dir, "interpretation.json");
-  if (!existsSync3(interpFile)) {
+  if (!existsSync4(interpFile)) {
     checks.push({ checkId: "V-SCHEMA", status: "fail", message: "interpretation.json이 없습니다." });
   } else {
     try {
@@ -2716,7 +2750,7 @@ var Ctx = class {
     } else {
       let dir = process.cwd();
       for (; ; ) {
-        if (existsSync4(path6.join(dir, ".git"))) {
+        if (existsSync5(path6.join(dir, ".git"))) {
           root = dir;
           break;
         }
@@ -2726,7 +2760,7 @@ var Ctx = class {
       }
     }
     try {
-      if (!root || !statSync3(root).isDirectory()) throw new Error("not dir");
+      if (!root || !statSync4(root).isDirectory()) throw new Error("not dir");
       accessSync(root, fsc.R_OK);
     } catch {
       throw new EngineError(EXIT.NO_PROJECT, "프로젝트 루트를 찾을 수 없거나 읽을 수 없습니다. --project로 지정하세요.");
@@ -2749,7 +2783,7 @@ function checkRuntime(ctx) {
   if (major < MIN_NODE_MAJOR) return { ok: false, code: "node_too_old", message: NODE_MESSAGE };
   if (!SUPPORTED_PLATFORMS.includes(process.platform)) return { ok: false, code: "platform_unsupported", message: `지원하지 않는 플랫폼입니다: ${process.platform}` };
   let dir = ctx.out;
-  while (!existsSync4(dir)) dir = path6.dirname(dir);
+  while (!existsSync5(dir)) dir = path6.dirname(dir);
   try {
     accessSync(dir, fsc.W_OK);
   } catch {
@@ -2765,11 +2799,14 @@ function engineLimitations(col, ctx, sessions, extra = []) {
   const out = [{ code: "static_analysis_only", message: "정적 구성만 분석했습니다. 실제 성능·비용 절감을 확정하지 않으며 수준은 구조적 지원 수준입니다." }];
   if (sessions.status === "disabled") out.push({ code: "sessions_disabled", message: "세션 기록 집계를 껐습니다(--no-sessions). 모든 축이 구성 기반 예측입니다." });
   else if (sessions.reason === SESSIONS_NOT_IMPLEMENTED) out.push({ code: SESSIONS_NOT_IMPLEMENTED, message: "세션 기록 실측 집계는 아직 구현되지 않았습니다(다음 단계). 모든 축이 구성 기반 예측이고 토큰 지표는 미확인입니다." });
-  if (ctx.scope === "project") out.push({ code: "user_scope_not_collected", message: "사용자·관리형 설정을 수집하지 않았습니다. 실제 유효 설정은 다를 수 있으며 가능 범위로 표시합니다." });
+  if (ctx.scope === "project") {
+    const unscoped = col.sources.filter((s) => s.reason === "user_scope_not_collected" || s.reason === "managed_settings_not_collected");
+    out.push(unscoped.length ? { code: "user_scope_not_collected", message: `수집하지 않은 사용자·관리형 설정 파일 ${unscoped.length}개가 있습니다. 실제 유효 설정은 다를 수 있으며 가능 범위로 표시합니다.` } : { code: "user_scope_absent", message: "사용자·관리형 설정 파일이 없어 가능 범위를 프로젝트 근거로만 정했습니다(파일 존재만 확인하고 열지 않았습니다)." });
+  }
   if (col.r8Hits > 0) out.push({ code: "instruction_targets_analyzer", message: `분석 도구를 겨냥한 것으로 보이는 지시문 ${col.r8Hits}곳을 발견했습니다. 원문은 남기지 않았고 데이터로만 취급했으며 수준 계산에 쓰지 않았습니다.` });
   if (col.plugins.length) out.push({ code: "plugin_contents_not_collected", message: `활성 플러그인 ${col.plugins.length}개의 내용(skills·agents·hooks)은 v0.1에서 수집하지 않았습니다.` });
   if (col.sources.some((s) => s.status === "unreadable")) out.push({ code: "source_unreadable", message: "읽지 못한 출처가 있어 일부 축은 판정 불가이거나 범위가 넓습니다." });
-  if (col.sources.some((s) => s.status === "out_of_scope")) out.push({ code: "source_out_of_scope", message: "수집 루트 밖을 가리키는 경로(심볼릭 링크·import 등)는 따라가지 않았습니다." });
+  if (col.sources.some((s) => s.status === "out_of_scope" && s.origin !== "user" && s.origin !== "managed")) out.push({ code: "source_out_of_scope", message: "수집 루트 밖을 가리키는 경로(심볼릭 링크·import 등)는 따라가지 않았습니다." });
   if (col.sources.some((s) => s.status === "skipped_sensitive")) out.push({ code: "sensitive_files_skipped", message: "민감한 이름의 파일(.env, 키 파일 등)은 열지 않았습니다." });
   return [...out, ...extra];
 }
@@ -2980,13 +3017,13 @@ function cmdSnapshot(ctx) {
   var _a;
   if (!ctx.opts.run) throw new EngineError(EXIT.USAGE, "--run <runId>가 필요합니다.");
   const file = path6.join(runDir(ctx.out, ctx.opts.run), "analysis.json");
-  if (!existsSync4(file)) throw new EngineError(EXIT.NOT_FOUND, `run ${ctx.opts.run}의 analysis.json이 없습니다. validate를 먼저 실행하세요.`);
+  if (!existsSync5(file)) throw new EngineError(EXIT.NOT_FOUND, `run ${ctx.opts.run}의 analysis.json이 없습니다. validate를 먼저 실행하세요.`);
   const analysis = readJson(file);
   if (((_a = analysis.validation) == null ? void 0 : _a.status) !== "valid") throw new EngineError(EXIT.INVALID, "검증을 통과하지 못한 결과는 스냅샷으로 저장하지 않습니다.");
   const { value: safe } = rescanAndRedact(analysis);
   ctx.time("snapshot", () => commitSnapshot(ctx.out, safe));
   const runFile = path6.join(runDir(ctx.out, ctx.opts.run), "run.json");
-  if (existsSync4(runFile)) writeJson(runFile, { ...readJson(runFile), status: "snapshotted" });
+  if (existsSync5(runFile)) writeJson(runFile, { ...readJson(runFile), status: "snapshotted" });
   return { result: { ok: true, snapshotId: safe.meta.snapshotId, analysisPath: path6.join(snapshotDir(ctx.out, safe.meta.snapshotId), "analysis.json") } };
 }
 function openInBrowser(file) {
@@ -3020,7 +3057,7 @@ function cmdRender(ctx) {
 }
 function cmdFinalize(ctx) {
   const out = ctx.out;
-  if (!existsSync4(out)) throw new EngineError(EXIT.NOT_FOUND, "결과 디렉터리가 없습니다. prepare를 먼저 실행하세요.");
+  if (!existsSync5(out)) throw new EngineError(EXIT.NOT_FOUND, "결과 디렉터리가 없습니다. prepare를 먼저 실행하세요.");
   const unlock = acquireLock(out);
   try {
     const v = cmdValidate(ctx);
@@ -3048,11 +3085,11 @@ function resolveTo(ctx) {
   let runId = to == null ? void 0 : to.slice(4);
   if (!runId) {
     const dir = path6.join(ctx.out, "runs");
-    const runs = existsSync4(dir) ? readdirSync4(dir).filter((d) => existsSync4(path6.join(dir, d, "draft.json"))).sort() : [];
+    const runs = existsSync5(dir) ? readdirSync4(dir).filter((d) => existsSync5(path6.join(dir, d, "draft.json"))).sort() : [];
     runId = runs[runs.length - 1];
   }
   const file = runId && path6.join(runDir(ctx.out, runId), "draft.json");
-  if (!file || !existsSync4(file)) throw new EngineError(EXIT.NOT_FOUND, "비교할 run이 없습니다.");
+  if (!file || !existsSync5(file)) throw new EngineError(EXIT.NOT_FOUND, "비교할 run이 없습니다.");
   return readJson(file);
 }
 function cmdDiff(ctx) {
@@ -3108,7 +3145,7 @@ function main(argv) {
     if (code === EXIT.INTERNAL && ctx) {
       try {
         const file = path6.join(ctx.out, ctx.opts.run ? path6.join("runs", ctx.opts.run) : "", "error.json");
-        if (existsSync4(path6.dirname(file))) {
+        if (existsSync5(path6.dirname(file))) {
           writeFileSync2(file, stableStringify({ message: String((err == null ? void 0 : err.message) ?? err).slice(0, 300), engineVersion: ENGINE_VERSION, at: ctx.now }));
           message = `${message} ${file}`;
         }
