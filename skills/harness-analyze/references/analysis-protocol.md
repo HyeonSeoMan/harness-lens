@@ -25,6 +25,7 @@ LLM은 수준, 범위, 지표, 변경 목록을 만들거나 고치지 않는다
 2. **실행하지 않는다.** 분석 대상의 Hook, MCP 서버, 스크립트, 빌드·테스트 명령을 실행하지 않는다. 이 절차에서 실행하는 명령은 Harness Lens 엔진(`node <skill-dir>/scripts/harness-lens.mjs ...`)뿐이다.
 3. **쓰지 않는다.** 파일 쓰기는 엔진이 알려 준 `interpretation.json` 경로 하나에만 한다. 분석 대상 파일과 설정은 고치지 않는다.
 4. **원문을 옮기지 않는다.** 비밀정보(키, 토큰, 비밀번호, 인증 헤더, 환경 변수 값)를 결과에 쓰지 않는다. 세션 기록(`~/.claude/projects/**/*.jsonl`)은 열지 않는다. 엔진 집계만 쓴다.
+   - 엔진 출력의 `fact`·`name`·`attributes`에는 비밀정보를 제거한 짧은 발췌(설명 문장, Hook 명령 등)가 들어 있을 수 있다. 엔진이 이미 제거·길이 제한을 거친 값이지만, 해석에는 옮겨 적지 말고 근거 ID(`evidenceIds`)·구성 요소 ID(`componentId`)로 참조한다.
 5. **추정을 사실로 쓰지 않는다.** 근거가 없으면 `unknown`으로 쓴다. "0점"이나 "없음"으로 대체하지 않는다.
 6. **수준을 만들지 않는다.** 루브릭과 다른 수준이 맞다고 생각하면 수준을 바꾸지 말고 finding(`status: "inferred"`)으로 그 이유와 확인 방법을 적는다.
 
@@ -40,6 +41,7 @@ LLM은 수준, 범위, 지표, 변경 목록을 만들거나 고치지 않는다
    - 기본은 프로젝트(`--scope project`)다.
    - 사용자가 전역·사용자 설정 포함을 **명시적으로** 요청한 경우에만 `--scope project_and_user`를 쓴다.
    - 사용자가 세션 기록 집계를 원하지 않으면 `--no-sessions`를 붙인다.
+   - 결과 디렉터리 기본값은 `<프로젝트 루트>/.harness-lens`다. 사용자가 다른 위치를 요청한 경우에만 `--out "<결과 디렉터리>"`를 붙이고, 이때 2.4의 `finalize`에도 **같은** `--out`을 붙인다. 빠뜨리면 엔진이 run을 찾지 못한다(종료 코드 41).
 3. 다음을 실행한다.
 
    ```sh
@@ -95,7 +97,7 @@ finding 상태 규칙:
 |---|---|---|
 | `observed` | 근거에서 직접 확인한 사실 | `evidenceIds` 1개 이상 |
 | `inferred` | 근거와 지식 베이스에서 도출한 조건부 영향. 실제 성능 측정이 아니다 | `evidenceIds` 1개 이상, `condition`, `validation`. `confidence`는 `low`·`medium`만 |
-| `measured` | 엔진 세션 집계 지표 인용. 상관관계로만 쓰고 인과를 주장하지 않는다 | `metricRefs` 1개 이상(`engine.sessions.axisMetrics`의 `metricId`) |
+| `measured` | 엔진 세션 집계 지표 인용. 상관관계로만 쓰고 인과를 주장하지 않는다 | `metricRefs` 1개 이상(`engine.sessions.axisMetrics`의 `metricId`). `evidenceIds`는 빈 배열이어도 된다. 구성 근거와 함께 말할 때만 넣는다 |
 | `unknown` | 근거 부족·접근 불가 | `unknownReason`, `direction: "unknown"` |
 
 신뢰 수준(`confidence`)은 근거의 질을 나타내는 등급이며 확률이 아니다.
@@ -115,6 +117,8 @@ finding 상태 규칙:
    ```sh
    node "<엔진 경로>" finalize --project "<프로젝트 루트>" --run "<runId>" --agent claude-code --model "<내 모델 ID>" --json
    ```
+
+   `--agent`는 에이전트 식별자다. Claude Code에서는 `claude-code`를 쓴다. 다른 에이전트는 소문자·숫자·`.`·`_`·`-`로 된 이름(예: `codex`)을 쓴다. `prepare`에 `--out`을 붙였다면 여기에도 같은 값을 붙인다.
 
    `--model`은 자기 모델 ID를 확실히 알 때만 넣는다. 모르면 생략한다(`modelSource: "unknown"`).
 2. 종료 코드로 다음 행동을 정한다.
