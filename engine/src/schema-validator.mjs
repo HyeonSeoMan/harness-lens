@@ -1,4 +1,4 @@
-// JSON Schema draft 2020-12의 부분 집합 검사기. 의존성 없이 analysis.schema.json만 검사하려고 만든 테스트 도구다.
+// JSON Schema draft 2020-12의 부분 집합 검사기. 런타임 의존성 없이 analysis.schema.json을 검사한다.
 // 지원하지 않는 키워드가 스키마에 나오면 조용히 넘어가지 않고 예외를 던진다.
 
 const ANNOTATIONS = new Set(['$schema', '$id', '$comment', 'title', 'description', '$defs']);

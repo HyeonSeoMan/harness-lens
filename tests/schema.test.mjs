@@ -3,8 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { createValidator } from './support/json-schema-subset.mjs';
-import { runSemanticChecks } from './support/analysis-checks.mjs';
+import { createValidator } from '../engine/src/schema-validator.mjs';
+import { runSemanticChecks } from '../engine/src/checks.mjs';
 
 const root = new URL('../', import.meta.url);
 const readJson = (rel) => JSON.parse(readFileSync(fileURLToPath(new URL(rel, root)), 'utf8'));

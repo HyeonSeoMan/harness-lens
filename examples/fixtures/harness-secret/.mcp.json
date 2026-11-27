@@ -1,0 +1,9 @@
+{
+  "mcpServers": {
+    "internal": {
+      "type": "sse",
+      "url": "https://deploy-bot:fixturepass@mcp.example.com/sse",
+      "headers": { "Authorization": "Bearer fixture-bearer-abcdef123456" }
+    }
+  }
+}

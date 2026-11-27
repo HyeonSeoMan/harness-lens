@@ -1,0 +1,214 @@
+{
+  "summary": [
+    "실행 안정성(3)·자율성(3)에 투자하고 처리 속도(0)·검증 게이트(1)·명세(1)는 서술 수준에 머문다.",
+    "allow+ask로 자동 진행과 정지 지점을 함께 정의했지만, 테스트·리뷰는 지침 문장뿐이라 실패한 변경을 막는 장치가 없다.",
+    "MCP 서버 2개의 출력 상한이 없고 사용자 설정을 수집하지 않아 실제 유효 권한은 범위로만 표시된다."
+  ],
+  "components": [
+    {
+      "componentId": "c_ddfd7c05cd4a",
+      "role": "Bash 명령 차단 Hook",
+      "intent": "force push와 curl|sh 같은 위험한 Bash 명령을 실행 전에 막는다. 패턴 목록에 없는 명령은 통과한다.",
+      "dependsOn": ["c_57b95b02b266"],
+      "risks": [
+        { "text": "문자열 패턴 비교라 공백·별칭을 바꾼 명령은 통과할 수 있다", "evidenceIds": ["ev_d0142c894bf0"] }
+      ],
+      "confidence": "medium"
+    },
+    {
+      "componentId": "c_53a0fb1723c2",
+      "role": "읽기 전용 탐색 서브에이전트",
+      "intent": "큰 탐색을 haiku 모델의 별도 컨텍스트로 위임해 메인 창과 비용을 아낀다.",
+      "dependsOn": [],
+      "risks": [
+        { "text": "요약 과정에서 세부 규약이 빠질 수 있다", "evidenceIds": ["ev_5b056e45c02e"] }
+      ],
+      "confidence": "medium"
+    },
+    {
+      "componentId": "c_acf27da283fe",
+      "role": "브라우저 자동화 MCP 서버",
+      "intent": "웹 페이지를 열어 UI를 확인하는 용도로 보인다. 출력 상한이 없어 큰 페이지 결과가 컨텍스트를 채울 수 있다.",
+      "dependsOn": [],
+      "risks": [
+        { "text": "도구 정의와 결과가 상시 컨텍스트 비용이 된다", "evidenceIds": ["ev_d964218baaa0"] }
+      ],
+      "confidence": "low"
+    }
+  ],
+  "findings": [
+    {
+      "id": "f1",
+      "axis": "verification_gate_strength",
+      "componentIds": ["c_9282bb3eed47"],
+      "status": "observed",
+      "direction": "potential_negative",
+      "statement": "테스트 실행은 CLAUDE.md 문장으로만 요구한다. 테스트를 돌리지 않아도 하네스가 막지 않는다.",
+      "evidenceIds": ["ev_8c32eedcd819"],
+      "metricRefs": [],
+      "condition": null,
+      "confidence": "low",
+      "validation": "테스트를 돌리지 않는 작업을 시켜 보고 경고나 차단이 있는지 확인",
+      "unknownReason": null
+    },
+    {
+      "id": "f2",
+      "axis": "safety_boundary",
+      "componentIds": ["c_ddfd7c05cd4a", "c_57b95b02b266"],
+      "status": "observed",
+      "direction": "potential_positive",
+      "statement": "deny 규칙 3개와 PreToolUse 차단 Hook이 함께 있어 .env 읽기와 위험한 Bash 명령을 도구 호출 단위로 막는다.",
+      "evidenceIds": ["ev_12f287f85a1c", "ev_d0142c894bf0"],
+      "metricRefs": [],
+      "condition": null,
+      "confidence": "high",
+      "validation": "금지된 명령을 요청해 차단 메시지가 나오는지 확인",
+      "unknownReason": null
+    },
+    {
+      "id": "f3",
+      "axis": "context_efficiency",
+      "componentIds": ["c_acf27da283fe", "c_b2ac7cad9dc1"],
+      "status": "inferred",
+      "direction": "potential_negative",
+      "statement": "MAX_MCP_OUTPUT_TOKENS가 없어 MCP 결과가 클 때 메인 컨텍스트를 빠르게 채울 수 있다.",
+      "evidenceIds": ["ev_d964218baaa0", "ev_4925641d7334"],
+      "metricRefs": [],
+      "condition": "MCP 도구가 큰 페이지·이슈 목록을 그대로 돌려주는 경우",
+      "confidence": "low",
+      "validation": "세션 집계가 생기면 MCP 호출 전후 컨텍스트 크기를 비교",
+      "unknownReason": null
+    },
+    {
+      "id": "f4",
+      "axis": "throughput",
+      "componentIds": [],
+      "status": "unknown",
+      "direction": "unknown",
+      "statement": "속도 관련 구성이 없다. 실제로 느린지는 세션 기록 없이 알 수 없다.",
+      "evidenceIds": [],
+      "metricRefs": [],
+      "condition": null,
+      "confidence": "low",
+      "validation": null,
+      "unknownReason": "세션 기록 실측 집계가 아직 없어 작업 시간을 측정하지 못했다"
+    }
+  ],
+  "axisNotes": [
+    {
+      "axis": "spec_clarity",
+      "rationale": "CLAUDE.md의 완료 정의와 import한 코딩 규약 서술이 SC-L1-01에 맞았다. 명세 Skill·계획 모드·명세 검사 Hook은 없다.",
+      "conditions": ["모델이 상시 로드 지침을 실제로 따를 때만 효과가 있다"],
+      "counterexamples": ["수용 기준을 PR에 적으라는 문장이 있어도 적지 않은 PR을 막는 장치는 없다"],
+      "validation": ["최근 PR 설명에 수용 기준이 실제로 있는지 표본 확인"]
+    },
+    {
+      "axis": "verification_gate_strength",
+      "rationale": "npm test 실행을 요구하는 지침 문장(VG-L1-01)만 있다. 검증 Hook과 리뷰 에이전트가 없다.",
+      "conditions": ["모델이 지침대로 테스트를 실행하고 결과를 정직하게 보고할 때"],
+      "counterexamples": ["테스트가 빈약하면 실행하더라도 결함을 놓친다"],
+      "validation": ["일부러 실패하는 테스트를 넣고 작업을 시켜 완료 보고가 나오는지 확인"]
+    },
+    {
+      "axis": "execution_stability",
+      "rationale": "유일한 Subagent explorer가 maxTurns를 가져 ES-L3-03에 맞았다. Hook timeout과 재시도 제한 서술도 있다.",
+      "conditions": ["Subagent가 explorer 하나뿐일 때의 판정이다. maxTurns 없는 Subagent가 추가되면 2로 내려간다"],
+      "counterexamples": ["메인 스레드의 반복 루프는 maxTurns로 막지 못한다"],
+      "validation": ["세션 집계가 생기면 tool_error_rate로 실측 대역을 확인"]
+    },
+    {
+      "axis": "throughput",
+      "rationale": "병렬·백그라운드 구성이 없어 TP-L0-00이다. 수준 0은 느리다는 뜻이 아니라 속도 구성이 없다는 뜻이다.",
+      "conditions": ["작업이 작으면 병렬화가 없어도 느리지 않다"],
+      "counterexamples": ["작업 대부분이 짧은 수정이면 속도 구성이 필요 없을 수 있다"],
+      "validation": ["세션 20회 이후 turn_duration_p50_ms로 실측 전환"]
+    },
+    {
+      "axis": "cost_efficiency",
+      "rationale": "explorer에 haiku 모델을 배정해 작업별 라우팅(CE-L2-01)이 있다. 출력·사고 토큰 상한은 없다.",
+      "conditions": ["탐색 작업이 실제로 explorer로 위임될 때"],
+      "counterexamples": ["싼 모델의 요약이 부정확하면 재탐색으로 비용이 오를 수 있다"],
+      "validation": ["세션 집계가 생기면 cache_hit_ratio와 모델별 토큰 비중 확인"]
+    },
+    {
+      "axis": "context_efficiency",
+      "rationale": "역할 없는 Skill(지연 로드)과 explorer 위임이 CX-L2에 맞았다. 상시 로드 지침은 24줄로 짧다.",
+      "conditions": ["Skill 본문이 필요할 때만 로드되는 동작을 전제로 한다"],
+      "counterexamples": ["MCP 서버 결과가 크면 지침이 짧아도 컨텍스트가 빨리 찬다"],
+      "validation": ["세션 집계가 생기면 context_p90_tokens 확인"]
+    },
+    {
+      "axis": "autonomy",
+      "rationale": "allow 4개로 자동 진행 범위를, ask 1개(git push)로 정지 지점을 함께 정의해 AU-L3-01에 맞았다.",
+      "conditions": ["사용자 설정에 더 넓은 allow나 bypass 모드가 없을 때"],
+      "counterexamples": ["allow에 없는 명령은 매번 승인을 물어 실제 자율 진행이 짧을 수 있다"],
+      "validation": ["세션 집계가 생기면 tool_calls_between_prompts_p50 확인"]
+    },
+    {
+      "axis": "safety_boundary",
+      "rationale": "Subagent tools 허용 목록, deny 규칙, PreToolUse 차단 Hook이 모두 2단계 근거다. sandbox·관리형 설정은 수집 범위 밖이다.",
+      "conditions": ["관리형 설정을 수집하지 않아 3 가능성은 범위로만 표시한다"],
+      "counterexamples": ["deny 규칙은 Bash 하위 프로세스의 파일 접근을 막지 못할 수 있다"],
+      "validation": ["--scope project_and_user로 다시 분석해 sandbox 여부 확인"]
+    }
+  ],
+  "currentTradeoffs": {
+    "investForgo": {
+      "summary": "도구 권한·안정성·컨텍스트 위임에 투자했고, 결과 검증과 속도는 지침 문장이나 미구성으로 남겼다.",
+      "invested": ["execution_stability", "autonomy", "cost_efficiency", "context_efficiency", "safety_boundary"],
+      "forgone": ["spec_clarity", "verification_gate_strength", "throughput"],
+      "evidenceIds": ["ev_b0241a59e1ab", "ev_4a5284ea6f6b", "ev_a8ed8ab06410", "ev_8c32eedcd819"]
+    },
+    "componentTradeoffs": [
+      {
+        "componentId": "c_53a0fb1723c2",
+        "gains": [
+          { "axis": "context_efficiency", "text": "탐색 결과를 요약만 받아 메인 창을 지킨다", "evidenceIds": ["ev_5b056e45c02e"] },
+          { "axis": "cost_efficiency", "text": "탐색을 haiku로 처리해 비용을 낮춘다", "evidenceIds": ["ev_75fa1fc2123b"] }
+        ],
+        "costs": [
+          { "axis": "spec_clarity", "text": "요약 과정에서 세부 규약이 빠질 수 있다", "evidenceIds": ["ev_5b056e45c02e"] }
+        ],
+        "confidence": "medium"
+      },
+      {
+        "componentId": "c_ddfd7c05cd4a",
+        "gains": [
+          { "axis": "safety_boundary", "text": "위험한 Bash 명령을 실행 전에 차단한다", "evidenceIds": ["ev_d0142c894bf0"] }
+        ],
+        "costs": [
+          { "axis": "throughput", "text": "모든 Bash 호출마다 스크립트가 한 번 더 실행된다", "evidenceIds": ["ev_d0142c894bf0"] }
+        ],
+        "confidence": "medium"
+      }
+    ],
+    "axisTensions": [
+      {
+        "tensionId": "T10",
+        "explanation": "MCP 서버 2개가 출력 상한 없이 열려 있어, 기능 확장만큼 컨텍스트 점유와 외부 도구 권한 범위가 함께 커진다.",
+        "evidenceIds": ["ev_d964218baaa0", "ev_4925641d7334"],
+        "condition": "MCP 도구가 큰 결과를 돌려주거나 쓰기 권한을 가질 때",
+        "confidence": "low"
+      },
+      {
+        "tensionId": "S3",
+        "explanation": "deny 규칙이 위험한 경로를 막아 두었기 때문에 allow 범위를 넓혀도 사고 위험이 상대적으로 작다.",
+        "evidenceIds": ["ev_12f287f85a1c", "ev_4a5284ea6f6b"],
+        "condition": "deny가 실제로 위험한 명령을 빠짐없이 덮을 때",
+        "confidence": "medium"
+      }
+    ],
+    "emptyAreas": [
+      {
+        "axis": "throughput",
+        "kind": "unconfigured",
+        "meaning": "병렬·백그라운드 실행 구성이 없다. 느리다는 뜻은 아니다",
+        "howToConfirm": "세션 집계로 작업 시간 분포를 확인한 뒤 필요할 때만 병렬 구성을 검토"
+      }
+    ]
+  },
+  "changeTradeoffs": null,
+  "limitations": [
+    "Hook 스크립트는 실행하지 않고 내용만 읽었다. 실제 차단 동작은 확인하지 않았다."
+  ]
+}

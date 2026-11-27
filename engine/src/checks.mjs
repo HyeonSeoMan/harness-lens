@@ -1,5 +1,4 @@
-// docs/spec/engine-cli.md의 validate 의미 검사(V-*) 참조 구현. 스키마로 표현할 수 없는 교차 참조·일관성 규칙을 확인한다.
-// 엔진 구현 전까지 예시와 픽스처가 계약을 지키는지 보는 용도다.
+// docs/spec/engine-cli.md §9 validate 의미 검사(V-*). 스키마로 표현할 수 없는 교차 참조·일관성 규칙을 확인한다.
 
 const AXES = [
   'spec_clarity', 'verification_gate_strength', 'execution_stability', 'throughput',
