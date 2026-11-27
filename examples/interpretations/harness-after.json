@@ -1,6 +1,6 @@
 {
   "summary": [
-    "검증 게이트가 1→2로 올랐다(reviewer Subagent·PostToolUse 테스트 Hook). 다른 축 수준은 그대로다.",
+    "검증 게이트가 1→2(reviewer·PostToolUse 테스트 Hook), 실행 안정성이 2→3(Subagent 2개 모두 maxTurns)으로 올랐다.",
     "결함을 일찍 돌려받는 대신 편집마다 테스트 대기와 리뷰 호출 비용이 늘 수 있다. browser MCP 제거로 도구 표면은 줄었다.",
     "Hook은 편집 뒤에 실행돼 막지 못하고 되돌려 줄 뿐이다. 실제 대기 시간과 비용은 세션 집계가 생겨야 확인된다."
   ],
@@ -87,8 +87,8 @@
     },
     {
       "axis": "execution_stability",
-      "rationale": "Subagent 두 개 모두 maxTurns가 있어 ES-L3-03이 유지된다. 두 Hook 모두 timeout이 있다.",
-      "conditions": ["새 Subagent도 maxTurns를 가질 때"],
+      "rationale": "Subagent가 explorer·reviewer 두 개가 되었고 모두 maxTurns가 있어 ES-L3-04에 맞았다. 두 Hook 모두 timeout이 있다.",
+      "conditions": ["maxTurns 없는 Subagent가 추가되면 2로 내려간다"],
       "counterexamples": ["테스트가 120초를 넘으면 Hook이 시간 초과로 끝나 실패 정보가 사라질 수 있다"],
       "validation": ["세션 집계가 생기면 tool_error_rate 확인"]
     },
@@ -161,6 +161,13 @@
     ],
     "axisTensions": [
       {
+        "tensionId": "T1",
+        "explanation": "편집마다 테스트를 돌려 실패를 일찍 돌려받는 만큼, 각 편집이 테스트 시간만큼 늦어진다.",
+        "evidenceIds": ["ev_5b0e1b0c5b84"],
+        "condition": "테스트 스위트가 수십 초 이상 걸리고 편집이 잦을 때",
+        "confidence": "medium"
+      },
+      {
         "tensionId": "T2",
         "explanation": "독립 리뷰는 별도 모델 호출이라 검증을 높이는 만큼 호출 비용과 토큰이 늘어난다.",
         "evidenceIds": ["ev_885218b053c3"],
@@ -195,7 +202,8 @@
     {
       "changeIds": ["chg_d67a6d5d2cc2", "chg_1004a24289d0"],
       "expectedEffects": [
-        { "axis": "verification_gate_strength", "direction": "increase", "text": "독립 리뷰가 결함 탐지 기회를 늘린다", "evidenceIds": ["ev_885218b053c3"], "condition": "PR 전에 reviewer를 실제로 호출할 때", "confidence": "medium" }
+        { "axis": "verification_gate_strength", "direction": "increase", "text": "독립 리뷰가 결함 탐지 기회를 늘린다", "evidenceIds": ["ev_885218b053c3"], "condition": "PR 전에 reviewer를 실제로 호출할 때", "confidence": "medium" },
+        { "axis": "execution_stability", "direction": "increase", "text": "reviewer도 maxTurns를 가져 모든 Subagent에 턴 상한이 걸린다", "evidenceIds": ["ev_9e649df550c7"], "condition": "Subagent 루프가 상한에 걸릴 만큼 길어질 때", "confidence": "medium" }
       ],
       "potentialLosses": [
         { "axis": "cost_efficiency", "direction": "decrease", "text": "리뷰마다 sonnet 호출 비용이 든다", "evidenceIds": ["ev_4841cd6d7cec"], "condition": "리뷰 빈도가 높을 때", "confidence": "medium" },

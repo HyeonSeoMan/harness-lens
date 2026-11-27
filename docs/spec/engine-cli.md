@@ -3,7 +3,7 @@
 - 대상: MVP 1 결정론적 엔진 `skills/harness-analyze/scripts/harness-lens.mjs`(소스 `engine/`)
 - 관련: PRD v0.3 §5, FR-02~FR-11, §6.1, §9, §11, §11.1, §14.1 / `docs/research/01~03`
 - 데이터 계약: `skills/harness-analyze/schemas/analysis.schema.json` (schemaVersion `0.1`)
-- 수준 규칙: `skills/harness-analyze/references/evaluation-rubric.md` (rubricVersion `0.1`)
+- 수준 규칙: `skills/harness-analyze/references/evaluation-rubric.md` (rubricVersion `0.2`)
 - LLM 절차: `skills/harness-analyze/references/analysis-protocol.md`
 
 ## 1. 원칙

@@ -1,6 +1,6 @@
 {
   "summary": [
-    "실행 안정성(3)·자율성(3)에 투자하고 처리 속도(0)·검증 게이트(1)·명세(1)는 서술 수준에 머문다.",
+    "자율성(3)·실행 안정성(2) 등에 투자하고 처리 속도(0)·검증 게이트(1)·명세(1)는 서술 수준에 머문다.",
     "allow+ask로 자동 진행과 정지 지점을 함께 정의했지만, 테스트·리뷰는 지침 문장뿐이라 실패한 변경을 막는 장치가 없다.",
     "MCP 서버 2개의 출력 상한이 없고 사용자 설정을 수집하지 않아 실제 유효 권한은 범위로만 표시된다."
   ],
@@ -111,8 +111,8 @@
     },
     {
       "axis": "execution_stability",
-      "rationale": "유일한 Subagent explorer가 maxTurns를 가져 ES-L3-03에 맞았다. Hook timeout과 재시도 제한 서술도 있다.",
-      "conditions": ["Subagent가 explorer 하나뿐일 때의 판정이다. maxTurns 없는 Subagent가 추가되면 2로 내려간다"],
+      "rationale": "Subagent explorer의 maxTurns(ES-L2-01)와 Hook timeout이 2단계 근거다. Subagent가 하나뿐이라 ES-L3-04(2개 이상 모두 maxTurns)에는 맞지 않는다.",
+      "conditions": ["maxTurns를 가진 Subagent가 하나 더 생기면 3(ES-L3-04)이 된다"],
       "counterexamples": ["메인 스레드의 반복 루프는 maxTurns로 막지 못한다"],
       "validation": ["세션 집계가 생기면 tool_error_rate로 실측 대역을 확인"]
     },

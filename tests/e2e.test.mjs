@@ -53,10 +53,10 @@ test('변경 탐지: Subagent·Hook 추가, MCP 서버 삭제, 지침·설정 �
     'modified:settings:.claude/settings.json',
   ]);
   assert.equal(a.engine.comparison.comparability, 'full');
-  const vg = a.engine.comparison.axisDeltas.find((d) => d.axis === 'verification_gate_strength');
-  assert.deepEqual([vg.previousLevel, vg.currentLevel, vg.comparable], [1, 2, true]);
-  const unchanged = a.engine.comparison.axisDeltas.filter((d) => d.axis !== 'verification_gate_strength');
-  assert.ok(unchanged.every((d) => d.previousLevel === d.currentLevel));
+  const moved = a.engine.comparison.axisDeltas
+    .filter((d) => d.previousLevel !== d.currentLevel)
+    .map((d) => `${d.axis}:${d.previousLevel}->${d.currentLevel}:${d.comparable}`);
+  assert.deepEqual(moved, ['verification_gate_strength:1->2:true', 'execution_stability:2->3:true']);
 });
 
 test('엔진이 루브릭 규칙 ID로 수준을 계산한다(LLM 해석과 무관)', (t) => {
@@ -66,14 +66,16 @@ test('엔진이 루브릭 규칙 ID로 수준을 계산한다(LLM 해석과 무�
   assert.deepEqual(rules(first.fin.json.analysisPath), {
     spec_clarity: '1:SC-L1-01',
     verification_gate_strength: '1:VG-L1-01',
-    execution_stability: '3:ES-L3-03',
+    execution_stability: '2:ES-L2-01',
     throughput: '0:TP-L0-00',
     cost_efficiency: '2:CE-L2-01',
     context_efficiency: '2:CX-L2-01',
     autonomy: '3:AU-L3-01',
     safety_boundary: '2:SB-L2-01',
   });
-  assert.equal(rules(second.fin.json.analysisPath).verification_gate_strength, '2:VG-L2-01');
+  const after = rules(second.fin.json.analysisPath);
+  assert.equal(after.verification_gate_strength, '2:VG-L2-01');
+  assert.equal(after.execution_stability, '3:ES-L3-04', 'Subagent 2개가 모두 maxTurns를 가지면 3');
 });
 
 test('세션 집계는 아직 구현되지 않았다고 보고하고 모든 축을 예측으로 둔다', (t) => {

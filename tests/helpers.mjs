@@ -10,8 +10,12 @@ export const bundle = path.join(repoRoot, 'skills/harness-analyze/scripts/harnes
 export const fixture = (name) => path.join(repoRoot, 'examples/fixtures', name);
 export const exampleInterpretation = (name) => path.join(repoRoot, 'examples/interpretations', `${name}.json`);
 
-export function engine(args, { cwd = repoRoot } = {}) {
-  const r = spawnSync(process.execPath, [bundle, ...args, '--quiet'], { cwd, encoding: 'utf8' });
+// 기본으로 빈 설정 디렉터리를 쓴다. 테스트 결과가 실행하는 컴퓨터의 ~/.claude에 좌우되지 않게 한다.
+const emptyConfigDir = mkdtempSync(path.join(tmpdir(), 'hl-config-'));
+
+export function engine(args, { cwd = repoRoot, configDir = emptyConfigDir } = {}) {
+  const env = { ...process.env, CLAUDE_CONFIG_DIR: configDir };
+  const r = spawnSync(process.execPath, [bundle, ...args, '--quiet'], { cwd, encoding: 'utf8', env });
   let json = null;
   try { json = JSON.parse(r.stdout); } catch { /* --json이 아니면 비어 있을 수 있다 */ }
   return { code: r.status, stdout: r.stdout, stderr: r.stderr, json };

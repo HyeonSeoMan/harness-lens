@@ -1,6 +1,6 @@
-# 평가 루브릭 v0.1
+# 평가 루브릭 v0.2
 
-- 루브릭 버전: `0.1` (분석 결과의 `rubricVersion`)
+- 루브릭 버전: `0.2` (분석 결과의 `rubricVersion`). v0.1과의 차이는 §4.1
 - 대상: PRD v0.3 §7.1의 8개 축, FR-07a, FR-10, FR-11
 - 근거: `docs/research/03-evaluation-axes.md`(축·척도·긴장), `docs/research/02-session-logs.md`(세션 지표)
 - 성격: 이 문서의 규칙은 **엔진이 결정론적으로 실행한다.** 사용자 LLM은 수준을 고르지 않고, 엔진이 계산한 수준을 해석만 한다(`analysis-protocol.md`).
@@ -75,7 +75,7 @@ PRD §7.1의 네 단계 위계(서술 < 절차 < Hook·권한 < 관리형·sandb
 | COM-05 | **개수 무관.** 같은 축의 근거가 여러 개여도 수준은 규칙으로만 정한다. 개수는 상세 표 속성이다 |
 | COM-06 | **단일 귀속.** 근거 하나는 축 하나의 수준 판정에만 쓴다(§1.5). validate가 `V-SINGLE-ATTRIBUTION`으로 확인한다 |
 | COM-07 | **출처 표시.** 사용자·관리형·플러그인 출처의 근거는 `origin`을 남긴다 |
-| COM-08 | **자기 제외.** Harness Lens 자신이 설치한 Skill·플러그인·파일은 어느 축의 근거도 되지 않는다. 자기 비용(`selfCost`)에만 나온다 |
+| COM-08 | **자기 제외.** Harness Lens 자신이 설치한 Skill·플러그인·파일은 어느 축의 근거도 되지 않는다. 자기 비용(`selfCost`)에만 나온다. 자기 구성 요소의 경로는 설치 위치와 무관하게 `harness-lens/SKILL.md`로 표시한다 |
 | COM-09 | **유효 설정 병합.** 목록 키(`permissions.*`)는 출처를 합친다. 스칼라 키는 관리형 > 프로젝트 로컬 > 공유 프로젝트 > 사용자 순으로 앞선 값만 유효하고, 덮인 값의 근거는 `void`다 |
 | COM-10 | **동률.** 같은 수준의 규칙이 여럿이면 규칙 ID 사전순 첫 번째를 `ruleId`로 쓴다 |
 | COM-11 | **적용되지 않는 설정.** 그 출처에서 적용되지 않는다고 공식 문서가 밝힌 값은 `void`다. 예: 프로젝트·로컬 설정의 `defaultMode: "auto"`·`"bypassPermissions"` |
@@ -107,8 +107,10 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 - 예측 상태
   - `min` = 수준(`null`이면 0)이다.
   - `max` = max(수준, 읽지 못했거나 범위 밖인 출처가 이 축에 줄 수 있는 최대 수준)이다.
-  - 사용자 설정을 수집하지 않으면 그 축의 최대 수준까지(`user_scope_not_collected`) 넓힌다.
-  - 관리형 설정을 수집하지 않으면 SB 최대 3(`managed_settings_not_collected`)까지 넓힌다.
+  - `project` 범위에서 수집하지 않은 사용자 설정 파일(`<config-dir>/settings.json`, `<config-dir>/CLAUDE.md`, `<config-dir>/agents/*.md`, Harness Lens 외의 `<config-dir>/skills/*`)이 **실제로 있으면** 그 축의 최대 수준까지(`user_scope_not_collected`) 넓힌다. 엔진은 존재 여부만 확인하고 열지 않으며, 그 파일을 `out_of_scope` 출처로 보고한다.
+  - 관리형 설정 파일(OS별 `managed-settings.json`)이 실제로 있는데 수집하지 않았으면 SB를 최대 3(`managed_settings_not_collected`)까지 넓힌다.
+  - 그런 파일이 없으면 넓히지 않는다. 범위는 프로젝트 근거로만 정한다(v0.2. v0.1은 파일 존재와 무관하게 항상 넓혔다).
+  - `~/.claude.json`의 `mcpServers`는 거의 항상 있는 상태 파일이라 존재 확인 대상에서 뺀다.
   - 읽지 못한 프로젝트 출처가 있으면 그 축의 최대 수준까지(`source_unreadable`) 넓힌다.
 - 축 최대 수준은 3이다. 단, TP는 2다(L3 예약, `level3_reserved`).
 - 실측 상태
@@ -209,7 +211,8 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 | ES-L2-04 | 2 | 역할이 `recovery`인 Skill·Subagent가 있다 | procedure |
 | ES-L3-01 | 3 | 실패 이벤트 Hook(`PostToolUseFailure` 등 이름에 `Failure`가 들어간 이벤트)이 있다 | harness_enforced |
 | ES-L3-02 | 3 | Stop·SubagentStop Hook 스크립트에 LEX-REENTRY가 있다 | harness_enforced |
-| ES-L3-03 | 3 | Subagent가 1개 이상이고 모두 `maxTurns`를 갖는다(ES-L2-01 근거 집합으로 판정) | harness_enforced |
+| ES-L3-03 | — | **폐기(v0.2).** Subagent가 1개 이상이고 모두 `maxTurns`를 갖는다. Subagent 하나만으로 3이 되어 ES-L3-04로 대체했다 | — |
+| ES-L3-04 | 3 | Subagent가 **2개 이상**이고 모두 `maxTurns`를 갖는다(ES-L2-01 근거 집합으로 판정). 하나뿐이면 ES-L2-01(2)이다 | harness_enforced |
 
 - 수준 2와 3의 차이: 상한이 일부에만 있으면 2, 실패 경로나 재진입 방지가 강제되면 3이다.
 - 반례: 오류율은 작업 난이도에 크게 좌우된다. 실측 대역이 낮아도 구성 탓이라고 단정하지 않는다.
@@ -300,7 +303,7 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 
 | ID | 종류 | 축 | 트리거 (결정론적) | 후보 근거 |
 |---|---|---|---|---|
-| T1 | 긴장 | VG ↔ TP | VG-L1-02, VG-L3-01, VG-L3-02 중 하나에 맞는 Hook이 있다(검증 명령을 실행하는 Hook) | 그 Hook 근거 |
+| T1 | 긴장 | VG ↔ TP | VG-L1-02, VG-L2-03, VG-L3-01, VG-L3-02 중 하나에 맞는 Hook이 있다(검증 명령을 실행하거나 실패를 돌려주는 Hook) | 그 Hook 근거 |
 | T2 | 긴장 | VG ↔ CE | VG-L2-01, VG-L2-02, VG-L3-03 중 하나(별도 모델 호출) | 그 근거 |
 | T3 | 긴장 | AU ↔ VG, SB | (a)에 유효 `defaultMode` ∈ {`auto`, `dontAsk`, `bypassPermissions`} 또는 allow에 인자 없는 `Bash`·`Bash(*)`가 있고, SB-L2-02·SB-L2-03 근거가 없다 | (a) 근거 |
 | T4 | 긴장 | VG, SB ↔ AU | `permissions.ask` 3개 이상(휴리스틱) 또는 Notification Hook | ask·Hook 근거 |
@@ -319,3 +322,10 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 - 규칙 조건, 어휘, 임계값, 귀속 순서 중 하나라도 바뀌면 `rubricVersion`을 올린다. 규칙 ID는 재사용하지 않는다. 폐기한 규칙은 이 문서에 "폐기"로 남긴다.
 - 루브릭이 참조하는 설정 키는 구현 전에 공식 문서로 다시 확인하고, 지식 베이스 항목에 URL과 확인일을 남긴다(조사 03 §7.5).
 - 버전이 다른 스냅샷끼리는 `comparison.comparability`를 `limited` 이하로 둔다(FR-06).
+
+### 4.1 변경 이력
+
+| 버전 | 변경 |
+|---|---|
+| 0.2 | 가능 범위: 수집하지 않은 사용자·관리형 설정 파일이 실제로 있을 때만 넓힌다(§1.8). ES-L3-03 폐기, ES-L3-04 추가: Subagent 2개 이상이 모두 `maxTurns`를 가질 때만 3. T1 트리거에 VG-L2-03(차단 표지가 있는 PostToolUse Hook) 추가. 자기 구성 요소(`harness_lens`)의 경로를 설치 위치 대신 고정 라벨 `harness-lens/SKILL.md`로 표시(COM-08) |
+| 0.1 | 최초 공개 |
