@@ -1929,16 +1929,18 @@ function reportClient() {
   }
   var ct = interp.currentTradeoffs;
   var tSec = section("현재 구성의 트레이드오프", "tradeoffs");
+  function investItem(a) {
+    var ax = axisById[a];
+    var text = AXIS[a] + " — " + levelText(ax);
+    if (ax && ax.maturity.state === "measured" && ax.measured) text += " (구조 예측) · 실측 대역 " + ax.measured.band;
+    return el("li", null, text);
+  }
   tSec.appendChild(el("h3", null, "투자와 포기"));
   tSec.appendChild(el("div", { class: "panel" }, [
     el("p", null, ct.investForgo.summary),
     el("div", { class: "grid2" }, [
-      el("div", null, [el("b", null, "투자한 축"), el("ul", { class: "tight" }, ct.investForgo.invested.map(function(a) {
-        return el("li", null, AXIS[a] + " — " + levelText(axisById[a]));
-      }))]),
-      el("div", null, [el("b", null, "내준 축"), el("ul", { class: "tight" }, ct.investForgo.forgone.map(function(a) {
-        return el("li", null, AXIS[a] + " — " + levelText(axisById[a]));
-      }))])
+      el("div", null, [el("b", null, "투자한 축"), el("ul", { class: "tight" }, ct.investForgo.invested.map(investItem))]),
+      el("div", null, [el("b", null, "내준 축"), el("ul", { class: "tight" }, ct.investForgo.forgone.map(investItem))])
     ]),
     el("details", null, [el("summary", null, "근거"), evList(ct.investForgo.evidenceIds)])
   ]));
@@ -2065,7 +2067,7 @@ function reportClient() {
   });
   dSec.appendChild(el("h3", null, "구성 요소"));
   dSec.appendChild(table(["종류", "이름", "출처", "경로", "역할(해석)"], eng.inventory.components.map(function(c) {
-    var r = role[c.componentId];
+    var r = role[c.id];
     return [KIND[c.kind] || c.kind, c.name, ORIGIN[c.origin] || c.origin, c.paths.join(", "), r ? r.role : el("span", { class: "muted" }, "—")];
   })));
   var sc = eng.selfCost;
