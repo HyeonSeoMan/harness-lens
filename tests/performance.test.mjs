@@ -60,11 +60,12 @@ test('큰 세션 기록: 최초 집계 메모리 200MiB 이하, 증분 재분석
   assert.equal(draft.engine.sessions.dedup.uniqueResponses, draft1.engine.sessions.dedup.uniqueResponses + 1);
 });
 
-test('최근 응답이 많은 기록(7일·400세션·12만 응답·약 166MB): 최초·증분 모두 메모리 200MiB 이하(--strict-budget)', (t) => {
+// 최근 응답이 많은 기록의 최초·증분 집계. events면 응답마다 이벤트 6개(실제 이력 비율)를 넣어 이벤트 키 집합의 메모리도 본다.
+function denseBudget(t, { events }) {
   const p = makeProject('harness-before');
   t.after(p.cleanup);
   const configDir = path.join(p.base, 'dense-config');
-  const { bytes, responses } = writeDenseLogs(configDir, { project: p.project });
+  const { bytes, responses } = writeDenseLogs(configDir, { project: p.project, events });
   assert.equal(responses, 120000);
   assert.ok(bytes > 160e6, `기록 크기 ${bytes}`);
   const rss = (draft) => Math.max(...draft.engine.selfCost.currentRun.map((r) => r.maxRssBytes));
@@ -73,15 +74,21 @@ test('최근 응답이 많은 기록(7일·400세션·12만 응답·약 166MB): 
   const draft1 = readJson(path.join(path.dirname(first.json.compactInventoryPath), 'draft.json'));
   assert.equal(draft1.engine.sessions.dedup.uniqueResponses, 120000);
   assert.ok(rss(draft1) <= 200 * 1024 * 1024, `최초 RSS ${rss(draft1)}`);
+  if (events) assert.equal(draft1.engine.sessions.axisMetrics.find((m) => m.metricId === 'tool_error_rate').sampleSize, 240000);
   writeFileSync(first.json.interpretationPath, readFileSync(exampleInterpretation('harness-before')));
   const fin = engine(['finalize', '--project', p.project, '--out', p.out, '--run', first.json.runId, '--now', '2026-11-27T09:00:00Z', '--no-open', '--json'], { configDir });
   assert.equal(fin.code, 0, fin.stdout);
-  // 확정 상태(응답 12만 개)를 읽어 들이는 증분 재분석
+  // 확정 상태(응답 12만 개, 이벤트 키)를 읽어 들이는 증분 재분석
   const second = engine(['prepare', '--project', p.project, '--out', p.out, '--now', '2026-11-28T09:00:00Z', '--strict-budget', '--json'], { configDir });
   assert.equal(second.code, 0, `증분 재분석 예산 초과: ${second.stdout}`);
   const draft2 = readJson(path.join(path.dirname(second.json.compactInventoryPath), 'draft.json'));
   assert.equal(draft2.engine.sessions.coverage.incremental, true);
   assert.equal(draft2.engine.sessions.dedup.uniqueResponses, 120000);
   assert.ok(rss(draft2) <= 200 * 1024 * 1024, `증분 RSS ${rss(draft2)}`);
-  t.diagnostic(`최초 RSS ${(rss(draft1) / 1048576).toFixed(1)}MiB · 증분 RSS ${(rss(draft2) / 1048576).toFixed(1)}MiB`);
-});
+  const ms = (d) => d.engine.selfCost.currentRun.find((r) => r.subcommand === 'prepare').durationMs;
+  t.diagnostic(`최초 RSS ${(rss(draft1) / 1048576).toFixed(1)}MiB ${ms(draft1)}ms · 증분 RSS ${(rss(draft2) / 1048576).toFixed(1)}MiB ${ms(draft2)}ms`);
+}
+
+test('최근 응답이 많은 기록(7일·400세션·12만 응답·약 166MB): 최초·증분 모두 메모리 200MiB 이하(--strict-budget)', (t) => denseBudget(t, { events: false }));
+
+test('도구 이벤트가 있는 큰 기록(12만 응답, 응답당 이벤트 6개 = 72만): 최초·증분 모두 메모리 200MiB 이하(--strict-budget)', (t) => denseBudget(t, { events: true }));

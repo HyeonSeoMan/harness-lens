@@ -16,7 +16,8 @@ export function quantile(sorted, p) {
   if (!sorted.length) return null;
   return sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
 }
-const sortNum = (a) => [...a].sort((x, y) => x - y);
+// typed array에서 수치 정렬한다(복사본이 힙 밖에 있고 비교 함수 호출이 없다).
+const sortNum = (a) => Float64Array.from(a).sort();
 
 const zero5 = () => [0, 0, 0, 0, 0];
 function add5(t, v) { for (let i = 0; i < 5; i++) t[i] += v[i]; }
@@ -86,7 +87,7 @@ export function pruneResponses(state, env, nowMs) {
     }
     state.archive.responses++;
     // 접은 응답의 키는 남긴다. 같은 응답을 다시 읽어도(복사·회전·재스캔) 두 번 더하지 않는다.
-    state.archivedKeys.add(rs.keys[i]);
+    state.archivedKeys.add(rs.khi[i], rs.klo[i]);
     rs.remove(i);
   }
   // 일별 분포는 요청 수·p50·max만 남긴다. 같은 날이 다시 접히면 근사로 합친다.

@@ -2271,7 +2271,7 @@ import {
   statSync as statSync4,
   writeSync as writeSync2
 } from "fs";
-import { homedir as homedir3 } from "os";
+import { endianness, homedir as homedir3 } from "os";
 import path5 from "path";
 
 // src/store.mjs
@@ -2437,6 +2437,7 @@ function safeLabel(value, re) {
   return ok ? value : null;
 }
 var h16 = (s) => createHash3("sha256").update(String(s)).digest().toString("hex", 0, 8);
+var bufHash = (buf) => createHash3("sha256").update(buf).digest().toString("hex", 0, 8);
 var toPosix2 = (p) => p.split(path5.sep).join("/").replace(/\\/g, "/");
 var isInt = (v) => Number.isInteger(v) && v >= 0;
 function compareVersions(a, b) {
@@ -2521,19 +2522,26 @@ function readSessionConfig(out) {
 }
 var NCOL = 6;
 var F_SIDE = 1;
+var F_DEAD = 2;
+var hex8 = (x) => x.toString(16).padStart(8, "0");
 var ResponseStore = class {
   constructor() {
-    this.index = /* @__PURE__ */ new Map();
-    this.keys = [];
+    this.ibits = 10;
+    this.ipairs = new Uint32Array(2 << this.ibits);
+    this.ivals = new Int32Array(1 << this.ibits).fill(-1);
+    this.live = 0;
+    this.khi = new Uint32Array(1024);
+    this.klo = new Uint32Array(1024);
     this.num = new Float64Array(NCOL * 1024);
     this.meta = new Int32Array(3 * 1024);
     this.n = 0;
     this.strs = [];
     this.strId = /* @__PURE__ */ new Map();
     this.sorted = null;
+    this.scratch = [0, 0, 0, 0, 0];
   }
   get size() {
-    return this.index.size;
+    return this.live;
   }
   intern(s) {
     let id = this.strId.get(s);
@@ -2544,21 +2552,37 @@ var ResponseStore = class {
     }
     return id;
   }
+  islot(hi, lo) {
+    const mask = (1 << this.ibits) - 1;
+    let i = lo & mask;
+    while (this.ivals[i] !== -1 && (this.ipairs[2 * i] !== hi || this.ipairs[2 * i + 1] !== lo)) i = i + 1 & mask;
+    return i;
+  }
+  // 지운 슬롯(F_DEAD)도 자리는 남겨 탐사 사슬을 끊지 않는다.
+  find(hi, lo) {
+    const i = this.ivals[this.islot(hi, lo)];
+    return i >= 0 && !(this.meta[i * 3 + 2] & F_DEAD) ? i : -1;
+  }
   // 같은 키는 필드별 최댓값. 문자열 필드는 순서에 무관하게 최솟값으로 정해 증분·전체 결과를 같게 한다.
-  merge(key, fresh, cw, w1, cr, out, model, session, side, t) {
-    let i = this.index.get(key);
-    if (i === void 0) {
+  merge(hi, lo, fresh, cw, w1, cr, out, model, session, side, t) {
+    const at = this.islot(hi, lo);
+    let i = this.ivals[at];
+    if (i >= 0 && this.meta[i * 3 + 2] & F_DEAD) i = -1;
+    if (i < 0) {
       i = this.n++;
       if (i * NCOL >= this.num.length) {
-        const num = new Float64Array(this.num.length * 2);
-        num.set(this.num);
-        this.num = num;
-        const meta = new Int32Array(this.meta.length * 2);
-        meta.set(this.meta);
-        this.meta = meta;
+        const grow = (a) => {
+          const b3 = new a.constructor(a.length * 2);
+          b3.set(a);
+          return b3;
+        };
+        this.num = grow(this.num);
+        this.meta = grow(this.meta);
+        this.khi = grow(this.khi);
+        this.klo = grow(this.klo);
       }
-      this.index.set(key, i);
-      this.keys[i] = key;
+      this.khi[i] = hi;
+      this.klo[i] = lo;
       const b2 = i * NCOL;
       this.num[b2] = fresh;
       this.num[b2 + 1] = cw;
@@ -2569,7 +2593,12 @@ var ResponseStore = class {
       this.meta[i * 3] = this.intern(model);
       this.meta[i * 3 + 1] = this.intern(session);
       this.meta[i * 3 + 2] = side ? F_SIDE : 0;
+      this.ipairs[2 * at] = hi;
+      this.ipairs[2 * at + 1] = lo;
+      this.ivals[at] = i;
+      this.live++;
       this.sorted = null;
+      if (this.n > ((1 << this.ibits) - 1) * 0.7) this.rehash();
       return;
     }
     const b = i * NCOL;
@@ -2584,28 +2613,49 @@ var ResponseStore = class {
     if (compareCodeUnits(session, this.session(i)) < 0) this.meta[i * 3 + 1] = this.intern(session);
     if (!side) this.meta[i * 3 + 2] &= ~F_SIDE;
   }
+  rehash() {
+    this.ibits++;
+    this.ipairs = new Uint32Array(2 << this.ibits);
+    this.ivals = new Int32Array(1 << this.ibits).fill(-1);
+    for (let i = 0; i < this.n; i++) {
+      const at = this.islot(this.khi[i], this.klo[i]);
+      this.ipairs[2 * at] = this.khi[i];
+      this.ipairs[2 * at + 1] = this.klo[i];
+      this.ivals[at] = i;
+    }
+  }
   remove(i) {
-    this.index.delete(this.keys[i]);
-    this.keys[i] = null;
+    this.meta[i * 3 + 2] |= F_DEAD;
+    this.live--;
     this.sorted = null;
   }
   // 살아 있는 슬롯을 키 순서로. 결과는 바뀌기 전까지 재사용한다.
   slots() {
     if (!this.sorted) {
       const list = [];
-      for (let i = 0; i < this.n; i++) if (this.keys[i] !== null) list.push(i);
-      const keys = this.keys;
-      list.sort((a, b) => compareCodeUnits(keys[a], keys[b]));
+      for (let i = 0; i < this.n; i++) if (!(this.meta[i * 3 + 2] & F_DEAD)) list.push(i);
+      const { khi, klo } = this;
+      list.sort((a, b) => khi[a] - khi[b] || klo[a] - klo[b]);
       this.sorted = list;
     }
     return this.sorted;
   }
-  // [freshInput, cacheWrite5m, cacheWrite1h, cacheRead, output]
+  key(i) {
+    return `${hex8(this.khi[i])}${hex8(this.klo[i])}`;
+  }
+  // [freshInput, cacheWrite5m, cacheWrite1h, cacheRead, output]. 응답마다 배열을 만들지 않도록 같은 배열을 다시 쓴다.
+  // 호출자는 결과를 바로 쓰고 붙잡아 두지 않는다.
   vec(i) {
     const b = i * NCOL;
     const nu = this.num;
+    const v = this.scratch;
     const w1 = Math.min(nu[b + 2], nu[b + 1]);
-    return [nu[b], nu[b + 1] - w1, w1, nu[b + 3], nu[b + 4]];
+    v[0] = nu[b];
+    v[1] = nu[b + 1] - w1;
+    v[2] = w1;
+    v[3] = nu[b + 3];
+    v[4] = nu[b + 4];
+    return v;
   }
   ctx(i) {
     const b = i * NCOL;
@@ -2626,27 +2676,88 @@ var ResponseStore = class {
   row(i) {
     const b = i * NCOL;
     const nu = this.num;
-    return [this.keys[i], nu[b], nu[b + 1], nu[b + 2], nu[b + 3], nu[b + 4], this.model(i), this.session(i), this.side(i) ? 1 : 0, nu[b + 5]];
+    return [this.key(i), nu[b], nu[b + 1], nu[b + 2], nu[b + 3], nu[b + 4], this.model(i), this.session(i), this.side(i) ? 1 : 0, nu[b + 5]];
   }
 };
+var LE = endianness() === "LE";
+var PairTable = class {
+  constructor(bits = 10) {
+    this.alloc(bits);
+  }
+  alloc(bits) {
+    this.bits = bits;
+    this.mask = (1 << bits) - 1;
+    this.pairs = new Uint32Array(2 << bits);
+    this.used = new Uint8Array(1 << bits);
+    this.size = 0;
+  }
+  // 키는 이미 고르게 섞인 해시라 하위 비트를 그대로 자리로 쓴다(선형 탐사).
+  slot(hi, lo) {
+    let i = lo & this.mask;
+    while (this.used[i] && (this.pairs[2 * i] !== hi || this.pairs[2 * i + 1] !== lo)) i = i + 1 & this.mask;
+    return i;
+  }
+  has(hi, lo) {
+    return this.used[this.slot(hi, lo)] === 1;
+  }
+  add(hi, lo) {
+    const i = this.slot(hi, lo);
+    if (this.used[i]) return false;
+    this.used[i] = 1;
+    this.pairs[2 * i] = hi;
+    this.pairs[2 * i + 1] = lo;
+    if (++this.size > this.mask * 0.7) this.grow();
+    return true;
+  }
+  grow() {
+    const { pairs, used } = this;
+    this.alloc(this.bits + 1);
+    for (let i = 0; i < used.length; i++) if (used[i]) this.add(pairs[2 * i], pairs[2 * i + 1]);
+  }
+  forEach(fn) {
+    for (let i = 0; i < this.used.length; i++) if (this.used[i]) fn(this.pairs[2 * i], this.pairs[2 * i + 1]);
+  }
+  // 크기는 줄이지 않는다. 파일마다 새로 잡으면 typed array 할당이 쌓여 RSS가 는다.
+  clear() {
+    if (this.size) {
+      this.used.fill(0);
+      this.size = 0;
+    }
+  }
+};
+var hexPair = (hex) => [Number.parseInt(hex.slice(0, 8), 16), Number.parseInt(hex.slice(8, 16), 16)];
+function hashPair(s) {
+  let h1 = 3735928559;
+  let h2 = 1103547991;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ h1 >>> 16, 2246822507) ^ Math.imul(h2 ^ h2 >>> 13, 3266489909);
+  h2 = Math.imul(h2 ^ h2 >>> 16, 2246822507) ^ Math.imul(h1 ^ h1 >>> 13, 3266489909);
+  return [h1 >>> 0, h2 >>> 0];
+}
 var KeySet = class _KeySet {
   constructor(sorted = new Uint32Array(0)) {
     this.sorted = sorted;
-    this.added = /* @__PURE__ */ new Set();
+    this.added = new PairTable();
   }
+  // 길이가 8의 배수이고 키가 엄격히 오름차순이어야 한다. 아니면 손상으로 보고 던진다(호출자가 상태를 다시 만든다).
   static fromBuffer(buf) {
-    const n = Math.floor(buf.length / 8);
-    const a = new Uint32Array(n * 2);
-    for (let i = 0; i < n * 2; i++) a[i] = buf.readUInt32BE(i * 4);
+    if (buf.length % 8 !== 0) throw new Error("key file length");
+    const a = new Uint32Array(buf.length / 4);
+    for (let i = 0; i < a.length; i++) a[i] = buf.readUInt32BE(i * 4);
+    for (let i = 2; i < a.length; i += 2) {
+      if (a[i] < a[i - 2] || a[i] === a[i - 2] && a[i + 1] <= a[i - 1]) throw new Error("key file order");
+    }
     return new _KeySet(a);
   }
   get size() {
     return this.sorted.length / 2 + this.added.size;
   }
-  has(hex) {
-    if (this.added.has(hex)) return true;
-    const hi = Number.parseInt(hex.slice(0, 8), 16);
-    const lo = Number.parseInt(hex.slice(8, 16), 16);
+  has(hi, lo) {
+    if (this.added.has(hi, lo)) return true;
     const a = this.sorted;
     let l = 0;
     let r = a.length / 2 - 1;
@@ -2660,13 +2771,28 @@ var KeySet = class _KeySet {
     }
     return false;
   }
-  add(hex) {
-    if (!this.has(hex)) this.added.add(hex);
+  add(hi, lo) {
+    if (!this.has(hi, lo)) this.added.add(hi, lo);
   }
+  // 정렬된 키를 큰 끝(big-endian) 8바이트씩 쓴다. 새 키는 64비트 값으로 보고 BigUint64Array.sort로 정렬한다.
   toBuffer() {
-    const extra = [...this.added].sort(compareCodeUnits);
+    const extra = new Uint32Array(this.added.size * 2);
+    let k = 0;
+    this.added.forEach((hi, lo) => {
+      if (LE) {
+        extra[k] = lo;
+        extra[k + 1] = hi;
+      } else {
+        extra[k] = hi;
+        extra[k + 1] = lo;
+      }
+      k += 2;
+    });
+    new BigUint64Array(extra.buffer).sort();
+    const H = LE ? 1 : 0;
+    const L = 1 - H;
     const a = this.sorted;
-    const out = Buffer.allocUnsafe((a.length / 2 + extra.length) * 8);
+    const out = Buffer.allocUnsafe(a.length * 4 + extra.length * 4);
     let i = 0;
     let j = 0;
     let o = 0;
@@ -2676,14 +2802,13 @@ var KeySet = class _KeySet {
       o += 8;
     };
     while (i < a.length || j < extra.length) {
-      const eh = j < extra.length ? Number.parseInt(extra[j].slice(0, 8), 16) : Infinity;
-      const el = j < extra.length ? Number.parseInt(extra[j].slice(8, 16), 16) : Infinity;
-      if (i < a.length && (a[i] < eh || a[i] === eh && a[i + 1] < el)) {
+      const takeA = j >= extra.length || i < a.length && (a[i] < extra[j + H] || a[i] === extra[j + H] && a[i + 1] < extra[j + L]);
+      if (takeA) {
         put(a[i], a[i + 1]);
         i += 2;
       } else {
-        put(eh, el);
-        j++;
+        put(extra[j + H], extra[j + L]);
+        j += 2;
       }
     }
     return out;
@@ -2736,12 +2861,21 @@ function loadState(dir, rootHash) {
         if (!f.endsWith(".jsonl")) continue;
         forEachLine(path5.join(rdir, f), (l) => {
           const [k, fresh, cw, w1, cr, out, model, session, side, t] = JSON.parse(l);
-          state.responses.merge(k, fresh, cw, w1, cr, out, model, session, side === 1, t);
+          if (typeof k !== "string" || !/^[0-9a-f]{16}$/.test(k)) throw new Error("response key");
+          const [hi, lo] = hexPair(k);
+          state.responses.merge(hi, lo, fresh, cw, w1, cr, out, model, session, side === 1, t);
         });
       }
     }
     const read = (f, d) => existsSync4(path5.join(dir, f)) ? JSON.parse(readFileSync4(path5.join(dir, f), "utf8")) : d;
-    const keys = (f) => existsSync4(path5.join(dir, f)) ? KeySet.fromBuffer(readFileSync4(path5.join(dir, f))) : new KeySet();
+    const keys = (f) => {
+      var _a;
+      const meta = (_a = cursor.keyFiles) == null ? void 0 : _a[f];
+      if (!meta) throw new Error(`missing ${f} metadata`);
+      const buf = existsSync4(path5.join(dir, f)) ? readFileSync4(path5.join(dir, f)) : Buffer.alloc(0);
+      if (buf.length !== meta.count * 8 || bufHash(buf) !== meta.hash) throw new Error(`${f} mismatch`);
+      return KeySet.fromBuffer(buf);
+    };
     Object.assign(state, {
       files: cursor.files ?? {},
       attribution: read("attribution-cache.json", {}),
@@ -2758,11 +2892,15 @@ var monthOf = (ms) => ms > 0 ? new Date(ms).toISOString().slice(0, 7) : "0000-00
 function writeState(dir, state) {
   rmSync2(dir, { recursive: true, force: true });
   mkdirSync2(path5.join(dir, "responses"), { recursive: true });
-  writeJson(path5.join(dir, "cursor.json"), { parserVersion: state.parserVersion, rootPathHash: state.rootPathHash, files: state.files });
+  const keyFiles = {};
+  for (const [f, set] of [["archived-keys.bin", state.archivedKeys], ["events.bin", state.events]]) {
+    const buf = set.toBuffer();
+    atomicWrite(path5.join(dir, f), buf);
+    keyFiles[f] = { count: buf.length / 8, hash: bufHash(buf) };
+  }
+  writeJson(path5.join(dir, "cursor.json"), { parserVersion: state.parserVersion, rootPathHash: state.rootPathHash, files: state.files, keyFiles });
   writeJson(path5.join(dir, "attribution-cache.json"), state.attribution);
   writeJson(path5.join(dir, "archive.json"), state.archive);
-  atomicWrite(path5.join(dir, "archived-keys.bin"), state.archivedKeys.toBuffer());
-  atomicWrite(path5.join(dir, "events.bin"), state.events.toBuffer());
   const rs = state.responses;
   const months = /* @__PURE__ */ new Map();
   for (const i of rs.slots()) {
@@ -2895,19 +3033,28 @@ var Parser = class {
   constructor(state, env) {
     this.state = state;
     this.env = env;
-    this.pending = /* @__PURE__ */ new Set();
+    this.pending = new PairTable();
+    this.lastSid = null;
+    this.lastSidHash = null;
   }
   // 도구 호출·결과·프롬프트·시스템 이벤트를 전역으로 한 번만 센다(resume/fork 복사, 회전, 같은 줄 반복).
   // id가 없으면 구분할 수 없으니 센다.
   once(kind, id) {
     if (typeof id !== "string" || !id) return true;
-    const k = h16(`${kind}:${id}`);
-    if (this.pending.has(k) || this.state.events.has(k)) return false;
-    this.pending.add(k);
+    const [hi, lo] = hashPair(`${kind}:${id}`);
+    if (this.pending.has(hi, lo) || this.state.events.has(hi, lo)) return false;
+    this.pending.add(hi, lo);
     return true;
   }
+  sid(raw) {
+    if (raw !== this.lastSid) {
+      this.lastSid = raw;
+      this.lastSidHash = h16(raw);
+    }
+    return this.lastSidHash;
+  }
   commit() {
-    for (const k of this.pending) this.state.events.add(k);
+    this.pending.forEach((hi, lo) => this.state.events.add(hi, lo));
     this.pending.clear();
   }
   classify(cwd) {
@@ -2959,7 +3106,7 @@ var Parser = class {
     const version = safeLabel(o.version, VERSION_RE);
     if (version) {
       if (!fs.versions) fs.versions = [version, version];
-      else {
+      else if (version !== fs.versions[0] && version !== fs.versions[1]) {
         if (compareVersions(version, fs.versions[0]) < 0) fs.versions[0] = version;
         if (compareVersions(version, fs.versions[1]) > 0) fs.versions[1] = version;
       }
@@ -2969,7 +3116,7 @@ var Parser = class {
       if (fs.firstTs === null || ts < fs.firstTs) fs.firstTs = ts;
       if (fs.lastTs === null || ts > fs.lastTs) fs.lastTs = ts;
     }
-    if (fs.session === null && typeof o.sessionId === "string" && o.sessionId) fs.session = h16(o.sessionId);
+    if (fs.session === null && typeof o.sessionId === "string" && o.sessionId) fs.session = this.sid(o.sessionId);
     if (fs.cls === null && typeof o.cwd === "string" && o.cwd && path5.isAbsolute(o.cwd)) {
       const { key, cls } = this.classify(o.cwd);
       fs.cwdHash = key;
@@ -3023,11 +3170,11 @@ var Parser = class {
     }
     const w1 = u.cache_creation && typeof u.cache_creation === "object" && isInt(u.cache_creation.ephemeral_1h_input_tokens) ? u.cache_creation.ephemeral_1h_input_tokens : 0;
     const rawKey = typeof msg2.id === "string" && msg2.id || typeof o.requestId === "string" && o.requestId || `${fileHash}#${o.uuid ?? c.lines}`;
-    const key = h16(rawKey);
-    if (this.state.archivedKeys.has(key)) return;
+    const [hi, lo] = hashPair(rawKey);
+    if (this.state.archivedKeys.has(hi, lo)) return;
     const model = safeLabel(msg2.model, MODEL_RE) ?? "unknown";
-    const session = typeof o.sessionId === "string" && o.sessionId ? h16(o.sessionId) : fs.session ?? `f:${fileHash}`;
-    this.state.responses.merge(key, fresh, cw, w1, cr, out, model, session, side, Number.isFinite(ts) ? ts : 0);
+    const session = typeof o.sessionId === "string" && o.sessionId ? this.sid(o.sessionId) : fs.session ?? `f:${fileHash}`;
+    this.state.responses.merge(hi, lo, fresh, cw, w1, cr, out, model, session, side, Number.isFinite(ts) ? ts : 0);
   }
   user(o, fs, side) {
     const c = fs.c;
@@ -3219,7 +3366,7 @@ function quantile(sorted, p) {
   if (!sorted.length) return null;
   return sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
 }
-var sortNum = (a) => [...a].sort((x, y) => x - y);
+var sortNum = (a) => Float64Array.from(a).sort();
 var zero5 = () => [0, 0, 0, 0, 0];
 function add5(t, v) {
   for (let i = 0; i < 5; i++) t[i] += v[i];
@@ -3292,7 +3439,7 @@ function pruneResponses(state, env, nowMs) {
       raw.get(day).push(rs.ctx(i));
     }
     state.archive.responses++;
-    state.archivedKeys.add(rs.keys[i]);
+    state.archivedKeys.add(rs.khi[i], rs.klo[i]);
     rs.remove(i);
   }
   for (const day of [...raw.keys()].sort(compareCodeUnits)) {

@@ -77,7 +77,8 @@ export function writeSyntheticLogs(configDir, opts) {
 
 // 최근 며칠에 몰린 고유 응답이 많은 기록(응답 상태 자체의 메모리 확장을 본다). 응답마다 한 줄, 본문 textBytes.
 // 기본값은 검수 재현 규모: 7일 안 400세션 × 300응답 = 12만 응답, 약 166MB.
-export function writeDenseLogs(configDir, { project, sessions = 400, responses = 300, endMs = Date.parse('2026-11-27T08:00:00Z'), spanDays = 7, textBytes = 1000 }) {
+// events: 응답마다 사람 프롬프트 1·tool_use 2·tool_result 2·turn_duration 1(실제 이력 비율, 응답당 이벤트 약 6.2개)을 넣는다.
+export function writeDenseLogs(configDir, { project, sessions = 400, responses = 300, endMs = Date.parse('2026-11-27T08:00:00Z'), spanDays = 7, textBytes = 1000, events = false }) {
   const dir = path.join(configDir, 'projects', '-dense-project');
   mkdirSync(dir, { recursive: true });
   const text = 'x'.repeat(textBytes);
@@ -87,10 +88,18 @@ export function writeDenseLogs(configDir, { project, sessions = 400, responses =
     const start = endMs - span + Math.floor((s * span) / sessions);
     const lines = [];
     for (let m = 0; m < responses; m++) {
+      const id = `m-${s}-${m}`;
+      const common = { sessionId: `dense-${s}`, cwd: project, timestamp: iso(start + m * 1000), version: '2.1.320' };
+      const tools = events ? [0, 1].map((k) => ({ type: 'tool_use', id: `tu-${id}-${k}`, name: 'Read', input: { file_path: 'synthetic' } })) : [];
+      if (events) lines.push(JSON.stringify({ type: 'user', uuid: `p-${id}`, ...common, origin: { kind: 'human' }, message: { role: 'user', content: 'synthetic prompt' } }));
       lines.push(JSON.stringify({
-        type: 'assistant', sessionId: `dense-${s}`, cwd: project, timestamp: iso(start + m * 1000), version: '2.1.320',
-        message: { id: `m-${s}-${m}`, model: 'claude-opus-5-5', usage: { input_tokens: 3, cache_creation_input_tokens: 100, cache_read_input_tokens: 20000, output_tokens: 100 }, content: [{ type: 'text', text }] },
+        type: 'assistant', uuid: `a-${id}`, ...common,
+        message: { id, model: 'claude-opus-5-5', usage: { input_tokens: 3, cache_creation_input_tokens: 100, cache_read_input_tokens: 20000, output_tokens: 100 }, content: [{ type: 'text', text }, ...tools] },
       }));
+      if (events) {
+        lines.push(JSON.stringify({ type: 'user', uuid: `r-${id}`, ...common, message: { role: 'user', content: tools.map((tu) => ({ type: 'tool_result', tool_use_id: tu.id, is_error: false, content: 'synthetic' })) } }));
+        lines.push(JSON.stringify({ type: 'system', subtype: 'turn_duration', durationMs: 20000, uuid: `d-${id}`, ...common }));
+      }
     }
     const body = `${lines.join('\n')}\n`;
     bytes += Buffer.byteLength(body);

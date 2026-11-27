@@ -4,7 +4,7 @@
 import {
   closeSync, existsSync, mkdirSync, openSync, readFileSync, readSync, readdirSync, realpathSync, renameSync, rmSync, statSync, writeSync,
 } from 'node:fs';
-import { homedir } from 'node:os';
+import { endianness, homedir } from 'node:os';
 import path from 'node:path';
 import { SESSION_PARSER_VERSION } from './constants.mjs';
 import { atomicWrite, writeJson } from './store.mjs';
@@ -44,6 +44,7 @@ export function safeLabel(value, re) {
 
 // sha256 앞 8바이트(16진수 16자). 긴 해시 문자열을 잘라 붙잡지 않도록 바로 16자만 만든다.
 export const h16 = (s) => createHash('sha256').update(String(s)).digest().toString('hex', 0, 8);
+const bufHash = (buf) => createHash('sha256').update(buf).digest().toString('hex', 0, 8);
 const toPosix = (p) => p.split(path.sep).join('/').replace(/\\/g, '/');
 const isInt = (v) => Number.isInteger(v) && v >= 0;
 
@@ -130,19 +131,27 @@ export function readSessionConfig(out) {
 // 1시간 분할은 줄마다 최댓값으로 병합하고 읽을 때 총량으로 자른다. 분할 합은 병합 총량을 넘지 않는다.
 const NCOL = 6;
 const F_SIDE = 1;
+const F_DEAD = 2;
+const hex8 = (x) => x.toString(16).padStart(8, '0');
 export class ResponseStore {
   constructor() {
-    this.index = new Map();
-    this.keys = [];
+    // 키(64비트 해시 hi·lo) → 슬롯. 문자열 키 Map 대신 오픈 어드레싱 typed array를 쓴다(값 -1은 빈 자리).
+    this.ibits = 10;
+    this.ipairs = new Uint32Array(2 << this.ibits);
+    this.ivals = new Int32Array(1 << this.ibits).fill(-1);
+    this.live = 0;
+    this.khi = new Uint32Array(1024);
+    this.klo = new Uint32Array(1024);
     this.num = new Float64Array(NCOL * 1024);
     this.meta = new Int32Array(3 * 1024); // 모델 id, 세션 id, 플래그
     this.n = 0;
     this.strs = [];
     this.strId = new Map();
     this.sorted = null;
+    this.scratch = [0, 0, 0, 0, 0];
   }
 
-  get size() { return this.index.size; }
+  get size() { return this.live; }
 
   intern(s) {
     let id = this.strId.get(s);
@@ -150,21 +159,38 @@ export class ResponseStore {
     return id;
   }
 
+  islot(hi, lo) {
+    const mask = (1 << this.ibits) - 1;
+    let i = lo & mask;
+    while (this.ivals[i] !== -1 && (this.ipairs[2 * i] !== hi || this.ipairs[2 * i + 1] !== lo)) i = (i + 1) & mask;
+    return i;
+  }
+
+  // 지운 슬롯(F_DEAD)도 자리는 남겨 탐사 사슬을 끊지 않는다.
+  find(hi, lo) {
+    const i = this.ivals[this.islot(hi, lo)];
+    return i >= 0 && !(this.meta[i * 3 + 2] & F_DEAD) ? i : -1;
+  }
+
   // 같은 키는 필드별 최댓값. 문자열 필드는 순서에 무관하게 최솟값으로 정해 증분·전체 결과를 같게 한다.
-  merge(key, fresh, cw, w1, cr, out, model, session, side, t) {
-    let i = this.index.get(key);
-    if (i === undefined) {
+  merge(hi, lo, fresh, cw, w1, cr, out, model, session, side, t) {
+    const at = this.islot(hi, lo);
+    let i = this.ivals[at];
+    if (i >= 0 && this.meta[i * 3 + 2] & F_DEAD) i = -1;
+    if (i < 0) {
       i = this.n++;
       if (i * NCOL >= this.num.length) {
-        const num = new Float64Array(this.num.length * 2); num.set(this.num); this.num = num;
-        const meta = new Int32Array(this.meta.length * 2); meta.set(this.meta); this.meta = meta;
+        const grow = (a) => { const b = new a.constructor(a.length * 2); b.set(a); return b; };
+        this.num = grow(this.num); this.meta = grow(this.meta); this.khi = grow(this.khi); this.klo = grow(this.klo);
       }
-      this.index.set(key, i);
-      this.keys[i] = key;
+      this.khi[i] = hi; this.klo[i] = lo;
       const b = i * NCOL;
       this.num[b] = fresh; this.num[b + 1] = cw; this.num[b + 2] = w1; this.num[b + 3] = cr; this.num[b + 4] = out; this.num[b + 5] = t;
       this.meta[i * 3] = this.intern(model); this.meta[i * 3 + 1] = this.intern(session); this.meta[i * 3 + 2] = side ? F_SIDE : 0;
+      this.ipairs[2 * at] = hi; this.ipairs[2 * at + 1] = lo; this.ivals[at] = i;
+      this.live++;
       this.sorted = null;
+      if (this.n > ((1 << this.ibits) - 1) * 0.7) this.rehash();
       return;
     }
     const b = i * NCOL;
@@ -176,9 +202,20 @@ export class ResponseStore {
     if (!side) this.meta[i * 3 + 2] &= ~F_SIDE;
   }
 
+  rehash() {
+    this.ibits++;
+    this.ipairs = new Uint32Array(2 << this.ibits);
+    this.ivals = new Int32Array(1 << this.ibits).fill(-1);
+    // 같은 키의 슬롯이 여럿(지운 뒤 다시 들어온 경우)이면 마지막 슬롯이 남는다.
+    for (let i = 0; i < this.n; i++) {
+      const at = this.islot(this.khi[i], this.klo[i]);
+      this.ipairs[2 * at] = this.khi[i]; this.ipairs[2 * at + 1] = this.klo[i]; this.ivals[at] = i;
+    }
+  }
+
   remove(i) {
-    this.index.delete(this.keys[i]);
-    this.keys[i] = null;
+    this.meta[i * 3 + 2] |= F_DEAD;
+    this.live--;
     this.sorted = null;
   }
 
@@ -186,20 +223,25 @@ export class ResponseStore {
   slots() {
     if (!this.sorted) {
       const list = [];
-      for (let i = 0; i < this.n; i++) if (this.keys[i] !== null) list.push(i);
-      const keys = this.keys;
-      list.sort((a, b) => compareCodeUnits(keys[a], keys[b]));
+      for (let i = 0; i < this.n; i++) if (!(this.meta[i * 3 + 2] & F_DEAD)) list.push(i);
+      const { khi, klo } = this;
+      list.sort((a, b) => (khi[a] - khi[b]) || (klo[a] - klo[b]));
       this.sorted = list;
     }
     return this.sorted;
   }
 
-  // [freshInput, cacheWrite5m, cacheWrite1h, cacheRead, output]
+  key(i) { return `${hex8(this.khi[i])}${hex8(this.klo[i])}`; }
+
+  // [freshInput, cacheWrite5m, cacheWrite1h, cacheRead, output]. 응답마다 배열을 만들지 않도록 같은 배열을 다시 쓴다.
+  // 호출자는 결과를 바로 쓰고 붙잡아 두지 않는다.
   vec(i) {
     const b = i * NCOL;
     const nu = this.num;
+    const v = this.scratch;
     const w1 = Math.min(nu[b + 2], nu[b + 1]);
-    return [nu[b], nu[b + 1] - w1, w1, nu[b + 3], nu[b + 4]];
+    v[0] = nu[b]; v[1] = nu[b + 1] - w1; v[2] = w1; v[3] = nu[b + 3]; v[4] = nu[b + 4];
+    return v;
   }
 
   ctx(i) { const b = i * NCOL; return this.num[b] + this.num[b + 1] + this.num[b + 3]; }
@@ -211,31 +253,92 @@ export class ResponseStore {
   row(i) {
     const b = i * NCOL;
     const nu = this.num;
-    return [this.keys[i], nu[b], nu[b + 1], nu[b + 2], nu[b + 3], nu[b + 4], this.model(i), this.session(i), this.side(i) ? 1 : 0, nu[b + 5]];
+    return [this.key(i), nu[b], nu[b + 1], nu[b + 2], nu[b + 3], nu[b + 4], this.model(i), this.session(i), this.side(i) ? 1 : 0, nu[b + 5]];
   }
 }
 
-// 해시 키(h16, 8바이트) 집합. 확정된 키는 정렬된 Uint32Array 쌍으로, 이번 실행에 더한 키는 Set으로 둔다.
+// 해시 키(sha256 앞 8바이트 = 상위·하위 uint32 쌍)를 문자열 없이 담는 오픈 어드레싱 해시 집합.
+// 이벤트가 수십만 개여도 키당 약 12바이트(적재율 0.7 이하)만 쓴다.
+const LE = endianness() === 'LE';
+class PairTable {
+  constructor(bits = 10) { this.alloc(bits); }
+
+  alloc(bits) {
+    this.bits = bits;
+    this.mask = (1 << bits) - 1;
+    this.pairs = new Uint32Array(2 << bits);
+    this.used = new Uint8Array(1 << bits);
+    this.size = 0;
+  }
+
+  // 키는 이미 고르게 섞인 해시라 하위 비트를 그대로 자리로 쓴다(선형 탐사).
+  slot(hi, lo) {
+    let i = lo & this.mask;
+    while (this.used[i] && (this.pairs[2 * i] !== hi || this.pairs[2 * i + 1] !== lo)) i = (i + 1) & this.mask;
+    return i;
+  }
+
+  has(hi, lo) { return this.used[this.slot(hi, lo)] === 1; }
+
+  add(hi, lo) {
+    const i = this.slot(hi, lo);
+    if (this.used[i]) return false;
+    this.used[i] = 1; this.pairs[2 * i] = hi; this.pairs[2 * i + 1] = lo;
+    if (++this.size > this.mask * 0.7) this.grow();
+    return true;
+  }
+
+  grow() {
+    const { pairs, used } = this;
+    this.alloc(this.bits + 1);
+    for (let i = 0; i < used.length; i++) if (used[i]) this.add(pairs[2 * i], pairs[2 * i + 1]);
+  }
+
+  forEach(fn) { for (let i = 0; i < this.used.length; i++) if (this.used[i]) fn(this.pairs[2 * i], this.pairs[2 * i + 1]); }
+
+  // 크기는 줄이지 않는다. 파일마다 새로 잡으면 typed array 할당이 쌓여 RSS가 는다.
+  clear() { if (this.size) { this.used.fill(0); this.size = 0; } }
+}
+
+export const hexPair = (hex) => [Number.parseInt(hex.slice(0, 8), 16), Number.parseInt(hex.slice(8, 16), 16)];
+// 이벤트 키(도구 호출 id 등, 비밀값이 아닌 식별자)용 64비트 비암호 해시(cyrb53 계열 두 갈래).
+// createHash는 호출마다 네이티브 메모리를 잡아 이벤트 수십만 개에서 RSS가 수십 MiB 늘어난다. 원문은 남기지 않는다.
+export function hashPair(s) {
+  let h1 = 0xdeadbeef;
+  let h2 = 0x41c6ce57;
+  for (let i = 0; i < s.length; i++) {
+    const c = s.charCodeAt(i);
+    h1 = Math.imul(h1 ^ c, 2654435761);
+    h2 = Math.imul(h2 ^ c, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return [h1 >>> 0, h2 >>> 0];
+}
+
+// 확정된 키는 정렬된 Uint32Array 쌍(이진 탐색)으로, 이번 실행에 더한 키는 PairTable로 둔다.
 // archive로 접힌 응답과 이미 센 도구 호출·결과 등 이벤트의 중복 식별에 쓴다.
 export class KeySet {
   constructor(sorted = new Uint32Array(0)) {
     this.sorted = sorted;
-    this.added = new Set();
+    this.added = new PairTable();
   }
 
+  // 길이가 8의 배수이고 키가 엄격히 오름차순이어야 한다. 아니면 손상으로 보고 던진다(호출자가 상태를 다시 만든다).
   static fromBuffer(buf) {
-    const n = Math.floor(buf.length / 8);
-    const a = new Uint32Array(n * 2);
-    for (let i = 0; i < n * 2; i++) a[i] = buf.readUInt32BE(i * 4);
+    if (buf.length % 8 !== 0) throw new Error('key file length');
+    const a = new Uint32Array(buf.length / 4);
+    for (let i = 0; i < a.length; i++) a[i] = buf.readUInt32BE(i * 4);
+    for (let i = 2; i < a.length; i += 2) {
+      if (a[i] < a[i - 2] || (a[i] === a[i - 2] && a[i + 1] <= a[i - 1])) throw new Error('key file order');
+    }
     return new KeySet(a);
   }
 
   get size() { return this.sorted.length / 2 + this.added.size; }
 
-  has(hex) {
-    if (this.added.has(hex)) return true;
-    const hi = Number.parseInt(hex.slice(0, 8), 16);
-    const lo = Number.parseInt(hex.slice(8, 16), 16);
+  has(hi, lo) {
+    if (this.added.has(hi, lo)) return true;
     const a = this.sorted;
     let l = 0;
     let r = a.length / 2 - 1;
@@ -249,20 +352,28 @@ export class KeySet {
     return false;
   }
 
-  add(hex) { if (!this.has(hex)) this.added.add(hex); }
+  add(hi, lo) { if (!this.has(hi, lo)) this.added.add(hi, lo); }
 
+  // 정렬된 키를 큰 끝(big-endian) 8바이트씩 쓴다. 새 키는 64비트 값으로 보고 BigUint64Array.sort로 정렬한다.
   toBuffer() {
-    const extra = [...this.added].sort(compareCodeUnits);
+    const extra = new Uint32Array(this.added.size * 2);
+    let k = 0;
+    this.added.forEach((hi, lo) => {
+      if (LE) { extra[k] = lo; extra[k + 1] = hi; } else { extra[k] = hi; extra[k + 1] = lo; }
+      k += 2;
+    });
+    new BigUint64Array(extra.buffer).sort();
+    const H = LE ? 1 : 0;
+    const L = 1 - H;
     const a = this.sorted;
-    const out = Buffer.allocUnsafe((a.length / 2 + extra.length) * 8);
+    const out = Buffer.allocUnsafe(a.length * 4 + extra.length * 4);
     let i = 0;
     let j = 0;
     let o = 0;
     const put = (hi, lo) => { out.writeUInt32BE(hi, o); out.writeUInt32BE(lo, o + 4); o += 8; };
     while (i < a.length || j < extra.length) {
-      const eh = j < extra.length ? Number.parseInt(extra[j].slice(0, 8), 16) : Infinity;
-      const el = j < extra.length ? Number.parseInt(extra[j].slice(8, 16), 16) : Infinity;
-      if (i < a.length && (a[i] < eh || (a[i] === eh && a[i + 1] < el))) { put(a[i], a[i + 1]); i += 2; } else { put(eh, el); j++; }
+      const takeA = j >= extra.length || (i < a.length && (a[i] < extra[j + H] || (a[i] === extra[j + H] && a[i + 1] < extra[j + L])));
+      if (takeA) { put(a[i], a[i + 1]); i += 2; } else { put(extra[j + H], extra[j + L]); j += 2; }
     }
     return out;
   }
@@ -311,12 +422,21 @@ export function loadState(dir, rootHash) {
         if (!f.endsWith('.jsonl')) continue;
         forEachLine(path.join(rdir, f), (l) => {
           const [k, fresh, cw, w1, cr, out, model, session, side, t] = JSON.parse(l);
-          state.responses.merge(k, fresh, cw, w1, cr, out, model, session, side === 1, t);
+          if (typeof k !== 'string' || !/^[0-9a-f]{16}$/.test(k)) throw new Error('response key');
+          const [hi, lo] = hexPair(k);
+          state.responses.merge(hi, lo, fresh, cw, w1, cr, out, model, session, side === 1, t);
         });
       }
     }
     const read = (f, d) => (existsSync(path.join(dir, f)) ? JSON.parse(readFileSync(path.join(dir, f), 'utf8')) : d);
-    const keys = (f) => (existsSync(path.join(dir, f)) ? KeySet.fromBuffer(readFileSync(path.join(dir, f))) : new KeySet());
+    // 키 파일은 개수·해시를 cursor.json에 함께 적어 둔다. 잘림·비움·덮어쓰기·정렬 깨짐이면 손상으로 보고 다시 만든다.
+    const keys = (f) => {
+      const meta = cursor.keyFiles?.[f];
+      if (!meta) throw new Error(`missing ${f} metadata`);
+      const buf = existsSync(path.join(dir, f)) ? readFileSync(path.join(dir, f)) : Buffer.alloc(0);
+      if (buf.length !== meta.count * 8 || bufHash(buf) !== meta.hash) throw new Error(`${f} mismatch`);
+      return KeySet.fromBuffer(buf);
+    };
     Object.assign(state, {
       files: cursor.files ?? {}, attribution: read('attribution-cache.json', {}), archive: read('archive.json', { days: {}, responses: 0 }),
       archivedKeys: keys('archived-keys.bin'), events: keys('events.bin'),
@@ -333,11 +453,15 @@ const monthOf = (ms) => (ms > 0 ? new Date(ms).toISOString().slice(0, 7) : '0000
 export function writeState(dir, state) {
   rmSync(dir, { recursive: true, force: true });
   mkdirSync(path.join(dir, 'responses'), { recursive: true });
-  writeJson(path.join(dir, 'cursor.json'), { parserVersion: state.parserVersion, rootPathHash: state.rootPathHash, files: state.files });
+  const keyFiles = {};
+  for (const [f, set] of [['archived-keys.bin', state.archivedKeys], ['events.bin', state.events]]) {
+    const buf = set.toBuffer();
+    atomicWrite(path.join(dir, f), buf);
+    keyFiles[f] = { count: buf.length / 8, hash: bufHash(buf) };
+  }
+  writeJson(path.join(dir, 'cursor.json'), { parserVersion: state.parserVersion, rootPathHash: state.rootPathHash, files: state.files, keyFiles });
   writeJson(path.join(dir, 'attribution-cache.json'), state.attribution);
   writeJson(path.join(dir, 'archive.json'), state.archive);
-  atomicWrite(path.join(dir, 'archived-keys.bin'), state.archivedKeys.toBuffer());
-  atomicWrite(path.join(dir, 'events.bin'), state.events.toBuffer());
   const rs = state.responses;
   const months = new Map();
   for (const i of rs.slots()) {
@@ -434,21 +558,28 @@ class Parser {
   constructor(state, env) {
     this.state = state;
     this.env = env; // { roots, cfg, mainRoot }
-    this.pending = new Set(); // 지금 읽는 파일에서 처음 본 이벤트 키. 파일을 다 읽은 뒤에만 확정한다.
+    this.pending = new PairTable(); // 지금 읽는 파일에서 처음 본 이벤트 키. 파일을 다 읽은 뒤에만 확정한다.
+    this.lastSid = null; // 줄마다 같은 sessionId를 다시 해시하지 않는다.
+    this.lastSidHash = null;
   }
 
   // 도구 호출·결과·프롬프트·시스템 이벤트를 전역으로 한 번만 센다(resume/fork 복사, 회전, 같은 줄 반복).
   // id가 없으면 구분할 수 없으니 센다.
   once(kind, id) {
     if (typeof id !== 'string' || !id) return true;
-    const k = h16(`${kind}:${id}`);
-    if (this.pending.has(k) || this.state.events.has(k)) return false;
-    this.pending.add(k);
+    const [hi, lo] = hashPair(`${kind}:${id}`);
+    if (this.pending.has(hi, lo) || this.state.events.has(hi, lo)) return false;
+    this.pending.add(hi, lo);
     return true;
   }
 
+  sid(raw) {
+    if (raw !== this.lastSid) { this.lastSid = raw; this.lastSidHash = h16(raw); }
+    return this.lastSidHash;
+  }
+
   commit() {
-    for (const k of this.pending) this.state.events.add(k);
+    this.pending.forEach((hi, lo) => this.state.events.add(hi, lo));
     this.pending.clear();
   }
 
@@ -491,7 +622,8 @@ class Parser {
     const version = safeLabel(o.version, VERSION_RE);
     if (version) {
       if (!fs.versions) fs.versions = [version, version];
-      else {
+      // 거의 모든 줄이 같은 버전이다. 같으면 비교(문자열 분해)를 건너뛴다.
+      else if (version !== fs.versions[0] && version !== fs.versions[1]) {
         if (compareVersions(version, fs.versions[0]) < 0) fs.versions[0] = version;
         if (compareVersions(version, fs.versions[1]) > 0) fs.versions[1] = version;
       }
@@ -501,7 +633,7 @@ class Parser {
       if (fs.firstTs === null || ts < fs.firstTs) fs.firstTs = ts;
       if (fs.lastTs === null || ts > fs.lastTs) fs.lastTs = ts;
     }
-    if (fs.session === null && typeof o.sessionId === 'string' && o.sessionId) fs.session = h16(o.sessionId);
+    if (fs.session === null && typeof o.sessionId === 'string' && o.sessionId) fs.session = this.sid(o.sessionId);
     if (fs.cls === null && typeof o.cwd === 'string' && o.cwd && path.isAbsolute(o.cwd)) {
       const { key, cls } = this.classify(o.cwd);
       fs.cwdHash = key;
@@ -545,12 +677,12 @@ class Parser {
     const w1 = u.cache_creation && typeof u.cache_creation === 'object' && isInt(u.cache_creation.ephemeral_1h_input_tokens)
       ? u.cache_creation.ephemeral_1h_input_tokens : 0;
     const rawKey = (typeof msg.id === 'string' && msg.id) || (typeof o.requestId === 'string' && o.requestId) || `${fileHash}#${o.uuid ?? c.lines}`;
-    const key = h16(rawKey);
+    const [hi, lo] = hashPair(rawKey);
     // archive로 접힌 응답은 이미 정확히 한 번 반영했다.
-    if (this.state.archivedKeys.has(key)) return;
+    if (this.state.archivedKeys.has(hi, lo)) return;
     const model = safeLabel(msg.model, MODEL_RE) ?? 'unknown';
-    const session = typeof o.sessionId === 'string' && o.sessionId ? h16(o.sessionId) : (fs.session ?? `f:${fileHash}`);
-    this.state.responses.merge(key, fresh, cw, w1, cr, out, model, session, side, Number.isFinite(ts) ? ts : 0);
+    const session = typeof o.sessionId === 'string' && o.sessionId ? this.sid(o.sessionId) : (fs.session ?? `f:${fileHash}`);
+    this.state.responses.merge(hi, lo, fresh, cw, w1, cr, out, model, session, side, Number.isFinite(ts) ? ts : 0);
   }
 
   user(o, fs, side) {

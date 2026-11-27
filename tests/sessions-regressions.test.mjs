@@ -4,6 +4,7 @@ import assert from 'node:assert/strict';
 import { appendFileSync, copyFileSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { aggregateSessions } from '../engine/src/session-aggregate.mjs';
+import { KeySet } from '../engine/src/sessions.mjs';
 import { engine, exampleInterpretation, makeProject, readJson, readTree, tempDir } from './helpers.mjs';
 
 const NOW = '2026-11-27T09:00:00Z';
@@ -234,4 +235,62 @@ test('8. archive만 남은 결과도 스키마·의미 검증을 통과하고 �
   const cpt = readJson(fin.json.analysisPath).engine.sessions.contextPerTurn;
   assert.equal(cpt.p50, null);
   assert.equal(cpt.series[0].source, 'archive');
+});
+
+// ---------- 재검증 N2. 키 파일 손상 ----------
+test('N2. events.bin·archived-keys.bin이 잘리거나 비거나 덮이거나 정렬이 깨지면 손상으로 보고 다시 만들어 과다 집계하지 않는다', (t) => {
+  const p = setup(t);
+  const rows = [p.row('old', { timestamp: '2026-01-01T00:00:00Z' }), p.row('m1'), p.row('m2')];
+  const keyFile = (f) => path.join(p.out, 'sessions', f);
+  const corruptions = {
+    'events.bin 3바이트 잘림': () => { const b = readFileSync(keyFile('events.bin')); writeFileSync(keyFile('events.bin'), b.subarray(0, b.length - 3)); },
+    'events.bin 비움': () => writeFileSync(keyFile('events.bin'), ''),
+    'events.bin 바이트 역순': () => writeFileSync(keyFile('events.bin'), Buffer.from(readFileSync(keyFile('events.bin'))).reverse()),
+    'events.bin 삭제': () => rmSync(keyFile('events.bin')),
+    'archived-keys.bin 쓰레기 값': () => writeFileSync(keyFile('archived-keys.bin'), Buffer.alloc(8, 0x5a)),
+    'archived-keys.bin 비움': () => writeFileSync(keyFile('archived-keys.bin'), ''),
+  };
+  for (const [name, corrupt] of Object.entries(corruptions)) {
+    rmSync(p.out, { recursive: true, force: true });
+    mkdirSync(p.out, { recursive: true });
+    rmSync(path.join(p.dir, 'b.jsonl'), { force: true });
+    p.write(rows);
+    const base = p.agg(true);
+    assert.equal(base.tokens.total.freshInput, 300);
+    assert.equal(metric(base, 'tool_error_rate').sampleSize, 3);
+    assert.equal(readFileSync(keyFile('archived-keys.bin')).length, 8, '접힌 응답 키 1개');
+    corrupt();
+    // resume 복사 형태: 같은 내용의 파일이 하나 더 생긴다.
+    copyFileSync(p.file, path.join(p.dir, 'b.jsonl'));
+    const r = aggregateSessions({ configDir: p.configDir, projectRoot: p.projectRoot, out: p.out, nowMs: Date.parse(NOW), configSinceMs: null });
+    assert.equal(r.info.stateCorrupted, true, `${name}: 손상 감지`);
+    assert.equal(r.sessions.coverage.incremental, false, `${name}: 처음부터 다시 만든다`);
+    assert.equal(r.sessions.tokens.total.freshInput, 300, `${name}: 토큰`);
+    assert.equal(metric(r.sessions, 'tool_error_rate').sampleSize, 3, `${name}: 도구 표본`);
+  }
+  // 손상이 없으면 그대로 증분으로 읽는다.
+  rmSync(path.join(p.dir, 'b.jsonl'));
+  p.agg(true);
+  copyFileSync(p.file, path.join(p.dir, 'b.jsonl'));
+  const ok = aggregateSessions({ configDir: p.configDir, projectRoot: p.projectRoot, out: p.out, nowMs: Date.parse(NOW), configSinceMs: null });
+  assert.equal(ok.info.stateCorrupted, undefined);
+  assert.equal(ok.sessions.coverage.incremental, true);
+  assert.equal(ok.sessions.tokens.total.freshInput, 300);
+  assert.equal(metric(ok.sessions, 'tool_error_rate').sampleSize, 3);
+});
+
+test('N1. 이벤트 키 집합(typed array 해시): 확정 키와 새 키를 정렬·병합해 쓰고 다시 읽어도 같은 집합이다', () => {
+  let x = 12345;
+  const rnd = () => { x = (Math.imul(x, 1664525) + 1013904223) >>> 0; return x; };
+  const first = new KeySet();
+  const all = new Set();
+  for (let i = 0; i < 5000; i++) { const hi = rnd(); const lo = rnd(); first.add(hi, lo); all.add(`${hi}:${lo}`); }
+  first.add(0, 0); all.add('0:0');
+  const again = KeySet.fromBuffer(first.toBuffer());
+  for (let i = 0; i < 3000; i++) { const hi = rnd() & 0xff; const lo = rnd(); again.add(hi, lo); all.add(`${hi}:${lo}`); }
+  const buf = again.toBuffer();
+  assert.equal(buf.length, all.size * 8);
+  const back = KeySet.fromBuffer(buf); // 정렬·중복 검사를 통과한다
+  for (const k of all) { const [hi, lo] = k.split(':').map(Number); assert.ok(back.has(hi, lo)); }
+  assert.ok(!back.has(1, 2));
 });

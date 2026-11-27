@@ -285,8 +285,8 @@ finalize = validate → snapshot → render
     ├── cursor.json             # 파서 버전, R 해시, 파일 경로 해시별 {세대, inode, size, mtimeMs, offset, 지문, 카운터}
     ├── responses/<YYYY-MM>.jsonl # 응답 키 해시 → 병합 토큰(중복 제거용), 한 줄에 응답 하나. 90일 지나면 archive로 접는다
     ├── archive.json            # 접힌 응답의 일별·위치별·모델별 토큰과 일별 컨텍스트 요약
-    ├── archived-keys.bin       # archive로 접힌 응답 키 해시(8바이트씩 정렬). 같은 응답을 다시 읽어도 더하지 않는다
-    ├── events.bin              # 이미 센 도구 호출·결과·프롬프트·시스템 이벤트 키 해시(8바이트씩 정렬)
+    ├── archived-keys.bin       # archive로 접힌 응답 키 해시(8바이트씩 오름차순). 같은 응답을 다시 읽어도 더하지 않는다
+    ├── events.bin              # 이미 센 도구 호출·결과·프롬프트·시스템 이벤트 키 해시(8바이트씩 오름차순)
     └── attribution-cache.json  # cwd 해시 → 귀속 분류
 ```
 
@@ -363,6 +363,7 @@ finalize = validate → snapshot → render
 - 캐시 쓰기 분할: 줄마다 총량 `cache_creation_input_tokens`와 1시간 분량 `cache_creation.ephemeral_1h_input_tokens`(없으면 0)를 각각 `max()`로 병합한 뒤, 1시간 = min(병합 1시간, 병합 총량), 5분 = 병합 총량 − 1시간으로 나눈다. 분할 합은 병합 총량과 같다(불변식). 분할이 있는 줄과 총량만 있는 줄이 섞여도 줄 순서와 무관하다.
 - 범위: 전역이다(파일 사이 복사 대비). 이미 집계한 키가 다시 나오면 차이분만 반영한다. archive로 접힌 응답의 키는 `archived-keys.bin`에 남겨, 원본 복사·회전·재스캔으로 다시 나와도 더하지 않는다(정확히 한 번).
 - 이벤트 중복 제거: 축 지표에 쓰는 이벤트도 전역으로 한 번만 센다. 키는 `tool_use.id`(도구 호출), `tool_result.tool_use_id`(도구 결과·오류), 레코드 `uuid`(사람 프롬프트, `system`·`attachment` 이벤트: turn_duration, 압축, API 재시도, Hook 오류·차단)다. 같은 응답 안의 서로 다른 `tool_use` 블록은 id가 달라 각각 센다. id가 없는 이벤트는 구분할 수 없어 센다. 본 키는 `events.bin`에 해시로만 남긴다.
+- 응답 키와 이벤트 키는 원 식별자(`message.id`, `tool_use.id` 등, 비밀값이 아닌 API 발급 식별자)의 64비트 비암호 해시(cyrb53 계열)다. 줄마다 `createHash`를 부르면 네이티브 메모리가 쌓여 RSS가 수십 MiB 늘어나기 때문이다. 메모리에서는 문자열 없이 상위·하위 uint32 쌍으로 typed array(오픈 어드레싱 해시, 확정분은 정렬 배열 이진 탐색)에 둔다. 경로·cwd·세션 식별자는 계속 sha256 앞 8바이트다.
 - 집계 문자열 정화: 원문으로 저장하는 `message.model`과 `version`은 형식 정규식에 더해 비밀정보 검사(R3, 값 전체를 토큰으로 보는 고엔트로피 검사 포함)를 통과할 때만 남긴다. 걸리면 모델은 `unknown`, 버전은 버린다. 파서 단계에서 적용하므로 raw `sessions.json`, `aggregate-sessions` 출력, 스테이징, 확정 상태 모두에 원문이 남지 않는다.
 - `usage.iterations[]`는 최상위 값과 합이 같으므로 더하지 않는다.
 - 서브에이전트 기록은 별개 응답이라 합산한다. 부모 쪽 요약 수치(`attachment.usage.totalTokens`, `toolUseResult` 안의 토큰)는 쓰지 않는다.
@@ -390,7 +391,8 @@ finalize = validate → snapshot → render
 
 - 파일 찾기: `<config-dir>/projects/*/*.jsonl`(메인)과 `<config-dir>/projects/*/<sessionId>/subagents/agent-*.jsonl`. `tool-results/`, `memory/`, `*.meta.json`은 열지 않는다.
 - 읽기: 1MiB 단위 `readSync`로 줄을 나눈다. 16MiB를 넘는 줄은 버퍼에 모으지 않고 건너뛴다(`linesSkipped`). 256KiB를 넘는 줄은 앞 120바이트의 `"type"`만 보고, 해석하지 않는 타입(§8.1 밖, 예: `api-request-blob`)이면 파싱하지 않는다.
-- 커서(`cursor.json`): `{ parserVersion, rootPathHash, files: { <파일 경로 해시>[~g<세대>]: { kind, gen, inode, size, mtimeMs, offset, fp, present, session, cls, botMention, versions, firstTs, lastTs, c: {카운터}, durations, gaps, openGap, pendingError } } }`
+- 키 파일 무결성: `cursor.json`의 `keyFiles`에 `archived-keys.bin`·`events.bin`의 키 개수와 sha256 앞 8바이트를 적는다. 읽을 때 길이(8의 배수, 개수 일치), 해시, 엄격한 오름차순을 확인한다. 하나라도 어긋나면(잘림·비움·삭제·덮어쓰기·정렬 깨짐) 누적 상태 전체를 손상으로 보고 처음부터 다시 만든다(`limitations`의 `session_state_rebuilt`, 원문 없이 코드와 고정 문구만).
+- 커서(`cursor.json`): `{ parserVersion, rootPathHash, keyFiles, files: { <파일 경로 해시>[~g<세대>]: { kind, gen, inode, size, mtimeMs, offset, fp, present, session, cls, botMention, versions, firstTs, lastTs, c: {카운터}, durations, gaps, openGap, pendingError } } }`
   - 지문(`fp`): 커서까지 읽은 앞부분의 첫 4KiB와 커서 직전 4KiB의 해시다. inode·크기·수정 시각이 모두 같으면 읽지 않는다. 하나라도 바뀌면 지문을 다시 계산해, 크기가 offset 이상이고 지문이 같으면(이어 쓰기, 같은 내용으로 원자적 교체) 커서부터 이어 읽는다.
   - 크기가 offset보다 작아졌거나 지문이 다르면(같은 경로로 회전, copytruncate 뒤 재성장, 재작성) 새 세대로 보고 처음부터 읽는다. 이전 세대는 `<경로 해시>~g<세대>` 항목(`present: false`)으로 남겨 그 세션의 귀속과 카운터를 보존한다. 응답과 이벤트는 전역으로 한 번만 세므로 같은 내용을 다시 읽어도 늘지 않는다.
   - 파일을 읽다 실패하면 그 파일의 상태와 새 이벤트 키를 반영하지 않고 다음 실행에서 다시 읽는다.
