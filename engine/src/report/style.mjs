@@ -6,6 +6,7 @@ export const REPORT_CSS = `
   --grid: #c9c9c2; --current: #1f5fbf; --previous: #7a7a72; --band: rgba(31, 95, 191, 0.16);
   --warn-bg: #fff4dc; --warn-line: #c98a00; --added: #1d7a3a; --removed: #b3261e; --modified: #8a5a00;
   --code-bg: #efefea;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --was: #7a7a72;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -13,6 +14,7 @@ export const REPORT_CSS = `
     --grid: #4a4a45; --current: #7fb0ff; --previous: #9c9c94; --band: rgba(127, 176, 255, 0.20);
     --warn-bg: #3a2f14; --warn-line: #e0a830; --added: #6fcf8a; --removed: #ff8a80; --modified: #e6b450;
     --code-bg: #2a2a27;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --was: #9c9c94;
   }
 }
 * { box-sizing: border-box; }
@@ -29,8 +31,34 @@ p { margin: 6px 0; }
 .meta b { display: block; color: var(--muted); font-weight: 600; font-size: 12px; }
 .notice { border-left: 4px solid var(--warn-line); background: var(--warn-bg); padding: 8px 12px; border-radius: 4px; margin: 8px 0; }
 .maturity { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.bar { width: 220px; height: 12px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); }
-.bar span { display: block; height: 100%; background: var(--current); }
+.bar { width: 240px; height: 16px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); }
+.bar { display: flex; gap: 2px; padding: 1px; }
+.bar span.seg { flex: 1; height: 100%; border-radius: 3px; background: transparent; border: 1px dashed var(--grid); }
+.bar span.seg.on { background: var(--current); border: 1px solid var(--current); }
+.mini { display: inline-block; vertical-align: middle; width: 80px; height: 8px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; margin-right: 6px; }
+.mini span { display: block; height: 100%; background: var(--current); }
+svg.radar .pt-was { fill: none; stroke: var(--was); stroke-width: 1.5; stroke-dasharray: 2 3; opacity: 0.8; }
+.sharewrap { margin: 6px 0 10px; }
+svg.share { width: 100%; height: auto; display: block; }
+svg.share .seglabel { fill: #fff; font-size: 12px; font-weight: 600; }
+svg.share .seglabel.ink { fill: #111; }
+svg .c1, .swatch.c1 { fill: var(--s1); background: var(--s1); }
+svg .c2, .swatch.c2 { fill: var(--s2); background: var(--s2); }
+svg .c3, .swatch.c3 { fill: var(--s3); background: var(--s3); }
+svg .c4, .swatch.c4 { fill: var(--s4); background: var(--s4); }
+.legend.inline { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.legend.inline li { margin: 2px 0; }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.swatch.line-p50 { height: 3px; width: 22px; background: var(--s1); }
+.swatch.line-max { height: 0; width: 22px; border-top: 2px dashed var(--s2); background: none; }
+svg.trend { width: 100%; height: auto; display: block; }
+svg.trend .gridline { stroke: var(--grid); stroke-width: 1; opacity: 0.6; }
+svg.trend .axislabel { fill: var(--muted); font-size: 11px; }
+svg.trend polyline { fill: none; stroke-width: 2; }
+svg.trend .line-p50 { stroke: var(--s1); }
+svg.trend .line-max { stroke: var(--s2); stroke-dasharray: 6 4; }
+svg.trend .dot.line-p50 { fill: var(--s1); stroke: var(--panel); stroke-width: 2; stroke-dasharray: none; }
+svg.trend .dot.line-max { fill: var(--panel); stroke: var(--s2); stroke-width: 2; stroke-dasharray: none; }
 .summary li { margin: 4px 0; }
 .radar-wrap { display: grid; grid-template-columns: minmax(280px, 520px) 1fr; gap: 20px; align-items: start; }
 @media (max-width: 760px) { .radar-wrap { grid-template-columns: 1fr; } }

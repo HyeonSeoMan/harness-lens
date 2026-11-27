@@ -78,19 +78,22 @@ test('엔진이 루브릭 규칙 ID로 수준을 계산한다(LLM 해석과 무�
   assert.equal(after.execution_stability, '3:ES-L3-04', 'Subagent 2개가 모두 maxTurns를 가지면 3');
 });
 
-test('세션 집계는 아직 구현되지 않았다고 보고하고 모든 축을 예측으로 둔다', (t) => {
+test('세션 기록이 없으면 사유를 남기고 모든 축을 예측으로 둔다', (t) => {
   const p = makeProject('harness-before');
   t.after(p.cleanup);
-  const stub = engine(['aggregate-sessions', '--project', p.project, '--json']);
-  assert.equal(stub.code, 0);
-  assert.equal(stub.json.implemented, false);
+  const agg = engine(['aggregate-sessions', '--project', p.project, '--out', p.out, '--json']);
+  assert.equal(agg.code, 0);
+  assert.equal(agg.json.status, 'unavailable');
+  assert.equal(agg.json.reason, 'no_session_logs');
   const prep = engine(['prepare', '--project', p.project, '--out', p.out, '--now', T1, '--json']);
   const draft = readJson(path.join(path.dirname(prep.json.compactInventoryPath), 'draft.json'));
   assert.equal(draft.engine.sessions.status, 'unavailable');
   assert.equal(draft.engine.sessions.tokens, null);
   assert.equal(draft.meta.analysisType, 'static');
+  assert.equal(draft.meta.engineInfo.sessionParserVersion, '1');
   assert.ok(draft.engine.axes.every((x) => x.maturity.state === 'predicted' && x.measured === null));
-  assert.ok(draft.engine.limitations.some((l) => l.code === 'session_aggregation_not_implemented'));
+  assert.ok(draft.engine.axes.filter((x) => x.maturity.measurable).every((x) => x.maturity.blockedReason === 'no_session_logs'));
+  assert.ok(draft.engine.limitations.some((l) => l.code === 'no_session_logs'));
 });
 
 test('prepare가 해석 골격과 압축 인벤토리를 만든다', (t) => {
@@ -98,7 +101,7 @@ test('prepare가 해석 골격과 압축 인벤토리를 만든다', (t) => {
   t.after(p.cleanup);
   const prep = engine(['prepare', '--project', p.project, '--out', p.out, '--now', T1, '--json']);
   const dir = path.dirname(prep.json.compactInventoryPath);
-  assert.deepEqual(readdirSync(dir).sort(), ['draft.json', 'interpretation.template.json', 'inventory.compact.json', 'inventory.json', 'run.json', 'sessions.json']);
+  assert.deepEqual(readdirSync(dir).sort(), ['draft.json', 'interpretation.template.json', 'inventory.compact.json', 'inventory.json', 'run.json', 'sessions.json', 'sessions.staging']);
   const tpl = readJson(prep.json.interpretationTemplatePath);
   assert.equal(tpl.axisNotes.length, 8);
   assert.deepEqual(tpl.currentTradeoffs.emptyAreas.map((e) => `${e.axis}:${e.kind}`), ['throughput:unconfigured']);

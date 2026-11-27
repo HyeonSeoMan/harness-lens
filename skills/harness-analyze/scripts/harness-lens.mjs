@@ -8,19 +8,54 @@ if (Number(process.versions.node.split('.')[0]) < 20) {
 
 // src/cli.mjs
 import { spawn } from "child_process";
-import { accessSync, constants as fsc, existsSync as existsSync5, readdirSync as readdirSync4, realpathSync as realpathSync3, rmSync as rmSync2, statSync as statSync4, writeFileSync as writeFileSync2 } from "fs";
-import { homedir as homedir3 } from "os";
-import path6 from "path";
+import { accessSync, constants as fsc, existsSync as existsSync6, readdirSync as readdirSync5, realpathSync as realpathSync4, rmSync as rmSync3, statSync as statSync5, writeFileSync as writeFileSync2 } from "fs";
+import { homedir as homedir4 } from "os";
+import path8 from "path";
 import { performance } from "perf_hooks";
 import { pathToFileURL } from "url";
 
+// src/pricing.mjs
+var PRICING_TABLE_VERSION = "2026-10-06";
+var REFERENCE_MODEL = "claude-opus-5-5";
+var TABLE = {
+  "claude-fable-5-1": [1e5, 5e5, 2500],
+  "claude-mythos-5-1": [1e5, 5e5, 2500],
+  "claude-fable-5": [1e5, 5e5, 1e4],
+  "claude-mythos-5": [1e5, 5e5, 1e4],
+  "claude-opus-5-5": [4e4, 2e5, 2e3],
+  "claude-opus-5": [5e4, 25e4, 5e3],
+  "claude-opus-4-8": [5e4, 25e4, 5e3],
+  "claude-opus-4-7": [5e4, 25e4, 5e3],
+  "claude-opus-4-6": [5e4, 25e4, 5e3],
+  "claude-sonnet-5-5": [2e4, 1e5, 2e3],
+  "claude-sonnet-5": [2e4, 1e5, 2e3],
+  "claude-sonnet-4-6": [3e4, 15e4, 3e3],
+  // Haiku 5.5는 프롬프트 10만 토큰 이하 단가다(초과 구간은 반영하지 않는다).
+  "claude-haiku-5-5": [1e3, 5e3, 100],
+  "claude-haiku-4-5": [1e4, 5e4, 1e3]
+};
+var REF_INPUT = TABLE[REFERENCE_MODEL][0];
+function priceKey(model) {
+  if (typeof model !== "string") return null;
+  let m = model.toLowerCase().replace(/\[[^\]]*\]$/, "").replace(/@.*$/, "").replace(/^(?:[a-z]{2}\.)?anthropic\./, "");
+  m = m.replace(/-\d{8}$/, "").replace(/-v\d+(?::\d+)?$/, "");
+  return Object.hasOwn(TABLE, m) ? m : null;
+}
+function weightedUnits(model, bucket) {
+  const key = priceKey(model);
+  if (!key) return null;
+  const [inp, out, read] = TABLE[key];
+  const [fresh, w5, w1, cr, o] = bucket;
+  return fresh * inp + w5 * (inp * 5 / 4) + w1 * inp * 2 + cr * read + o * out;
+}
+var unitsToWeighted = (units) => units / REF_INPUT;
+
 // src/constants.mjs
-var ENGINE_VERSION = "0.2.0";
-var VALIDATOR_VERSION = "0.2.0";
+var ENGINE_VERSION = "0.3.0";
+var VALIDATOR_VERSION = "0.3.0";
 var SCHEMA_VERSION = "0.1";
 var RUBRIC_VERSION = "0.2";
-var SESSION_PARSER_VERSION = null;
-var PRICING_TABLE_VERSION = null;
+var SESSION_PARSER_VERSION = "1";
 var MIN_NODE_MAJOR = 20;
 var SUPPORTED_PLATFORMS = ["darwin", "linux", "win32"];
 var AXES = [
@@ -144,6 +179,14 @@ function compactUtc(iso) {
 }
 function isoSeconds(date) {
   return date.toISOString().replace(/\.\d+Z$/, "Z");
+}
+function roundHalfEven(value, digits) {
+  const f = 10 ** digits;
+  const x = value * f;
+  const r = Math.round(x);
+  const diff = Math.abs(x % 1);
+  if (Math.abs(diff - 0.5) < 1e-9) return (r % 2 === 0 ? r : r - 1) / f;
+  return r / f;
 }
 function truncate(text, max) {
   const chars = [...text];
@@ -403,12 +446,12 @@ function detectSecrets(text) {
   for (const m of text.matchAll(QUOTED_RUN)) if (shannonEntropy(m[2]) >= 4) kinds.push("high_entropy");
   return kinds;
 }
-function mapStrings(value, fn, path7 = "") {
-  if (typeof value === "string") return fn(value, path7);
-  if (Array.isArray(value)) return value.map((v, i) => mapStrings(v, fn, `${path7}/${i}`));
+function mapStrings(value, fn, path9 = "") {
+  if (typeof value === "string") return fn(value, path9);
+  if (Array.isArray(value)) return value.map((v, i) => mapStrings(v, fn, `${path9}/${i}`));
   if (value && typeof value === "object") {
     const out = {};
-    for (const [k, v] of Object.entries(value)) out[k] = mapStrings(v, fn, `${path7}/${k}`);
+    for (const [k, v] of Object.entries(value)) out[k] = mapStrings(v, fn, `${path9}/${k}`);
     return out;
   }
   return value;
@@ -1427,10 +1470,50 @@ function reportClient() {
   var BLOCKED = {
     needs_ci_pr_data: "CI·PR 데이터 필요(MVP 3)",
     session_format_unconfirmed: "세션 기록 형식 미확인",
-    session_aggregation_not_implemented: "세션 집계 미구현(다음 단계)",
     sessions_disabled: "세션 집계 꺼짐",
-    no_session_logs: "세션 기록 없음"
+    no_session_logs: "세션 기록 없음",
+    session_format_unsupported: "세션 기록 형식 미지원",
+    session_aggregation_failed: "세션 집계 오류",
+    insufficient_samples: "표본 부족",
+    metric_unavailable: "대역 지표 없음",
+    no_attributed_sessions: "귀속된 세션 없음",
+    session_lines_skipped: "해석 못 한 줄이 많음"
   };
+  var LOC = { direct: "프로젝트 세션", worker: "워커 워크트리", subagent: "서브에이전트", bot: "오케스트레이터 봇" };
+  var METHOD = { direct: "직접", worktree: "워크트리 gitdir", inferred: "추정(삭제된 워크트리)", configured: "설정 매핑", auto: "자동 귀속" };
+  var TOKTYPE = [["freshInput", "새 입력"], ["cacheWrite", "캐시 쓰기"], ["cacheRead", "캐시 읽기"], ["output", "출력"]];
+  var METRIC = {
+    tool_error_rate: "도구 오류율",
+    tool_error_recovery_rate: "오류 뒤 회복률",
+    hook_errors_per_session: "세션당 Hook 실패",
+    api_retries_per_session: "세션당 API 재시도",
+    turn_duration_p50_ms: "턴 시간 중앙값",
+    session_duration_p50_ms: "세션 길이 중앙값",
+    cache_hit_ratio: "캐시 적중률",
+    weighted_tokens_per_session: "세션당 환산 토큰",
+    context_p90_tokens: "요청 입력 크기 p90",
+    compactions_per_session: "세션당 컨텍스트 압축",
+    tool_calls_between_prompts_p50: "사람 입력 사이 도구 호출 중앙값",
+    human_prompts_per_session: "세션당 사람 입력",
+    hook_blocks_per_session: "세션당 Hook 차단(VG 대리 지표)"
+  };
+  function num(v) {
+    if (v === null || v === void 0) return "—";
+    var neg = v < 0, x = Math.abs(v), int = Math.floor(x), frac = x - int;
+    var str = String(int).replace(/\B(?=(\d{3})+(?!\d))/g, ",");
+    if (frac > 0) str += "." + String(Math.round(frac * 10) % 10);
+    return (neg ? "−" : "") + str;
+  }
+  function pct(v) {
+    return Math.round(v * 1e3) / 10 + "%";
+  }
+  function metricValue(m) {
+    if (m.unit === "ratio") return pct(m.value);
+    if (m.unit === "ms") return m.value >= 6e4 ? Math.round(m.value / 6e3) / 10 + "분" : Math.round(m.value / 100) / 10 + "초";
+    if (m.unit === "tokens") return num(m.value) + " 토큰";
+    if (m.unit === "per_session") return Math.round(m.value * 100) / 100 + "회";
+    return String(m.value);
+  }
   var evidence = {};
   eng.evidence.forEach(function(e) {
     evidence[e.id] = e;
@@ -1538,15 +1621,22 @@ function reportClient() {
   var measuredCount = eng.axes.filter(function(a) {
     return a.maturity.state === "measured";
   }).length;
-  var bar = el("div", { class: "bar", role: "img", "aria-label": "실측 " + measuredCount + " / 전체 " + eng.axes.length + "축" }, el("span", { style: "width:" + Math.round(measuredCount / eng.axes.length * 100) + "%" }));
+  var bar = el("div", { class: "bar", role: "img", "aria-label": "실측 " + measuredCount + " / " + eng.axes.length + "축" });
+  eng.axes.forEach(function(a) {
+    bar.appendChild(el("span", { class: a.maturity.state === "measured" ? "seg on" : "seg", title: AXIS[a.axis] + " " + stateText(a) }));
+  });
   app.appendChild(el("div", { class: "panel maturity" }, [
     el("b", null, "근거 성숙도"),
     bar,
-    el("span", null, "실측 " + measuredCount + " / 전체 " + eng.axes.length + "축"),
-    measuredCount === 0 ? el("span", { class: "muted" }, "지금은 구성 기반 예측입니다. 실제 성능 측정이 아닙니다.") : null
+    el("span", null, "실측 " + measuredCount + " / " + eng.axes.length + "축"),
+    measuredCount === 0 ? el("span", { class: "muted" }, "지금은 구성 기반 예측입니다. 실제 성능 측정이 아닙니다.") : el("span", { class: "muted" }, "실측 대역은 세션 기록 집계에 휴리스틱 임계값을 적용한 값입니다(상관관계, 인과 아님).")
   ]));
-  if (eng.sessions.status !== "available") {
-    app.appendChild(el("p", { class: "notice" }, "세션 기록 실측: " + (BLOCKED[eng.sessions.reason] || eng.sessions.reason || eng.sessions.status) + ". 모든 축은 구성 기반 예측으로 표시합니다."));
+  var sess = eng.sessions;
+  var usable = sess.status === "available" || sess.status === "partial";
+  if (!usable) {
+    app.appendChild(el("p", { class: "notice" }, "세션 기록 실측: " + (BLOCKED[sess.reason] || sess.reason || BLOCKED[sess.status === "disabled" ? "sessions_disabled" : "no_session_logs"]) + ". 모든 축은 구성 기반 예측으로 표시합니다."));
+  } else if (sess.status === "partial") {
+    app.appendChild(el("p", { class: "notice" }, "세션 기록 일부를 해석하지 못했습니다(" + pct(sess.coverage.skippedRatio) + "). 형식이 바뀌었을 수 있어 실측값을 조심해서 보세요."));
   }
   if (interp.summary && interp.summary.length) {
     app.appendChild(el("div", { class: "panel" }, [el("b", null, "요약"), el("ul", { class: "summary tight" }, interp.summary.map(function(l) {
@@ -1620,6 +1710,10 @@ function reportClient() {
     }
     var p = pt(i, v);
     var measured = a.maturity.state === "measured";
+    if (measured && a.measured.predictedLevel !== null) {
+      var w = pt(i, a.measured.predictedLevel);
+      svg.appendChild(s("circle", { class: "pt-was", cx: w[0], cy: w[1], r: 7 }, s("title", null, AXIS[a.axis] + " 직전 예측 수준 " + a.measured.predictedLevel)));
+    }
     svg.appendChild(s("circle", { class: measured ? "pt-meas" : "pt-pred", cx: p[0], cy: p[1], r: 5.5 }, s("title", null, AXIS[a.axis] + " " + levelText(a) + " (" + stateText(a) + ")")));
   });
   function legendIcon(kind) {
@@ -1637,6 +1731,9 @@ function reportClient() {
       g.appendChild(s("line", { class: "prev", x1: 2, y1: 8, x2: 34, y2: 8 }));
       g.appendChild(s("rect", { class: "pt-prev", x: 34, y: 4, width: 8, height: 8 }));
     }
+    if (kind === "was") {
+      g.appendChild(s("circle", { class: "pt-was", cx: 23, cy: 8, r: 6 }));
+    }
     if (kind === "band") {
       g.appendChild(s("line", { class: "band", x1: 8, y1: 8, x2: 38, y2: 8 }));
     }
@@ -1650,20 +1747,163 @@ function reportClient() {
     el("li", null, [legendIcon("pred"), "현재 · 예측(구성 기반): 점선, 빈 원"]),
     el("li", null, [legendIcon("meas"), "현재 · 실측: 실선, 채운 점 (변은 양 끝이 모두 실측일 때만 실선)"]),
     showPrev ? el("li", null, [legendIcon("prev"), "이전 스냅샷 " + cmp.previousSnapshotId + ": 점 무늬 선, 네모"]) : null,
-    el("li", null, [legendIcon("band"), "가능 범위: 수집 범위 밖·미확인 출처가 바꿀 수 있는 수준"]),
+    el("li", null, [legendIcon("band"), "가능 범위: 수집 범위 밖·미확인 출처가 바꿀 수 있는 수준. 실측 축은 표본이 쌓일수록 좁아집니다"]),
+    measuredCount ? el("li", null, [legendIcon("was"), "실측 축의 직전 예측(구조적 수준): 흐린 점선 원"]) : null,
     el("li", null, [legendIcon("unknown"), "판정 불가: 관련 출처를 읽지 못함(0점이 아님)"])
   ]);
   var axisList = el("ul", { class: "tight" }, eng.axes.map(function(a) {
     var m = a.maturity;
-    var mt = m.measurable ? "실측까지: " + (m.requirement.unit === "sessions" ? "세션 " : "도구 호출 ") + m.requirement.required + "회 · " + (m.progress === null ? BLOCKED[m.blockedReason] || m.blockedReason : Math.round(m.progress * 100) + "%") : "실측 불가: " + (BLOCKED[m.blockedReason] || m.blockedReason);
+    var unitName = m.requirement && (m.requirement.unit === "sessions" ? "세션 " : "도구 호출 ");
+    var mt;
+    if (!m.measurable) mt = "실측 불가: " + (BLOCKED[m.blockedReason] || m.blockedReason);
+    else if (m.state === "measured") {
+      var me = a.measured;
+      mt = "실측 대역 " + me.band + " (" + me.bandRuleId + ", 휴리스틱) · " + me.metrics.map(function(x) {
+        return (METRIC[x.metricId] || x.metricId) + " " + metricValue(x);
+      }).join(", ") + " · 표본 " + unitName + num(me.sampleSize) + "회" + (me.predictedLevel === null ? "" : " · 직전 예측 " + me.predictedLevel + " → 차이 " + (me.deltaFromPredicted > 0 ? "+" : me.deltaFromPredicted < 0 ? "−" : "±") + Math.abs(me.deltaFromPredicted));
+    } else if (m.current === null) mt = "실측까지: " + unitName + m.requirement.required + "회 · " + (BLOCKED[m.blockedReason] || m.blockedReason);
+    else mt = "실측까지: " + unitName + num(m.current) + " / " + num(m.requirement.required) + "회 · " + Math.round(m.progress * 100) + "% (기준은 휴리스틱)";
     var d = prevLevel[a.axis];
     var delta = d && d.comparable && d.previousLevel !== d.currentLevel ? " · 이전 " + (d.previousLevel === null ? "?" : d.previousLevel) + " → 현재 " + (d.currentLevel === null ? "?" : d.currentLevel) : "";
-    return el("li", null, [el("b", null, AXIS[a.axis]), " ", levelText(a), " (" + stateText(a) + ") · 가능 범위 " + a.range.min + "–" + a.range.max + delta, el("br"), el("span", { class: "muted" }, mt)]);
+    var prog = m.measurable && m.progress !== null ? el("span", { class: "mini", role: "img", "aria-label": "진행도 " + Math.round(m.progress * 100) + "%" }, el("span", { style: "width:" + Math.round(m.progress * 100) + "%" })) : null;
+    var shownText = m.state === "measured" ? "실측 대역 " + a.measured.band : levelText(a);
+    return el("li", null, [el("b", null, AXIS[a.axis]), " ", shownText, " (" + stateText(a) + ") · 가능 범위 " + a.range.min + "–" + a.range.max + delta, el("br"), prog, el("span", { class: "muted" }, mt)]);
   }));
   radarSec.appendChild(el("div", { class: "radar-wrap" }, [
     el("div", { class: "panel" }, svg),
     el("div", null, [legend, el("p", { class: "notice" }, "레이더의 면적은 종합 점수가 아닙니다. 수준(0~3)은 구조적 지원 수준이며 실제 성능이 아닙니다. 축끼리 더하거나 하네스 간 순위를 매기지 마세요."), axisList])
   ]));
+  function shareBar(parts, label) {
+    var total = parts.reduce(function(t, x) {
+      return t + x.value;
+    }, 0);
+    var W2 = 640, H2 = 28;
+    var g = s("svg", { class: "share", viewBox: "0 0 " + W2 + " " + H2, role: "img", "aria-label": label + ": " + parts.map(function(x) {
+      return x.name + " " + (total ? pct(x.value / total) : "0%");
+    }).join(", ") });
+    var x0 = 0;
+    parts.forEach(function(x) {
+      if (!total || !x.value) return;
+      var w = x.value / total * W2;
+      g.appendChild(s("rect", { class: "seg " + x.cls, x: x0, y: 0, width: Math.max(w - 2, 1), height: H2, rx: 3 }, s("title", null, x.name + " " + num(x.value) + " (" + pct(x.value / total) + ")")));
+      if (w > 110) g.appendChild(s("text", { x: x0 + 6, y: 18, class: x.cls === "c3" || x.cls === "c4" ? "seglabel ink" : "seglabel" }, x.name + " " + pct(x.value / total)));
+      x0 += w;
+    });
+    var legend2 = el("ul", { class: "legend inline" }, parts.map(function(x) {
+      return el("li", null, [el("span", { class: "swatch " + x.cls, "aria-hidden": "true" }), x.name + " " + (total ? pct(x.value / total) : "0%")]);
+    }));
+    return el("div", { class: "sharewrap" }, [g, legend2]);
+  }
+  function bucketRow(name, b) {
+    return [name, num(b.freshInput), num(b.cacheWrite), num(b.cacheRead), num(b.output), num(b.weighted)];
+  }
+  var TOKH = ["구분", "새 입력", "캐시 쓰기", "캐시 읽기", "출력", "환산값"];
+  if (usable) {
+    var sSec2 = section("세션 기록 실측", "sessions");
+    var cov = sess.coverage;
+    sSec2.appendChild(el("div", { class: "meta panel" }, [
+      ["누적 집계 기간", sess.window ? sess.window.from + " ~ " + sess.window.to : "—"],
+      ["원본 기록 범위", sess.window && sess.window.rawLogsFrom ? sess.window.rawLogsFrom + " 이후(오래된 기록은 Claude Code가 정리)" : "원본 기록 없음(누적값만)"],
+      ["Claude Code 버전", sess.clientVersions ? sess.clientVersions.min + " ~ " + sess.clientVersions.max : "미확인"],
+      ["읽은 기록", "파일 " + num(cov.filesScanned) + "개 · 줄 " + num(cov.linesRead) + " (건너뜀 " + num(cov.linesSkipped) + ")" + (cov.incremental ? " · 증분" : " · 전체")],
+      ["중복 제거", "assistant 줄 " + num(sess.dedup.assistantLines) + " → 응답 " + num(sess.dedup.uniqueResponses) + " (합성 " + sess.dedup.excludedSynthetic + " · API 오류 " + sess.dedup.excludedApiError + " 제외)"],
+      ["귀속", "귀속 세션 " + num(cov.sessionsAttributed) + " · 미귀속 " + num(cov.sessionsUnattributed) + (cov.configSince ? " · 현재 구성 이후 " + cov.configSince.slice(0, 10) : "")]
+    ].map(function(kv) {
+      return el("div", null, [el("b", null, kv[0]), kv[1]]);
+    })));
+    sSec2.appendChild(el("p", { class: "muted" }, "원문(대화·코드·도구 입력)은 읽어 두지 않고 숫자만 집계했습니다. 환산값은 공개 가격표(" + (sess.tokens ? sess.tokens.weighting.pricingTableVersion : "—") + ") 기준 " + (sess.tokens ? sess.tokens.weighting.referenceModel : "") + " 새 입력 토큰으로 환산한 상대값이며 청구액이 아닙니다."));
+    var tk = sess.tokens;
+    if (tk) {
+      sSec2.appendChild(el("h3", null, "토큰 종류별"));
+      sSec2.appendChild(shareBar(TOKTYPE.map(function(t, i) {
+        return { name: t[1], value: tk.total[t[0]], cls: "c" + (i + 1) };
+      }), "토큰 종류별 비중(토큰 수)"));
+      sSec2.appendChild(el("h3", null, "위치별 (환산값 비중)"));
+      var locs = tk.byLocation.filter(function(l) {
+        return l.sessions > 0 || l.tokens.weighted > 0;
+      });
+      sSec2.appendChild(shareBar(tk.byLocation.map(function(l, i) {
+        return { name: LOC[l.location], value: l.tokens.weighted, cls: "c" + (i + 1) };
+      }), "위치별 환산값 비중"));
+      var bot = tk.byLocation.filter(function(l) {
+        return l.location === "bot";
+      })[0];
+      var top = tk.byLocation.slice().sort(function(a, b) {
+        return b.weightedShare - a.weightedShare;
+      })[0];
+      if (bot && bot.weightedShare > 0 && top.location === "bot") {
+        var crShare = tk.total.cacheRead ? bot.tokens.cacheRead / tk.total.cacheRead : 0;
+        sSec2.appendChild(el("p", { class: "notice" }, "오케스트레이터 봇 채팅이 환산값의 " + pct(bot.weightedShare) + "로 가장 큽니다. 캐시 읽기의 " + pct(crShare) + "가 봇 채팅에서 나왔습니다. 조율 비용이라 축 지표에서는 뺐습니다."));
+      }
+      sSec2.appendChild(table(TOKH.concat(["비중", "세션", "귀속 방법"]), locs.map(function(l) {
+        var meth = Object.keys(l.attribution).filter(function(k) {
+          return l.attribution[k] > 0;
+        }).map(function(k) {
+          return METHOD[k] + " " + l.attribution[k];
+        }).join(", ");
+        return bucketRow(LOC[l.location], l.tokens).concat([pct(l.weightedShare), num(l.sessions), meth || "—"]);
+      }).concat([
+        bucketRow(el("b", null, "합계(귀속분)"), tk.total).concat(["100%", num(cov.sessionsAttributed), ""]),
+        bucketRow(el("span", { class: "muted" }, "미귀속(합계 제외)"), tk.unattributed.tokens).concat(["—", num(tk.unattributed.sessions), "봇 " + tk.unattributed.botSessions])
+      ])));
+      if (tk.byModel.length) {
+        sSec2.appendChild(el("details", null, [el("summary", null, "모델별"), table(TOKH, tk.byModel.map(function(m) {
+          return bucketRow(m.model, m.tokens);
+        }))]));
+      }
+    }
+    var cpt = sess.contextPerTurn;
+    if (cpt) {
+      sSec2.appendChild(el("h3", null, "턴별 컨텍스트 크기"));
+      sSec2.appendChild(el("p", null, "메인 스레드 요청 " + num(cpt.requests) + "개의 입력 크기(새 입력+캐시 쓰기+캐시 읽기): 중앙값 " + num(cpt.p50) + " · p90 " + num(cpt.p90) + " · 최대 " + num(cpt.max) + " 토큰. 세션 첫 요청 중앙값 " + num(cpt.firstRequestP50) + " · 컨텍스트 압축 " + cpt.compactions + "회."));
+      if (cpt.series.length) sSec2.appendChild(trendChart(cpt.series));
+    }
+    if (sess.axisMetrics.length) {
+      sSec2.appendChild(el("h3", null, "축별 실측 지표"));
+      sSec2.appendChild(table(["축", "지표", "값", "표본", "범위"], sess.axisMetrics.map(function(m) {
+        return [AXIS[m.axis], METRIC[m.metricId] || m.metricId, metricValue(m), num(m.sampleSize), m.sinceConfig ? "현재 구성 이후" : "전체"];
+      })));
+    }
+  }
+  function trendChart(series) {
+    var W3 = 640, H3 = 200, L = 64, Rt = 12, T = 12, B = 30;
+    var maxV = Math.max.apply(null, series.map(function(p) {
+      return p.max;
+    })) || 1;
+    var n3 = series.length;
+    var xOf = function(i) {
+      return n3 === 1 ? L + (W3 - L - Rt) / 2 : L + i * (W3 - L - Rt) / (n3 - 1);
+    };
+    var yOf = function(v) {
+      return T + (H3 - T - B) * (1 - v / maxV);
+    };
+    var g = s("svg", { class: "trend", viewBox: "0 0 " + W3 + " " + H3, role: "img", "aria-label": "일별 요청 입력 크기 추이. 정확한 값은 아래 표에 있습니다." });
+    [0, 0.5, 1].forEach(function(f) {
+      var y = yOf(maxV * f);
+      g.appendChild(s("line", { class: "gridline", x1: L, x2: W3 - Rt, y1: y, y2: y }));
+      g.appendChild(s("text", { class: "axislabel", x: L - 6, y: y + 4, "text-anchor": "end" }, num(Math.round(maxV * f))));
+    });
+    [0, n3 - 1].filter(function(v, i, arr) {
+      return arr.indexOf(v) === i;
+    }).forEach(function(i) {
+      g.appendChild(s("text", { class: "axislabel", x: xOf(i), y: H3 - 8, "text-anchor": i === 0 && n3 > 1 ? "start" : "end" }, series[i].date));
+    });
+    [["max", "line-max"], ["p50", "line-p50"]].forEach(function(k) {
+      if (n3 > 1) g.appendChild(s("polyline", { class: k[1], points: series.map(function(p, i) {
+        return xOf(i) + "," + yOf(p[k[0]]);
+      }).join(" ") }));
+      series.forEach(function(p, i) {
+        g.appendChild(s("circle", { class: "dot " + k[1], cx: xOf(i), cy: yOf(p[k[0]]), r: 4 }, s("title", null, p.date + " " + (k[0] === "max" ? "최대 " : "중앙값 ") + num(p[k[0]]) + " 토큰 · 요청 " + p.requests)));
+      });
+    });
+    var lg = el("ul", { class: "legend inline" }, [
+      el("li", null, [el("span", { class: "swatch line-p50", "aria-hidden": "true" }), "일별 중앙값(실선)"]),
+      el("li", null, [el("span", { class: "swatch line-max dashed", "aria-hidden": "true" }), "일별 최대(점선)"])
+    ]);
+    return el("div", null, [el("div", { class: "panel" }, [g, lg]), el("details", null, [el("summary", null, "일별 표"), table(["날짜", "요청", "중앙값", "최대"], series.map(function(p) {
+      return [p.date, num(p.requests), num(p.p50), num(p.max)];
+    }))])]);
+  }
   if (cmp) {
     var chSec = section("변경 내역", "changes");
     var compText = { full: "전체 비교 가능", limited: "일부만 비교 가능", none: "비교 불가(변경 목록만)" }[cmp.comparability];
@@ -1835,7 +2075,12 @@ function reportClient() {
   if (sc.currentRun.length) sSec.appendChild(el("p", { class: "muted" }, "이번 분석 엔진 실행: " + sc.currentRun.map(function(r) {
     return r.subcommand + " " + r.durationMs + "ms";
   }).join(" · ")));
-  sSec.appendChild(el("p", { class: "muted" }, sc.previousAnalysis ? "직전 분석(" + sc.previousAnalysis.snapshotId + ")의 LLM 토큰: " + (sc.previousAnalysis.llmTokens ? JSON.stringify(sc.previousAnalysis.llmTokens) : "미측정(세션 집계 필요)") : "직전 분석 기록 없음."));
+  var pa = sc.previousAnalysis;
+  if (!pa) sSec.appendChild(el("p", { class: "muted" }, "직전 분석 기록 없음. 다음 분석에서 이번 분석의 토큰·시간을 세션 기록으로 측정합니다."));
+  else {
+    sSec.appendChild(el("p", null, "직전 분석(" + pa.snapshotId + "): 걸린 시간 " + (pa.wallClockMs === null ? "미확인" : Math.round(pa.wallClockMs / 100) / 10 + "초") + " · LLM 토큰 " + (pa.llmTokens ? "새 입력 " + num(pa.llmTokens.freshInput) + " + 캐시 쓰기 " + num(pa.llmTokens.cacheWrite) + " + 출력 " + num(pa.llmTokens.output) + " (캐시 읽기 " + num(pa.llmTokens.cacheRead) + " 별도, 환산 " + num(pa.llmTokens.weighted) + ")" : "미측정(그 구간의 귀속 세션 기록 없음)")));
+    if (pa.llmTokens) sSec.appendChild(el("p", { class: "muted" }, "prepare 시작~finalize 끝 구간에 이 프로젝트에 귀속된 메인 스레드 응답을 모두 셉니다. 같은 시간에 다른 작업을 했다면 함께 들어갑니다."));
+  }
   var lSec = section("한계와 미확인 영역", "limitations");
   var lims = eng.limitations.map(function(l) {
     return l.message;
@@ -1868,6 +2113,7 @@ var REPORT_CSS = `
   --grid: #c9c9c2; --current: #1f5fbf; --previous: #7a7a72; --band: rgba(31, 95, 191, 0.16);
   --warn-bg: #fff4dc; --warn-line: #c98a00; --added: #1d7a3a; --removed: #b3261e; --modified: #8a5a00;
   --code-bg: #efefea;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --was: #7a7a72;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -1875,6 +2121,7 @@ var REPORT_CSS = `
     --grid: #4a4a45; --current: #7fb0ff; --previous: #9c9c94; --band: rgba(127, 176, 255, 0.20);
     --warn-bg: #3a2f14; --warn-line: #e0a830; --added: #6fcf8a; --removed: #ff8a80; --modified: #e6b450;
     --code-bg: #2a2a27;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --was: #9c9c94;
   }
 }
 * { box-sizing: border-box; }
@@ -1891,8 +2138,34 @@ p { margin: 6px 0; }
 .meta b { display: block; color: var(--muted); font-weight: 600; font-size: 12px; }
 .notice { border-left: 4px solid var(--warn-line); background: var(--warn-bg); padding: 8px 12px; border-radius: 4px; margin: 8px 0; }
 .maturity { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
-.bar { width: 220px; height: 12px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); }
-.bar span { display: block; height: 100%; background: var(--current); }
+.bar { width: 240px; height: 16px; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; background: var(--panel); }
+.bar { display: flex; gap: 2px; padding: 1px; }
+.bar span.seg { flex: 1; height: 100%; border-radius: 3px; background: transparent; border: 1px dashed var(--grid); }
+.bar span.seg.on { background: var(--current); border: 1px solid var(--current); }
+.mini { display: inline-block; vertical-align: middle; width: 80px; height: 8px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; margin-right: 6px; }
+.mini span { display: block; height: 100%; background: var(--current); }
+svg.radar .pt-was { fill: none; stroke: var(--was); stroke-width: 1.5; stroke-dasharray: 2 3; opacity: 0.8; }
+.sharewrap { margin: 6px 0 10px; }
+svg.share { width: 100%; height: auto; display: block; }
+svg.share .seglabel { fill: #fff; font-size: 12px; font-weight: 600; }
+svg.share .seglabel.ink { fill: #111; }
+svg .c1, .swatch.c1 { fill: var(--s1); background: var(--s1); }
+svg .c2, .swatch.c2 { fill: var(--s2); background: var(--s2); }
+svg .c3, .swatch.c3 { fill: var(--s3); background: var(--s3); }
+svg .c4, .swatch.c4 { fill: var(--s4); background: var(--s4); }
+.legend.inline { display: flex; flex-wrap: wrap; gap: 4px 16px; }
+.legend.inline li { margin: 2px 0; }
+.swatch { display: inline-block; width: 12px; height: 12px; border-radius: 3px; }
+.swatch.line-p50 { height: 3px; width: 22px; background: var(--s1); }
+.swatch.line-max { height: 0; width: 22px; border-top: 2px dashed var(--s2); background: none; }
+svg.trend { width: 100%; height: auto; display: block; }
+svg.trend .gridline { stroke: var(--grid); stroke-width: 1; opacity: 0.6; }
+svg.trend .axislabel { fill: var(--muted); font-size: 11px; }
+svg.trend polyline { fill: none; stroke-width: 2; }
+svg.trend .line-p50 { stroke: var(--s1); }
+svg.trend .line-max { stroke: var(--s2); stroke-dasharray: 6 4; }
+svg.trend .dot.line-p50 { fill: var(--s1); stroke: var(--panel); stroke-width: 2; stroke-dasharray: none; }
+svg.trend .dot.line-max { fill: var(--panel); stroke: var(--s2); stroke-width: 2; stroke-dasharray: none; }
 .summary li { margin: 4px 0; }
 .radar-wrap { display: grid; grid-template-columns: minmax(280px, 520px) 1fr; gap: 20px; align-items: start; }
 @media (max-width: 760px) { .radar-wrap { grid-template-columns: 1fr; } }
@@ -1976,6 +2249,1076 @@ function skillDir() {
 }
 function loadSchema() {
   return JSON.parse(readFileSync2(path3.join(skillDir(), "schemas", "analysis.schema.json"), "utf8"));
+}
+
+// src/sessions.mjs
+import {
+  closeSync as closeSync2,
+  existsSync as existsSync4,
+  mkdirSync as mkdirSync2,
+  openSync as openSync2,
+  readFileSync as readFileSync4,
+  readSync,
+  readdirSync as readdirSync4,
+  realpathSync as realpathSync3,
+  renameSync as renameSync2,
+  rmSync as rmSync2,
+  statSync as statSync4
+} from "fs";
+import { homedir as homedir3 } from "os";
+import path5 from "path";
+
+// src/store.mjs
+import {
+  closeSync,
+  existsSync as existsSync3,
+  mkdirSync,
+  openSync,
+  readFileSync as readFileSync3,
+  readdirSync as readdirSync3,
+  renameSync,
+  rmSync,
+  statSync as statSync3,
+  writeFileSync,
+  writeSync
+} from "fs";
+import path4 from "path";
+var EngineError = class extends Error {
+  constructor(code, message) {
+    super(message);
+    this.exitCode = code;
+  }
+};
+function atomicWrite(file, content) {
+  mkdirSync(path4.dirname(file), { recursive: true });
+  const tmp = `${file}.tmp-${process.pid}`;
+  writeFileSync(tmp, content);
+  renameSync(tmp, file);
+}
+var writeJson = (file, value) => atomicWrite(file, stableStringify(value));
+var readJson = (file) => JSON.parse(readFileSync3(file, "utf8"));
+function ensureOutDir(out) {
+  const fresh = !existsSync3(out);
+  mkdirSync(out, { recursive: true });
+  if (fresh || !existsSync3(path4.join(out, ".gitignore"))) atomicWrite(path4.join(out, ".gitignore"), "*\n");
+}
+function pidAlive(pid) {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+function acquireLock(out, now) {
+  const file = path4.join(out, "lock");
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const fd = openSync(file, "wx");
+      writeSync(fd, JSON.stringify({ pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString() }));
+      closeSync(fd);
+      return () => rmSync(file, { force: true });
+    } catch (err) {
+      if (err.code !== "EEXIST") throw new EngineError(11, "결과 디렉터리에 쓸 수 없습니다.");
+      let stale = true;
+      try {
+        const info = JSON.parse(readFileSync3(file, "utf8"));
+        const age = Date.now() - Date.parse(info.startedAt);
+        stale = !pidAlive(info.pid) || !(age < 10 * 60 * 1e3);
+      } catch {
+        stale = statSync3(file).mtimeMs < Date.now() - 10 * 60 * 1e3;
+      }
+      if (!stale) throw new EngineError(11, "다른 Harness Lens 분석이 진행 중입니다. 끝난 뒤 다시 시도하세요.");
+      rmSync(file, { force: true });
+    }
+  }
+  throw new EngineError(11, "결과 디렉터리 잠금을 얻지 못했습니다.");
+}
+var runDir = (out, runId) => path4.join(out, "runs", runId);
+var snapshotDir = (out, id) => path4.join(out, "snapshots", id);
+function readIndex(out) {
+  const file = path4.join(out, "snapshots", "index.json");
+  return existsSync3(file) ? readJson(file) : [];
+}
+function latestSnapshotId(out) {
+  const file = path4.join(out, "latest.json");
+  if (existsSync3(file)) return readJson(file).snapshotId;
+  const idx = readIndex(out);
+  return idx.length ? idx[idx.length - 1].snapshotId : null;
+}
+function loadSnapshot(out, id) {
+  const file = path4.join(snapshotDir(out, id), "analysis.json");
+  if (!existsSync3(file)) throw new EngineError(41, `스냅샷 ${id}이 없습니다.`);
+  return readJson(file);
+}
+function commitSnapshot(out, analysis) {
+  const id = analysis.meta.snapshotId;
+  const finalDir = snapshotDir(out, id);
+  if (existsSync3(finalDir)) throw new EngineError(40, `스냅샷 ${id}이 이미 있습니다.`);
+  const staging = path4.join(out, "snapshots", `.staging-${id}`);
+  try {
+    rmSync(staging, { recursive: true, force: true });
+    mkdirSync(staging, { recursive: true });
+    writeFileSync(path4.join(staging, "analysis.json"), stableStringify(analysis));
+    renameSync(staging, finalDir);
+    const index = readIndex(out).filter((e) => e.snapshotId !== id);
+    index.push({
+      snapshotId: id,
+      analyzedAt: analysis.meta.analyzedAt,
+      configurationHash: analysis.meta.configurationHash,
+      schemaVersion: analysis.schemaVersion,
+      rubricVersion: analysis.rubricVersion,
+      scope: analysis.meta.scope.preset
+    });
+    index.sort((a, b) => compareCodeUnits(a.analyzedAt + a.snapshotId, b.analyzedAt + b.snapshotId));
+    writeJson(path4.join(out, "snapshots", "index.json"), index);
+    writeJson(path4.join(out, "latest.json"), { snapshotId: id });
+  } catch (err) {
+    rmSync(staging, { recursive: true, force: true });
+    if (err instanceof EngineError) throw err;
+    throw new EngineError(40, "스냅샷을 저장하지 못했습니다. 이전 상태를 유지합니다.");
+  }
+  return finalDir;
+}
+function pruneRuns(out, keepId) {
+  const dir = path4.join(out, "runs");
+  if (!existsSync3(dir)) return;
+  const runs = readdirSync3(dir).filter((d) => d !== keepId).sort(compareCodeUnits);
+  for (const old of runs.slice(0, Math.max(0, runs.length - (RUNS_TO_KEEP - 1)))) {
+    rmSync(path4.join(dir, old), { recursive: true, force: true });
+  }
+}
+
+// src/sessions.mjs
+var CHUNK = 1 << 20;
+var MAX_LINE_BYTES = 16 * 1024 * 1024;
+var RESPONSE_RETENTION_DAYS = 90;
+var DAY_MS = 24 * 60 * 60 * 1e3;
+var AGGREGATED = /* @__PURE__ */ new Set(["assistant", "user", "system", "attachment"]);
+var KNOWN_IGNORED = /* @__PURE__ */ new Set([
+  "cost-state",
+  "api-request",
+  "api-request-shape",
+  "api-request-blob",
+  "ai-title",
+  "custom-title",
+  "last-prompt",
+  "agent-name",
+  "queue-operation",
+  "mode",
+  "permission-mode",
+  "pr-link",
+  "frame-link",
+  "file-history-snapshot",
+  "file-history-delta",
+  "session-owner",
+  "tools-used",
+  "atis-latch",
+  "summary",
+  "progress"
+]);
+var MODEL_RE = /^[A-Za-z0-9._:@/[\]-]{1,80}$/;
+var VERSION_RE = /^\d+\.\d+\.\d+[0-9A-Za-z.+-]{0,30}$/;
+var h16 = (s) => sha256hex(String(s)).slice(0, 16);
+var toPosix2 = (p) => p.split(path5.sep).join("/").replace(/\\/g, "/");
+var isInt = (v) => Number.isInteger(v) && v >= 0;
+function compareVersions(a, b) {
+  const pa = a.split(/[.+-]/).map((x) => /^\d+$/.test(x) ? Number(x) : x);
+  const pb = b.split(/[.+-]/).map((x) => /^\d+$/.test(x) ? Number(x) : x);
+  for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+    const x = pa[i] ?? -1;
+    const y = pb[i] ?? -1;
+    if (x === y) continue;
+    if (typeof x === "number" && typeof y === "number") return x - y;
+    return compareCodeUnits(String(x), String(y));
+  }
+  return 0;
+}
+var expandHome = (p) => p.startsWith("~/") || p === "~" ? path5.join(homedir3(), p.slice(1)) : p;
+function realOrSelf(p) {
+  try {
+    return realpathSync3(p);
+  } catch {
+    return p;
+  }
+}
+function isUnder(p, base) {
+  if (!base) return false;
+  const b = base.endsWith("/") ? base.slice(0, -1) : base;
+  return p === b || p.startsWith(`${b}/`);
+}
+function mainRepoOf(dir) {
+  let cur = dir;
+  for (let i = 0; i < 64; i++) {
+    const g = path5.join(cur, ".git");
+    let st = null;
+    try {
+      st = statSync4(g);
+    } catch {
+    }
+    if (st) {
+      if (st.isDirectory()) return { found: true, main: cur, worktree: false };
+      try {
+        const text = readFileSync4(g, "utf8").slice(0, 4096);
+        const m = /^gitdir:\s*(.+)$/m.exec(text);
+        if (m) {
+          const gitdir = path5.resolve(cur, m[1].trim());
+          const main2 = toPosix2(gitdir).replace(/\/\.git\/worktrees\/[^/]+\/?$/, "");
+          if (main2 !== toPosix2(gitdir)) return { found: true, main: main2, worktree: true };
+        }
+      } catch {
+      }
+      return { found: true, main: null, worktree: false };
+    }
+    const up = path5.dirname(cur);
+    if (up === cur) break;
+    cur = up;
+  }
+  return { found: false, main: null, worktree: false };
+}
+function resolveMainRoot(projectRoot) {
+  const real = realOrSelf(projectRoot);
+  const r = mainRepoOf(real);
+  const main2 = r.worktree && r.main ? r.main : toPosix2(real);
+  return { main: main2, roots: [.../* @__PURE__ */ new Set([main2, toPosix2(realOrSelf(main2)), toPosix2(projectRoot)])] };
+}
+function readSessionConfig(out) {
+  var _a, _b;
+  const file = path5.join(out, "config.json");
+  let cfg = {};
+  try {
+    if (existsSync4(file)) cfg = JSON.parse(readFileSync4(file, "utf8"));
+  } catch {
+    cfg = {};
+  }
+  const orca = cfg && typeof cfg.orcaPaths === "object" && cfg.orcaPaths ? cfg.orcaPaths : {};
+  const bots = ((_a = cfg == null ? void 0 : cfg.sessionAttribution) == null ? void 0 : _a.bots) && typeof cfg.sessionAttribution.bots === "object" ? cfg.sessionAttribution.bots : {};
+  const str = (v, d) => typeof v === "string" && v ? v : d;
+  return {
+    enabled: ((_b = cfg == null ? void 0 : cfg.sessions) == null ? void 0 : _b.enabled) !== false,
+    botsDir: toPosix2(path5.resolve(expandHome(str(orca.bots, "~/.orca/bots")))),
+    workspacesDir: toPosix2(path5.resolve(expandHome(str(orca.workspaces, "~/orca/workspaces")))),
+    // 봇 이름은 해시로만 비교한다. 값(저장소 경로)은 R과 같은지만 본다.
+    botMap: Object.fromEntries(Object.entries(bots).filter(([, v]) => typeof v === "string").map(([k, v]) => [h16(k), toPosix2(realOrSelf(path5.resolve(expandHome(v))))]))
+  };
+}
+function emptyState(rootHash) {
+  return { parserVersion: SESSION_PARSER_VERSION, rootPathHash: rootHash, files: {}, attribution: {}, responses: /* @__PURE__ */ new Map(), archive: { days: {}, responses: 0 } };
+}
+function stateDir(out) {
+  return path5.join(out, "sessions");
+}
+function loadState(dir, rootHash) {
+  try {
+    if (!existsSync4(path5.join(dir, "cursor.json"))) return { state: emptyState(rootHash), had: false };
+    const cursor = JSON.parse(readFileSync4(path5.join(dir, "cursor.json"), "utf8"));
+    if (cursor.parserVersion !== SESSION_PARSER_VERSION || cursor.rootPathHash !== rootHash) return { state: emptyState(rootHash), had: false };
+    const responses = /* @__PURE__ */ new Map();
+    const rdir = path5.join(dir, "responses");
+    if (existsSync4(rdir)) {
+      for (const f of readdirSync4(rdir).sort(compareCodeUnits)) {
+        if (!f.endsWith(".json")) continue;
+        const obj = JSON.parse(readFileSync4(path5.join(rdir, f), "utf8"));
+        for (const [k, v] of Object.entries(obj)) responses.set(k, v);
+      }
+    }
+    const read = (f, d) => existsSync4(path5.join(dir, f)) ? JSON.parse(readFileSync4(path5.join(dir, f), "utf8")) : d;
+    return {
+      state: {
+        parserVersion: cursor.parserVersion,
+        rootPathHash: rootHash,
+        files: cursor.files ?? {},
+        attribution: read("attribution-cache.json", {}),
+        responses,
+        archive: read("archive.json", { days: {}, responses: 0 })
+      },
+      had: true
+    };
+  } catch {
+    return { state: emptyState(rootHash), had: false, corrupted: true };
+  }
+}
+var monthOf = (ms) => ms > 0 ? new Date(ms).toISOString().slice(0, 7) : "0000-00";
+function writeState(dir, state) {
+  rmSync2(dir, { recursive: true, force: true });
+  mkdirSync2(path5.join(dir, "responses"), { recursive: true });
+  writeJson(path5.join(dir, "cursor.json"), { parserVersion: state.parserVersion, rootPathHash: state.rootPathHash, files: state.files });
+  writeJson(path5.join(dir, "attribution-cache.json"), state.attribution);
+  writeJson(path5.join(dir, "archive.json"), state.archive);
+  const months = /* @__PURE__ */ new Map();
+  for (const k of [...state.responses.keys()].sort(compareCodeUnits)) {
+    const v = state.responses.get(k);
+    const m = monthOf(v[8]);
+    if (!months.has(m)) months.set(m, {});
+    months.get(m)[k] = v;
+  }
+  for (const [m, obj] of months) atomicWrite(path5.join(dir, "responses", `${m}.json`), `${JSON.stringify(obj)}
+`);
+}
+function promoteState(out, stagingDir) {
+  if (!existsSync4(path5.join(stagingDir, "cursor.json"))) return false;
+  const dir = stateDir(out);
+  const old = `${dir}.old-${process.pid}`;
+  rmSync2(old, { recursive: true, force: true });
+  if (existsSync4(dir)) renameSync2(dir, old);
+  try {
+    renameSync2(stagingDir, dir);
+  } catch (err) {
+    if (existsSync4(old)) renameSync2(old, dir);
+    throw err;
+  }
+  rmSync2(old, { recursive: true, force: true });
+  return true;
+}
+function listTranscripts(projectsDir) {
+  const out = [];
+  let dirs;
+  try {
+    dirs = readdirSync4(projectsDir, { withFileTypes: true });
+  } catch {
+    return null;
+  }
+  for (const d of dirs) {
+    if (!d.isDirectory()) continue;
+    const pdir = path5.join(projectsDir, d.name);
+    let entries;
+    try {
+      entries = readdirSync4(pdir, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      if (e.isFile() && e.name.endsWith(".jsonl")) out.push({ abs: path5.join(pdir, e.name), kind: "main" });
+      else if (e.isDirectory() && e.name !== "memory") {
+        const sdir = path5.join(pdir, e.name, "subagents");
+        let subs;
+        try {
+          subs = readdirSync4(sdir, { withFileTypes: true });
+        } catch {
+          continue;
+        }
+        for (const s of subs) if (s.isFile() && /^agent-.+\.jsonl$/.test(s.name)) out.push({ abs: path5.join(sdir, s.name), kind: "subagent" });
+      }
+    }
+  }
+  return out.sort((a, b) => compareCodeUnits(a.abs, b.abs));
+}
+var COUNTERS = [
+  "lines",
+  "skipped",
+  "unknownType",
+  "assistantLines",
+  "synthetic",
+  "apiError",
+  "badUsage",
+  "toolUse",
+  "toolErrors",
+  "recovered",
+  "subToolUse",
+  "subToolErrors",
+  "humanPrompts",
+  "compactions",
+  "hookErrors",
+  "hookBlocks",
+  "apiRetries"
+];
+function newFileState(kind) {
+  return {
+    kind,
+    inode: null,
+    size: 0,
+    mtimeMs: 0,
+    offset: 0,
+    present: true,
+    session: null,
+    cwdHash: null,
+    cls: null,
+    botMention: false,
+    versions: null,
+    firstTs: null,
+    lastTs: null,
+    c: Object.fromEntries(COUNTERS.map((k) => [k, 0])),
+    durations: [],
+    gaps: [],
+    openGap: null,
+    pendingError: false
+  };
+}
+function mentionsRoot(value, roots, depth = 0) {
+  if (depth > 8 || value === null || value === void 0) return false;
+  if (typeof value === "string") {
+    for (const r of roots) {
+      let i = value.indexOf(r);
+      while (i !== -1) {
+        const next = value[i + r.length];
+        if (next === void 0 || !/[A-Za-z0-9._-]/.test(next)) return true;
+        i = value.indexOf(r, i + 1);
+      }
+    }
+    return false;
+  }
+  if (Array.isArray(value)) return value.some((v) => mentionsRoot(v, roots, depth + 1));
+  if (typeof value === "object") return Object.values(value).some((v) => mentionsRoot(v, roots, depth + 1));
+  return false;
+}
+var Parser = class {
+  constructor(state, env) {
+    this.state = state;
+    this.env = env;
+  }
+  classify(cwd) {
+    const key = h16(cwd);
+    const cached = this.state.attribution[key];
+    if (cached) return { key, cls: cached };
+    const { roots, cfg, mainRoot } = this.env;
+    const p = toPosix2(cwd);
+    const pr = toPosix2(realOrSelf(cwd));
+    let cls = { kind: "none" };
+    if (roots.some((r) => isUnder(p, r) || isUnder(pr, r))) cls = { kind: "direct" };
+    else if (isUnder(p, cfg.botsDir)) {
+      const bot = p.slice(cfg.botsDir.length + 1).split("/")[0];
+      cls = bot ? { kind: "bot", bot: h16(bot) } : { kind: "none" };
+    } else {
+      const g = existsSync4(cwd) ? mainRepoOf(cwd) : { found: false };
+      if (g.found) {
+        if (g.worktree && g.main && roots.includes(toPosix2(realOrSelf(g.main)))) cls = { kind: "worktree" };
+        else if (g.worktree && g.main && roots.includes(g.main)) cls = { kind: "worktree" };
+      } else if (!existsSync4(cwd) && isUnder(p, cfg.workspacesDir)) {
+        const repoName = p.slice(cfg.workspacesDir.length + 1).split("/")[0];
+        if (repoName && repoName === path5.posix.basename(mainRoot)) cls = { kind: "inferred" };
+      }
+    }
+    this.state.attribution[key] = cls;
+    return { key, cls };
+  }
+  line(text, fs, fileHash) {
+    const c = fs.c;
+    c.lines++;
+    let o;
+    try {
+      o = JSON.parse(text);
+    } catch {
+      c.skipped++;
+      return;
+    }
+    if (!o || typeof o !== "object" || Array.isArray(o) || typeof o.type !== "string") {
+      c.skipped++;
+      return;
+    }
+    if (!AGGREGATED.has(o.type)) {
+      if (!KNOWN_IGNORED.has(o.type)) {
+        c.unknownType++;
+        c.skipped++;
+      }
+      return;
+    }
+    if (typeof o.version === "string" && VERSION_RE.test(o.version)) {
+      if (!fs.versions) fs.versions = [o.version, o.version];
+      else {
+        if (compareVersions(o.version, fs.versions[0]) < 0) fs.versions[0] = o.version;
+        if (compareVersions(o.version, fs.versions[1]) > 0) fs.versions[1] = o.version;
+      }
+    }
+    const ts = typeof o.timestamp === "string" ? Date.parse(o.timestamp) : NaN;
+    if (Number.isFinite(ts)) {
+      if (fs.firstTs === null || ts < fs.firstTs) fs.firstTs = ts;
+      if (fs.lastTs === null || ts > fs.lastTs) fs.lastTs = ts;
+    }
+    if (fs.session === null && typeof o.sessionId === "string" && o.sessionId) fs.session = h16(o.sessionId);
+    if (fs.cls === null && typeof o.cwd === "string" && o.cwd && path5.isAbsolute(o.cwd)) {
+      const { key, cls } = this.classify(o.cwd);
+      fs.cwdHash = key;
+      fs.cls = cls;
+    }
+    const side = fs.kind === "subagent" || o.isSidechain === true;
+    if (o.type === "assistant") this.assistant(o, fs, fileHash, side, ts);
+    else if (o.type === "user") this.user(o, fs, side);
+    else if (o.type === "system") this.system(o, fs);
+    else this.attachment(o, fs);
+  }
+  assistant(o, fs, fileHash, side, ts) {
+    var _a;
+    const c = fs.c;
+    const msg2 = o.message;
+    if (!msg2 || typeof msg2 !== "object") {
+      c.skipped++;
+      return;
+    }
+    c.assistantLines++;
+    if (msg2.model === "<synthetic>") {
+      c.synthetic++;
+      return;
+    }
+    if (o.isApiErrorMessage === true) {
+      c.apiError++;
+      return;
+    }
+    if (Array.isArray(msg2.content)) {
+      for (const b of msg2.content) {
+        if (!b || b.type !== "tool_use") continue;
+        if (side) c.subToolUse++;
+        else {
+          c.toolUse++;
+          if (fs.openGap !== null) fs.openGap++;
+        }
+        if (!fs.botMention && ((_a = fs.cls) == null ? void 0 : _a.kind) === "bot" && mentionsRoot(b.input, this.env.roots)) fs.botMention = true;
+      }
+    }
+    const u = msg2.usage;
+    if (!u || typeof u !== "object") return;
+    const fresh = u.input_tokens;
+    const cw = u.cache_creation_input_tokens;
+    const cr = u.cache_read_input_tokens;
+    const out = u.output_tokens;
+    if (![fresh, cw, cr, out].every(isInt)) {
+      c.badUsage++;
+      return;
+    }
+    let w1 = 0;
+    if (u.cache_creation && typeof u.cache_creation === "object" && isInt(u.cache_creation.ephemeral_1h_input_tokens)) {
+      w1 = Math.min(cw, u.cache_creation.ephemeral_1h_input_tokens);
+    }
+    const w5 = cw - w1;
+    const rawKey = typeof msg2.id === "string" && msg2.id || typeof o.requestId === "string" && o.requestId || `${fileHash}#${o.uuid ?? c.lines}`;
+    const key = h16(rawKey);
+    const model = typeof msg2.model === "string" && MODEL_RE.test(msg2.model) ? msg2.model : "unknown";
+    const session = typeof o.sessionId === "string" && o.sessionId ? h16(o.sessionId) : fs.session ?? `f:${fileHash}`;
+    const t = Number.isFinite(ts) ? ts : 0;
+    const prev = this.state.responses.get(key);
+    if (!prev) this.state.responses.set(key, [fresh, w5, w1, cr, out, model, session, side ? 1 : 0, t]);
+    else {
+      prev[0] = Math.max(prev[0], fresh);
+      prev[1] = Math.max(prev[1], w5);
+      prev[2] = Math.max(prev[2], w1);
+      prev[3] = Math.max(prev[3], cr);
+      prev[4] = Math.max(prev[4], out);
+      if (compareCodeUnits(model, prev[5]) < 0) prev[5] = model;
+      if (compareCodeUnits(session, prev[6]) < 0) prev[6] = session;
+      prev[7] = prev[7] && (side ? 1 : 0);
+      prev[8] = Math.max(prev[8], t);
+    }
+  }
+  user(o, fs, side) {
+    const c = fs.c;
+    const content = o.message && typeof o.message === "object" ? o.message.content : void 0;
+    let hasResult = false;
+    if (Array.isArray(content)) {
+      for (const b of content) {
+        if (!b || b.type !== "tool_result") continue;
+        hasResult = true;
+        if (side) {
+          if (b.is_error === true) c.subToolErrors++;
+          continue;
+        }
+        if (b.is_error === true) {
+          c.toolErrors++;
+          fs.pendingError = true;
+        } else if (fs.pendingError) {
+          c.recovered++;
+          fs.pendingError = false;
+        }
+      }
+    }
+    if (side) return;
+    let human;
+    if (o.origin && typeof o.origin === "object") human = o.origin.kind === "human";
+    else human = o.isMeta !== true && !hasResult && (typeof content === "string" || Array.isArray(content) && content.some((b) => b && b.type === "text"));
+    if (!human) return;
+    c.humanPrompts++;
+    if (fs.openGap !== null) fs.gaps.push(fs.openGap);
+    fs.openGap = 0;
+  }
+  system(o, fs) {
+    const c = fs.c;
+    if (o.subtype === "turn_duration" && isInt(o.durationMs)) fs.durations.push(o.durationMs);
+    else if (o.subtype === "compact_boundary") c.compactions++;
+    else if (o.subtype === "api_error") c.apiRetries++;
+    else if (o.subtype === "stop_hook_summary" && Array.isArray(o.hookErrors)) c.hookErrors += o.hookErrors.length;
+  }
+  attachment(o, fs) {
+    const a = o.attachment;
+    if (!a || typeof a !== "object" || typeof a.type !== "string") return;
+    if (a.type === "hook_non_blocking_error") fs.c.hookErrors++;
+    else if (/^hook_.*blocking_error$/.test(a.type)) fs.c.hookBlocks++;
+    else if (a.type.startsWith("hook_") && Number.isInteger(a.exitCode) && a.exitCode !== 0) fs.c.hookErrors++;
+  }
+};
+var PEEK_LIMIT = 256 * 1024;
+function ignoredByPeek(buf) {
+  const m = /^\s*\{\s*"type"\s*:\s*"([^"]{1,40})"/.exec(buf.subarray(0, 120).toString("latin1"));
+  return !!m && KNOWN_IGNORED.has(m[1]);
+}
+function readFrom(abs, fs, size, parser, fileHash) {
+  const fd = openSync2(abs, "r");
+  try {
+    const buf = Buffer.allocUnsafe(CHUNK);
+    let pos = fs.offset;
+    let carry = [];
+    let carryLen = 0;
+    let skipping = false;
+    while (pos < size) {
+      const n = readSync(fd, buf, 0, Math.min(CHUNK, size - pos), pos);
+      if (n <= 0) break;
+      let start = 0;
+      for (; ; ) {
+        const idx = buf.indexOf(10, start);
+        if (idx === -1 || idx >= n) break;
+        if (skipping) {
+          fs.c.lines++;
+          fs.c.skipped++;
+          skipping = false;
+        } else {
+          const part = buf.subarray(start, idx);
+          const head = carryLen ? carry[0] : part;
+          if (carryLen + part.length > PEEK_LIMIT && ignoredByPeek(head)) {
+            fs.c.lines++;
+          } else {
+            const text = carryLen ? Buffer.concat([...carry, part]).toString("utf8") : part.toString("utf8");
+            if (text.trim()) parser.line(text, fs, fileHash);
+          }
+        }
+        carry = [];
+        carryLen = 0;
+        start = idx + 1;
+        fs.offset = pos + start;
+      }
+      if (start < n && !skipping) {
+        carryLen += n - start;
+        if (carryLen > MAX_LINE_BYTES) {
+          skipping = true;
+          carry = [];
+          carryLen = 0;
+        } else carry.push(Buffer.from(buf.subarray(start, n)));
+      }
+      pos += n;
+    }
+  } finally {
+    closeSync2(fd);
+  }
+}
+function scanTranscripts({ configDir, state, env, fullRescan, log }) {
+  const list = listTranscripts(path5.join(configDir, "projects"));
+  if (list === null) return { projectsDir: false, present: 0, unreadable: 0 };
+  const parser = new Parser(state, env);
+  const seen = /* @__PURE__ */ new Set();
+  let unreadable = 0;
+  let done = 0;
+  const firstRun = !Object.keys(state.files).length;
+  for (const f of list) {
+    const fh = h16(toPosix2(f.abs));
+    seen.add(fh);
+    let st;
+    try {
+      st = statSync4(f.abs);
+    } catch {
+      unreadable++;
+      continue;
+    }
+    let fs = state.files[fh];
+    const reset = fullRescan || !fs || fs.inode !== st.ino || st.size < fs.offset || st.size === fs.size && st.mtimeMs !== fs.mtimeMs;
+    if (reset) fs = newFileState(f.kind);
+    else if (st.size === fs.size && st.mtimeMs === fs.mtimeMs) {
+      fs.present = true;
+      state.files[fh] = fs;
+      continue;
+    }
+    const before = JSON.stringify(fs);
+    try {
+      readFrom(f.abs, fs, st.size, parser, fh);
+    } catch {
+      unreadable++;
+      if (!reset) state.files[fh] = JSON.parse(before);
+      continue;
+    }
+    fs.inode = st.ino;
+    fs.size = st.size;
+    fs.mtimeMs = st.mtimeMs;
+    fs.present = true;
+    state.files[fh] = fs;
+    done++;
+    if (firstRun && log && done % 200 === 0) log(`Harness Lens: 세션 기록 ${done}/${list.length}개 파일 읽음…`);
+  }
+  for (const [fh, fs] of Object.entries(state.files)) if (!seen.has(fh)) fs.present = false;
+  return { projectsDir: true, present: list.length - unreadable, unreadable };
+}
+
+// src/session-metrics.mjs
+var LOCATIONS = ["direct", "worker", "subagent", "bot"];
+var METHODS = ["direct", "worktree", "inferred", "configured", "auto"];
+var r4 = (x) => roundHalfEven(x, 4);
+var r1 = (x) => roundHalfEven(x, 1);
+var dateOf = (ms) => new Date(ms).toISOString().slice(0, 10);
+function quantile(sorted, p) {
+  if (!sorted.length) return null;
+  return sorted[Math.max(0, Math.ceil(p * sorted.length) - 1)];
+}
+var sortNum = (a) => [...a].sort((x, y) => x - y);
+var zero5 = () => [0, 0, 0, 0, 0];
+function add5(t, v) {
+  for (let i = 0; i < 5; i++) t[i] += v[i];
+}
+function resolveAttribution(state, env) {
+  const sessions = /* @__PURE__ */ new Map();
+  const subagents = [];
+  for (const fh of Object.keys(state.files).sort(compareCodeUnits)) {
+    const fs = state.files[fh];
+    const key = fs.session ?? `f:${fh}`;
+    if (fs.kind === "subagent") {
+      subagents.push([fh, fs, key]);
+      continue;
+    }
+    let s = sessions.get(key);
+    if (!s) {
+      s = { files: [], cls: null, botMention: false };
+      sessions.set(key, s);
+    }
+    s.files.push(fh);
+    if (!s.cls && fs.cls) s.cls = fs.cls;
+    s.botMention = s.botMention || fs.botMention;
+  }
+  const decide = (cls, botMention) => {
+    if (!cls) return { location: null, method: null, bot: false };
+    if (cls.kind === "direct") return { location: "direct", method: "direct", bot: false };
+    if (cls.kind === "worktree") return { location: "worker", method: "worktree", bot: false };
+    if (cls.kind === "inferred") return { location: "worker", method: "inferred", bot: false };
+    if (cls.kind === "bot") {
+      const mapped = env.cfg.botMap[cls.bot];
+      if (mapped !== void 0) return env.roots.includes(mapped) ? { location: "bot", method: "configured", bot: true } : { location: null, method: null, bot: true };
+      return botMention ? { location: "bot", method: "auto", bot: true } : { location: null, method: null, bot: true };
+    }
+    return { location: null, method: null, bot: false };
+  };
+  for (const s of sessions.values()) Object.assign(s, decide(s.cls, s.botMention));
+  const subs = /* @__PURE__ */ new Map();
+  for (const [fh, fs, key] of subagents) {
+    const parent = sessions.get(key);
+    const d = parent ?? decide(fs.cls, fs.botMention);
+    subs.set(fh, { key, parentLocation: d.location, method: d.method, bot: d.bot });
+  }
+  return { sessions, subs };
+}
+function responseLocation(r, attr) {
+  const s = attr.sessions.get(r[6]);
+  const parentLoc = s ? s.location : attr.subBySession.get(r[6]) ?? null;
+  if (!parentLoc) return null;
+  return r[7] ? "subagent" : parentLoc;
+}
+function pruneResponses(state, env, nowMs) {
+  var _a, _b, _c;
+  const cutoff = nowMs - RESPONSE_RETENTION_DAYS * DAY_MS;
+  const attr = withSubIndex(resolveAttribution(state, env));
+  const old = [...state.responses.keys()].filter((k) => {
+    const t = state.responses.get(k)[8];
+    return t > 0 && t < cutoff;
+  }).sort(compareCodeUnits);
+  const raw = /* @__PURE__ */ new Map();
+  for (const k of old) {
+    const r = state.responses.get(k);
+    const day = dateOf(r[8]);
+    const loc = responseLocation(r, attr) ?? "unattributed";
+    const d = (_a = state.archive.days)[day] ?? (_a[day] = { tokens: {}, ctx: null });
+    const slot = (_b = d.tokens)[_c = `${loc}|${r[5]}`] ?? (_b[_c] = zero5());
+    add5(slot, r.slice(0, 5));
+    if (!r[7] && (loc === "direct" || loc === "worker")) {
+      if (!raw.has(day)) raw.set(day, []);
+      raw.get(day).push(r[0] + r[1] + r[2] + r[3]);
+    }
+    state.archive.responses++;
+    state.responses.delete(k);
+  }
+  for (const day of [...raw.keys()].sort(compareCodeUnits)) {
+    const s = sortNum(raw.get(day));
+    const cur = { requests: s.length, p50: quantile(s, 0.5), max: s[s.length - 1] };
+    const d = state.archive.days[day];
+    d.ctx = d.ctx ? { requests: d.ctx.requests + cur.requests, p50: d.ctx.requests >= cur.requests ? d.ctx.p50 : cur.p50, max: Math.max(d.ctx.max, cur.max) } : cur;
+  }
+}
+function withSubIndex(attr) {
+  attr.subBySession = /* @__PURE__ */ new Map();
+  for (const s of attr.subs.values()) if (!attr.sessions.has(s.key) && !attr.subBySession.has(s.key)) attr.subBySession.set(s.key, s.parentLocation);
+  return attr;
+}
+function bucketOut(parts) {
+  const t = zero5();
+  let units = 0;
+  let unknown = false;
+  for (const model of [...parts.keys()].sort(compareCodeUnits)) {
+    const v = parts.get(model);
+    add5(t, v);
+    const u = weightedUnits(model, v);
+    if (u === null) {
+      if (v.some((x) => x > 0)) unknown = true;
+    } else units += u;
+  }
+  return { bucket: { freshInput: t[0], cacheWrite: t[1] + t[2], cacheRead: t[3], output: t[4], weighted: r1(unitsToWeighted(units)) }, unknown, units };
+}
+function emptyBucket() {
+  return { freshInput: 0, cacheWrite: 0, cacheRead: 0, output: 0, weighted: 0 };
+}
+var BAND_RULES = {
+  execution_stability: { ruleId: "ES-M-01", metric: "tool_error_rate", band: (v) => v <= 0.02 ? 3 : v <= 0.05 ? 2 : v <= 0.1 ? 1 : 0 },
+  throughput: { ruleId: "TP-M-01", metric: "turn_duration_p50_ms", band: (v) => v <= 3e4 ? 3 : v <= 9e4 ? 2 : v <= 3e5 ? 1 : 0 },
+  cost_efficiency: { ruleId: "CE-M-01", metric: "cache_hit_ratio", band: (v) => v >= 0.9 ? 3 : v >= 0.75 ? 2 : v >= 0.5 ? 1 : 0 },
+  context_efficiency: {
+    ruleId: "CX-M-01",
+    metric: "context_p90_tokens",
+    band: (v, m) => {
+      const b = v <= 5e4 ? 3 : v <= 1e5 ? 2 : v <= 15e4 ? 1 : 0;
+      const cps = m.compactions_per_session;
+      return cps !== void 0 && cps > 0.5 ? Math.min(b, 1) : b;
+    }
+  },
+  autonomy: { ruleId: "AU-M-01", metric: "tool_calls_between_prompts_p50", band: (v) => v >= 20 ? 3 : v >= 8 ? 2 : v >= 3 ? 1 : 0 }
+};
+function summarize(state, env, { configSinceMs: configSinceMs2, incremental, scan }) {
+  const files = Object.entries(state.files).sort((a, b) => compareCodeUnits(a[0], b[0]));
+  const sum = (k) => files.reduce((s, [, f]) => s + f.c[k], 0);
+  const linesRead = sum("lines");
+  const linesSkipped = sum("skipped");
+  const skippedRatio = linesRead ? r4(linesSkipped / linesRead) : 0;
+  let vmin = null;
+  let vmax = null;
+  for (const [, f] of files) if (f.versions) {
+    if (vmin === null || compareVersions(f.versions[0], vmin) < 0) vmin = f.versions[0];
+    if (vmax === null || compareVersions(f.versions[1], vmax) > 0) vmax = f.versions[1];
+  }
+  const attr = withSubIndex(resolveAttribution(state, env));
+  const mainSessions = [...attr.sessions.entries()].sort((a, b) => compareCodeUnits(a[0], b[0]));
+  const attributed = mainSessions.filter(([, s]) => s.location);
+  const unattributed = mainSessions.filter(([, s]) => !s.location);
+  const base = {
+    status: "available",
+    reason: null,
+    clientVersions: vmin ? { min: vmin, max: vmax } : null,
+    window: null,
+    coverage: {
+      filesScanned: scan.present,
+      linesRead,
+      linesSkipped,
+      skippedRatio,
+      sessionsAttributed: attributed.length,
+      sessionsUnattributed: unattributed.length,
+      incremental,
+      configSince: configSinceMs2 === null ? null : new Date(configSinceMs2).toISOString().replace(/\.\d+Z$/, "Z")
+    },
+    dedup: {
+      assistantLines: sum("assistantLines"),
+      uniqueResponses: state.responses.size + state.archive.responses,
+      excludedSynthetic: sum("synthetic"),
+      excludedApiError: sum("apiError")
+    },
+    tokens: null,
+    contextPerTurn: null,
+    axisMetrics: []
+  };
+  const info = { unknownModels: false, estimatedShare: 0, samples: {}, sinceSessions: 0 };
+  const unavailable = (reason) => ({ sessions: { ...base, status: "unavailable", reason }, info });
+  if (!files.length) return unavailable("no_session_logs");
+  if (base.dedup.uniqueResponses === 0) return unavailable(sum("assistantLines") > 0 || linesRead > 0 ? "session_format_unsupported" : "no_session_logs");
+  const byLocModel = new Map(LOCATIONS.map((l) => [l, /* @__PURE__ */ new Map()]));
+  const unattrModel = /* @__PURE__ */ new Map();
+  const ctxAll = [];
+  const ctxByDay = /* @__PURE__ */ new Map();
+  const firstBySession = /* @__PURE__ */ new Map();
+  const addTo = (map, model, v) => {
+    const t = map.get(model) ?? zero5();
+    add5(t, v);
+    map.set(model, t);
+  };
+  const respKeys = [...state.responses.keys()].sort(compareCodeUnits);
+  for (const k of respKeys) {
+    const r = state.responses.get(k);
+    const v = r.slice(0, 5);
+    const loc = responseLocation(r, attr);
+    if (!loc) {
+      addTo(unattrModel, r[5], v);
+      continue;
+    }
+    addTo(byLocModel.get(loc), r[5], v);
+    if (!r[7] && (loc === "direct" || loc === "worker")) {
+      const size = r[0] + r[1] + r[2] + r[3];
+      ctxAll.push(size);
+      if (r[8] > 0) {
+        const day = dateOf(r[8]);
+        if (!ctxByDay.has(day)) ctxByDay.set(day, []);
+        ctxByDay.get(day).push(size);
+        const f = firstBySession.get(r[6]);
+        if (!f || r[8] < f[0] || r[8] === f[0] && compareCodeUnits(k, f[1]) < 0) firstBySession.set(r[6], [r[8], k, size]);
+      }
+    }
+  }
+  const archDays = Object.keys(state.archive.days).sort(compareCodeUnits);
+  for (const day of archDays) {
+    const d = state.archive.days[day];
+    for (const key of Object.keys(d.tokens).sort(compareCodeUnits)) {
+      const [loc, model] = [key.slice(0, key.indexOf("|")), key.slice(key.indexOf("|") + 1)];
+      if (loc === "unattributed") addTo(unattrModel, model, d.tokens[key]);
+      else if (byLocModel.has(loc)) addTo(byLocModel.get(loc), model, d.tokens[key]);
+    }
+  }
+  const locOut = LOCATIONS.map((l) => ({ l, ...bucketOut(byLocModel.get(l)) }));
+  const allModels = /* @__PURE__ */ new Map();
+  for (const l of LOCATIONS) for (const [m, v] of byLocModel.get(l)) addTo(allModels, m, v);
+  const total = bucketOut(allModels);
+  info.unknownModels = total.unknown || locOut.some((x) => x.unknown);
+  const totalUnits = locOut.reduce((s, x) => s + x.units, 0);
+  const sessCount = Object.fromEntries(LOCATIONS.map((l) => [l, 0]));
+  const methodCount = Object.fromEntries(LOCATIONS.map((l) => [l, Object.fromEntries(METHODS.map((m) => [m, 0]))]));
+  for (const [, s] of attributed) {
+    sessCount[s.location]++;
+    methodCount[s.location][s.method]++;
+  }
+  for (const s of attr.subs.values()) if (s.parentLocation) {
+    sessCount.subagent++;
+    methodCount.subagent[s.method]++;
+  }
+  {
+    const est = /* @__PURE__ */ new Map();
+    for (const k of respKeys) {
+      const r = state.responses.get(k);
+      const s = attr.sessions.get(r[6]);
+      if (s && (s.method === "inferred" || s.method === "auto")) addTo(est, r[5], r.slice(0, 5));
+    }
+    info.estimatedShare = totalUnits ? r4(bucketOut(est).units / totalUnits) : 0;
+  }
+  base.tokens = {
+    weighting: { pricingTableVersion: PRICING_TABLE_VERSION, referenceModel: REFERENCE_MODEL, basis: "reference_model_fresh_input_equivalent" },
+    total: total.bucket,
+    byLocation: locOut.map((x) => ({
+      location: x.l,
+      sessions: sessCount[x.l],
+      tokens: x.bucket,
+      weightedShare: totalUnits ? r4(x.units / totalUnits) : 0,
+      attribution: methodCount[x.l]
+    })),
+    unattributed: {
+      sessions: unattributed.length,
+      botSessions: unattributed.filter(([, s]) => s.bot).length,
+      tokens: unattrModel.size ? bucketOut(unattrModel).bucket : emptyBucket()
+    },
+    byModel: [...allModels.keys()].sort(compareCodeUnits).map((m) => ({ model: m, tokens: bucketOut(/* @__PURE__ */ new Map([[m, allModels.get(m)]])).bucket }))
+  };
+  const ctxSorted = sortNum(ctxAll);
+  const mainAttributedFiles = (pred) => files.filter(([fh, f]) => {
+    if (f.kind !== "main") return false;
+    const s = attr.sessions.get(f.session ?? `f:${fh}`);
+    return s && (s.location === "direct" || s.location === "worker") && pred(s, f);
+  });
+  const workFiles = mainAttributedFiles(() => true);
+  const series = [];
+  for (const day of archDays) {
+    const c = state.archive.days[day].ctx;
+    if (c && !ctxByDay.has(day)) series.push({ date: day, ...c });
+  }
+  for (const day of [...ctxByDay.keys()].sort(compareCodeUnits)) {
+    const s = sortNum(ctxByDay.get(day));
+    series.push({ date: day, requests: s.length, p50: quantile(s, 0.5), max: s[s.length - 1] });
+  }
+  series.sort((a, b) => compareCodeUnits(a.date, b.date));
+  base.contextPerTurn = ctxSorted.length ? {
+    requests: ctxSorted.length,
+    p50: quantile(ctxSorted, 0.5),
+    p90: quantile(ctxSorted, 0.9),
+    max: ctxSorted[ctxSorted.length - 1],
+    firstRequestP50: quantile(sortNum([...firstBySession.values()].map((f) => f[2])), 0.5) ?? 0,
+    compactions: workFiles.reduce((s, [, f]) => s + f.c.compactions, 0),
+    series: series.slice(-90)
+  } : null;
+  let fromMs = null;
+  let toMs = null;
+  for (const k of respKeys) {
+    const t = state.responses.get(k)[8];
+    if (t <= 0) continue;
+    if (fromMs === null || t < fromMs) fromMs = t;
+    if (toMs === null || t > toMs) toMs = t;
+  }
+  const presentFirst = files.filter(([, f]) => f.present && f.firstTs !== null).map(([, f]) => f.firstTs);
+  const from = archDays.length ? archDays[0] : fromMs !== null ? dateOf(fromMs) : null;
+  if (from) base.window = { from, to: toMs !== null ? dateOf(toMs) : archDays[archDays.length - 1], rawLogsFrom: presentFirst.length ? dateOf(presentFirst.reduce((a, b) => Math.min(a, b))) : null };
+  const since = (f) => configSinceMs2 === null || f.firstTs !== null && f.firstTs >= configSinceMs2;
+  const sinceSessions = /* @__PURE__ */ new Map();
+  for (const [fh, f] of workFiles) if (since(f)) {
+    const key = f.session ?? `f:${fh}`;
+    if (!sinceSessions.has(key)) sinceSessions.set(key, []);
+    sinceSessions.get(key).push(f);
+  }
+  const sinceFiles = [...sinceSessions.values()].flat();
+  const sinceSubs = files.filter(([fh, f]) => {
+    var _a;
+    return f.kind === "subagent" && sinceSessions.has((_a = attr.subs.get(fh)) == null ? void 0 : _a.key);
+  });
+  const n = sinceSessions.size;
+  const fsum = (list, k) => list.reduce((s, f) => s + f.c[k], 0);
+  const mainTool = fsum(sinceFiles, "toolUse");
+  const subTool = fsum(sinceFiles, "subToolUse") + sinceSubs.reduce((s, [, f]) => s + f.c.subToolUse, 0);
+  const allTool = mainTool + subTool;
+  const allErr = fsum(sinceFiles, "toolErrors") + fsum(sinceFiles, "subToolErrors") + sinceSubs.reduce((s, [, f]) => s + f.c.subToolErrors, 0);
+  const metrics = [];
+  const push = (axis, metricId, value, unit, sampleSize) => {
+    if (sampleSize > 0 && Number.isFinite(value)) metrics.push({ axis, metricId, value, unit, sampleSize, sinceConfig: configSinceMs2 !== null });
+  };
+  push("execution_stability", "tool_error_rate", allTool ? r4(allErr / allTool) : NaN, "ratio", allTool);
+  const mainErr = fsum(sinceFiles, "toolErrors");
+  push("execution_stability", "tool_error_recovery_rate", mainErr ? r4(fsum(sinceFiles, "recovered") / mainErr) : NaN, "ratio", mainErr);
+  push("execution_stability", "hook_errors_per_session", r4(fsum(sinceFiles, "hookErrors") / n), "per_session", n);
+  push("execution_stability", "api_retries_per_session", r4(fsum(sinceFiles, "apiRetries") / n), "per_session", n);
+  const durations = sortNum(sinceFiles.flatMap((f) => f.durations));
+  push("throughput", "turn_duration_p50_ms", quantile(durations, 0.5), "ms", durations.length);
+  const sessionDur = sortNum([...sinceSessions.values()].map((list) => {
+    const a = list.map((f) => f.firstTs).filter((x) => x !== null);
+    const b = list.map((f) => f.lastTs).filter((x) => x !== null);
+    return a.length ? b.reduce((x, y) => Math.max(x, y)) - a.reduce((x, y) => Math.min(x, y)) : null;
+  }).filter((x) => x !== null));
+  push("throughput", "session_duration_p50_ms", quantile(sessionDur, 0.5), "ms", sessionDur.length);
+  const sinceKeys = new Set(sinceSessions.keys());
+  let crSum = 0;
+  let inSum = 0;
+  let respN = 0;
+  const sinceCtx = [];
+  const sinceWeight = /* @__PURE__ */ new Map();
+  for (const k of respKeys) {
+    const r = state.responses.get(k);
+    if (!sinceKeys.has(r[6])) continue;
+    respN++;
+    crSum += r[3];
+    inSum += r[0] + r[1] + r[2] + r[3];
+    addTo(sinceWeight, r[5], r.slice(0, 5));
+    if (!r[7]) sinceCtx.push(r[0] + r[1] + r[2] + r[3]);
+  }
+  push("cost_efficiency", "cache_hit_ratio", inSum ? r4(crSum / inSum) : NaN, "ratio", respN);
+  push("cost_efficiency", "weighted_tokens_per_session", r1(bucketOut(sinceWeight).bucket.weighted / n), "tokens", n);
+  const sc = sortNum(sinceCtx);
+  push("context_efficiency", "context_p90_tokens", quantile(sc, 0.9), "tokens", sc.length);
+  push("context_efficiency", "compactions_per_session", r4(fsum(sinceFiles, "compactions") / n), "per_session", n);
+  const gaps = sortNum(sinceFiles.flatMap((f) => f.openGap !== null ? [...f.gaps, f.openGap] : f.gaps));
+  push("autonomy", "tool_calls_between_prompts_p50", quantile(gaps, 0.5), "count", gaps.length);
+  push("autonomy", "human_prompts_per_session", r4(fsum(sinceFiles, "humanPrompts") / n), "per_session", n);
+  push("verification_gate_strength", "hook_blocks_per_session", r4(fsum(sinceFiles, "hookBlocks") / n), "per_session", n);
+  base.axisMetrics = metrics;
+  info.samples = { sessions: n, tool_calls_all: allTool, tool_calls_main: mainTool };
+  info.sinceSessions = n;
+  if (skippedRatio > 0.05) {
+    base.status = "partial";
+    base.reason = "session_lines_skipped";
+  }
+  if (!attributed.length) base.reason = base.reason ?? "no_attributed_sessions";
+  return { sessions: base, info };
+}
+function analysisWindowTokens(state, env, startMs, endMs) {
+  const attr = withSubIndex(resolveAttribution(state, env));
+  const parts = /* @__PURE__ */ new Map();
+  let n = 0;
+  for (const k of [...state.responses.keys()].sort(compareCodeUnits)) {
+    const r = state.responses.get(k);
+    if (r[7] || r[8] < startMs || r[8] > endMs) continue;
+    const loc = responseLocation(r, attr);
+    if (loc !== "direct" && loc !== "worker") continue;
+    const t = parts.get(r[5]) ?? zero5();
+    add5(t, r.slice(0, 5));
+    parts.set(r[5], t);
+    n++;
+  }
+  return n ? bucketOut(parts).bucket : null;
 }
 
 // src/rubric.mjs
@@ -2102,12 +3445,50 @@ function computeAxes(col, { scope }) {
     };
   });
 }
-function computeMaturity(axes, sessions) {
+function computeMaturity(axes, sessions, info = {}) {
+  const usable = sessions.status === "available" || sessions.status === "partial";
   const blocked = sessions.status === "disabled" ? "sessions_disabled" : sessions.reason ?? "no_session_logs";
+  const samples = info.samples ?? {};
+  const metric = (id) => sessions.axisMetrics.find((x) => x.metricId === id);
   for (const a of axes) {
     const m = MATURITY_RULES[a.axis];
-    a.maturity = m.measurable ? { state: "predicted", measurable: true, requirement: { unit: m.unit, required: m.required, heuristic: true }, current: null, progress: null, blockedReason: blocked } : { state: "predicted", measurable: false, requirement: null, current: null, progress: null, blockedReason: m.blockedReason };
     delete a._measurable;
+    if (!m.measurable) {
+      a.maturity = { state: "predicted", measurable: false, requirement: null, current: null, progress: null, blockedReason: m.blockedReason };
+      continue;
+    }
+    const requirement = { unit: m.unit, required: m.required, heuristic: true };
+    if (!usable) {
+      a.maturity = { state: "predicted", measurable: true, requirement, current: null, progress: null, blockedReason: blocked };
+      continue;
+    }
+    const current = m.unit === "sessions" ? samples.sessions ?? 0 : a.axis === "execution_stability" ? samples.tool_calls_all ?? 0 : samples.tool_calls_main ?? 0;
+    const progress = roundHalfEven(Math.min(1, current / m.required), 4);
+    const rule = BAND_RULES[a.axis];
+    const main2 = rule && metric(rule.metric);
+    if (current < m.required || !main2) {
+      a.maturity = { state: "predicted", measurable: true, requirement, current, progress, blockedReason: current < m.required ? "insufficient_samples" : "metric_unavailable" };
+      continue;
+    }
+    const values = Object.fromEntries(sessions.axisMetrics.filter((x) => x.axis === a.axis).map((x) => [x.metricId, x.value]));
+    const band = rule.band(main2.value, values);
+    const used = [main2, ...a.axis === "context_efficiency" && metric("compactions_per_session") ? [metric("compactions_per_session")] : []];
+    a.maturity = { state: "measured", measurable: true, requirement, current, progress, blockedReason: null };
+    a.measured = {
+      band,
+      bandRuleId: rule.ruleId,
+      heuristic: true,
+      metrics: used.map((x) => ({ metricId: x.metricId, value: x.value, unit: x.unit })),
+      predictedLevel: a.level,
+      deltaFromPredicted: a.level === null ? null : band - a.level,
+      sampleSize: current
+    };
+    const narrow = current >= 2 * m.required;
+    a.range = {
+      min: narrow ? band : Math.max(0, band - 1),
+      max: narrow ? band : Math.min(3, band + 1),
+      reasonCodes: narrow ? ["measured_band"] : ["measured_band", "sample_below_2x_requirement"]
+    };
   }
   return axes;
 }
@@ -2181,155 +3562,51 @@ function knowledgeBaseKeys(col) {
   return [...keys].sort(compareCodeUnits);
 }
 
-// src/sessions.mjs
-var SESSIONS_NOT_IMPLEMENTED = "session_aggregation_not_implemented";
-function aggregateSessions({ disabled = false } = {}) {
+// src/session-aggregate.mjs
+import path6 from "path";
+var COUNTS0 = { filesScanned: 0, linesRead: 0, linesSkipped: 0, skippedRatio: 0, sessionsAttributed: 0, sessionsUnattributed: 0, incremental: false, configSince: null };
+function emptySessions(status, reason) {
   return {
-    status: disabled ? "disabled" : "unavailable",
-    reason: disabled ? null : SESSIONS_NOT_IMPLEMENTED,
+    status,
+    reason,
     clientVersions: null,
     window: null,
-    coverage: {
-      filesScanned: 0,
-      linesRead: 0,
-      linesSkipped: 0,
-      skippedRatio: 0,
-      sessionsAttributed: 0,
-      sessionsUnattributed: 0,
-      incremental: false,
-      configSince: null
-    },
+    coverage: { ...COUNTS0 },
     dedup: { assistantLines: 0, uniqueResponses: 0, excludedSynthetic: 0, excludedApiError: 0 },
     tokens: null,
     contextPerTurn: null,
     axisMetrics: []
   };
 }
-
-// src/store.mjs
-import {
-  closeSync,
-  existsSync as existsSync3,
-  mkdirSync,
-  openSync,
-  readFileSync as readFileSync3,
-  readdirSync as readdirSync3,
-  renameSync,
-  rmSync,
-  statSync as statSync3,
-  writeFileSync,
-  writeSync
-} from "fs";
-import path4 from "path";
-var EngineError = class extends Error {
-  constructor(code, message) {
-    super(message);
-    this.exitCode = code;
-  }
-};
-function atomicWrite(file, content) {
-  mkdirSync(path4.dirname(file), { recursive: true });
-  const tmp = `${file}.tmp-${process.pid}`;
-  writeFileSync(tmp, content);
-  renameSync(tmp, file);
-}
-var writeJson = (file, value) => atomicWrite(file, stableStringify(value));
-var readJson = (file) => JSON.parse(readFileSync3(file, "utf8"));
-function ensureOutDir(out) {
-  const fresh = !existsSync3(out);
-  mkdirSync(out, { recursive: true });
-  if (fresh || !existsSync3(path4.join(out, ".gitignore"))) atomicWrite(path4.join(out, ".gitignore"), "*\n");
-}
-function pidAlive(pid) {
+var NO_INFO = { unknownModels: false, estimatedShare: 0, samples: {}, sinceSessions: 0 };
+function aggregateSessions({ disabled = false, configDir, projectRoot, out, configSinceMs: configSinceMs2 = null, fullRescan = false, nowMs, log, stagingDir = null, previousWindow = null }) {
+  if (disabled) return { sessions: emptySessions("disabled", null), info: NO_INFO, previousTokens: null };
   try {
-    process.kill(pid, 0);
-    return true;
+    const cfg = readSessionConfig(out);
+    if (!cfg.enabled) return { sessions: emptySessions("disabled", null), info: NO_INFO, previousTokens: null };
+    const { main: main2, roots } = resolveMainRoot(projectRoot);
+    const env = { roots, cfg, mainRoot: main2 };
+    const loaded = fullRescan ? { state: loadState("", h16(main2)).state, had: false } : loadState(stateDir(out), h16(main2));
+    const { state } = loaded;
+    const scan = scanTranscripts({ configDir, state, env, fullRescan, log });
+    pruneResponses(state, env, nowMs);
+    const { sessions, info } = summarize(state, env, { configSinceMs: configSinceMs2, incremental: loaded.had && !fullRescan, scan });
+    if (loaded.corrupted) info.stateCorrupted = true;
+    if (scan.unreadable) info.unreadableFiles = scan.unreadable;
+    if (stagingDir) writeState(stagingDir, state);
+    const previousTokens = previousWindow && sessions.status !== "unavailable" ? analysisWindowTokens(state, env, previousWindow.startMs, previousWindow.endMs) : null;
+    return { sessions, info, previousTokens };
   } catch (err) {
-    return err.code === "EPERM";
+    if (process.env.HARNESS_LENS_DEBUG) process.stderr.write(`${err == null ? void 0 : err.stack}
+`);
+    return { sessions: emptySessions("unavailable", "session_aggregation_failed"), info: NO_INFO, previousTokens: null };
   }
 }
-function acquireLock(out, now) {
-  const file = path4.join(out, "lock");
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const fd = openSync(file, "wx");
-      writeSync(fd, JSON.stringify({ pid: process.pid, startedAt: (/* @__PURE__ */ new Date()).toISOString() }));
-      closeSync(fd);
-      return () => rmSync(file, { force: true });
-    } catch (err) {
-      if (err.code !== "EEXIST") throw new EngineError(11, "결과 디렉터리에 쓸 수 없습니다.");
-      let stale = true;
-      try {
-        const info = JSON.parse(readFileSync3(file, "utf8"));
-        const age = Date.now() - Date.parse(info.startedAt);
-        stale = !pidAlive(info.pid) || !(age < 10 * 60 * 1e3);
-      } catch {
-        stale = statSync3(file).mtimeMs < Date.now() - 10 * 60 * 1e3;
-      }
-      if (!stale) throw new EngineError(11, "다른 Harness Lens 분석이 진행 중입니다. 끝난 뒤 다시 시도하세요.");
-      rmSync(file, { force: true });
-    }
-  }
-  throw new EngineError(11, "결과 디렉터리 잠금을 얻지 못했습니다.");
-}
-var runDir = (out, runId) => path4.join(out, "runs", runId);
-var snapshotDir = (out, id) => path4.join(out, "snapshots", id);
-function readIndex(out) {
-  const file = path4.join(out, "snapshots", "index.json");
-  return existsSync3(file) ? readJson(file) : [];
-}
-function latestSnapshotId(out) {
-  const file = path4.join(out, "latest.json");
-  if (existsSync3(file)) return readJson(file).snapshotId;
-  const idx = readIndex(out);
-  return idx.length ? idx[idx.length - 1].snapshotId : null;
-}
-function loadSnapshot(out, id) {
-  const file = path4.join(snapshotDir(out, id), "analysis.json");
-  if (!existsSync3(file)) throw new EngineError(41, `스냅샷 ${id}이 없습니다.`);
-  return readJson(file);
-}
-function commitSnapshot(out, analysis) {
-  const id = analysis.meta.snapshotId;
-  const finalDir = snapshotDir(out, id);
-  if (existsSync3(finalDir)) throw new EngineError(40, `스냅샷 ${id}이 이미 있습니다.`);
-  const staging = path4.join(out, "snapshots", `.staging-${id}`);
-  try {
-    rmSync(staging, { recursive: true, force: true });
-    mkdirSync(staging, { recursive: true });
-    writeFileSync(path4.join(staging, "analysis.json"), stableStringify(analysis));
-    renameSync(staging, finalDir);
-    const index = readIndex(out).filter((e) => e.snapshotId !== id);
-    index.push({
-      snapshotId: id,
-      analyzedAt: analysis.meta.analyzedAt,
-      configurationHash: analysis.meta.configurationHash,
-      schemaVersion: analysis.schemaVersion,
-      rubricVersion: analysis.rubricVersion,
-      scope: analysis.meta.scope.preset
-    });
-    index.sort((a, b) => compareCodeUnits(a.analyzedAt + a.snapshotId, b.analyzedAt + b.snapshotId));
-    writeJson(path4.join(out, "snapshots", "index.json"), index);
-    writeJson(path4.join(out, "latest.json"), { snapshotId: id });
-  } catch (err) {
-    rmSync(staging, { recursive: true, force: true });
-    if (err instanceof EngineError) throw err;
-    throw new EngineError(40, "스냅샷을 저장하지 못했습니다. 이전 상태를 유지합니다.");
-  }
-  return finalDir;
-}
-function pruneRuns(out, keepId) {
-  const dir = path4.join(out, "runs");
-  if (!existsSync3(dir)) return;
-  const runs = readdirSync3(dir).filter((d) => d !== keepId).sort(compareCodeUnits);
-  for (const old of runs.slice(0, Math.max(0, runs.length - (RUNS_TO_KEEP - 1)))) {
-    rmSync(path4.join(dir, old), { recursive: true, force: true });
-  }
-}
+var sessionsStagingDir = (runDirPath) => path6.join(runDirPath, "sessions.staging");
 
 // src/validate.mjs
-import { existsSync as existsSync4, readFileSync as readFileSync4 } from "fs";
-import path5 from "path";
+import { existsSync as existsSync5, readFileSync as readFileSync5 } from "fs";
+import path7 from "path";
 
 // src/checks.mjs
 var AXES2 = [
@@ -2468,7 +3745,8 @@ function runSemanticChecks(doc) {
       if (m.requirement && m.current !== null) {
         const expected = Math.min(1, m.current / m.requirement.required);
         if (Math.abs(expected - m.progress) > 5e-3) maturity.push(`${a.axis} 진행도 ${m.progress} ≠ ${expected.toFixed(3)}`);
-        if (m.state === "measured" !== m.current >= m.requirement.required) maturity.push(`${a.axis} 상태와 진행도 불일치`);
+        if (m.state === "measured" && m.current < m.requirement.required) maturity.push(`${a.axis} 상태와 진행도 불일치`);
+        if (m.state === "predicted" && m.current >= m.requirement.required && !m.blockedReason) maturity.push(`${a.axis} 상태와 진행도 불일치`);
       }
       if (a.measured && a.measured.predictedLevel !== null && a.measured.deltaFromPredicted !== a.measured.band - a.measured.predictedLevel) {
         maturity.push(`${a.axis} deltaFromPredicted 계산 불일치`);
@@ -2484,7 +3762,7 @@ function runSemanticChecks(doc) {
       if (!bucketsMatch(tokens.total, sumBuckets(tokens.byLocation.map((l) => l.tokens)))) problems.push("위치별 합 ≠ total");
       if (!bucketsMatch(tokens.total, sumBuckets(tokens.byModel.map((m) => m.tokens)))) problems.push("모델별 합 ≠ total");
       const share = tokens.byLocation.reduce((s, l) => s + l.weightedShare, 0);
-      if (Math.abs(share - 1) > 5e-3) problems.push(`위치별 비중 합 ${share}`);
+      if (tokens.total.weighted > 0 ? Math.abs(share - 1) > 5e-3 : share !== 0) problems.push(`위치별 비중 합 ${share}`);
     }
     record("V-TOKEN-SUM", problems);
   }
@@ -2557,76 +3835,76 @@ function createValidator(rootSchema) {
     }
     return node;
   }
-  function check(schema, value, path7) {
+  function check(schema, value, path9) {
     if (schema === true) return [];
-    if (schema === false) return [`${path7}: 허용되지 않는 값`];
+    if (schema === false) return [`${path9}: 허용되지 않는 값`];
     const errors = [];
     for (const key of Object.keys(schema)) {
       if (!ANNOTATIONS.has(key) && !SUPPORTED.has(key)) {
-        throw new Error(`지원하지 않는 스키마 키워드 '${key}' (${path7})`);
+        throw new Error(`지원하지 않는 스키마 키워드 '${key}' (${path9})`);
       }
     }
-    if (schema.$ref) errors.push(...check(resolve(schema.$ref), value, path7));
+    if (schema.$ref) errors.push(...check(resolve(schema.$ref), value, path9));
     if (schema.type !== void 0) {
       const types = Array.isArray(schema.type) ? schema.type : [schema.type];
       if (!types.some((t2) => matchesType(value, t2))) {
-        return [...errors, `${path7}: 타입 ${types.join("|")} 필요, 실제 ${typeOf(value)}`];
+        return [...errors, `${path9}: 타입 ${types.join("|")} 필요, 실제 ${typeOf(value)}`];
       }
     }
     if (schema.enum && !schema.enum.some((e) => deepEqual(e, value))) {
-      errors.push(`${path7}: ${JSON.stringify(value)}는 enum ${JSON.stringify(schema.enum)}에 없음`);
+      errors.push(`${path9}: ${JSON.stringify(value)}는 enum ${JSON.stringify(schema.enum)}에 없음`);
     }
     if ("const" in schema && !deepEqual(schema.const, value)) {
-      errors.push(`${path7}: const ${JSON.stringify(schema.const)} 필요`);
+      errors.push(`${path9}: const ${JSON.stringify(schema.const)} 필요`);
     }
     const t = typeOf(value);
     if (t === "string") {
       const len = [...value].length;
-      if (schema.minLength !== void 0 && len < schema.minLength) errors.push(`${path7}: 길이 ${len} < ${schema.minLength}`);
-      if (schema.maxLength !== void 0 && len > schema.maxLength) errors.push(`${path7}: 길이 ${len} > ${schema.maxLength}`);
-      if (schema.pattern !== void 0 && !regex(schema.pattern).test(value)) errors.push(`${path7}: 패턴 ${schema.pattern} 불일치`);
-      if (schema.format === "date-time" && !DATE_TIME.test(value)) errors.push(`${path7}: date-time 형식 아님`);
+      if (schema.minLength !== void 0 && len < schema.minLength) errors.push(`${path9}: 길이 ${len} < ${schema.minLength}`);
+      if (schema.maxLength !== void 0 && len > schema.maxLength) errors.push(`${path9}: 길이 ${len} > ${schema.maxLength}`);
+      if (schema.pattern !== void 0 && !regex(schema.pattern).test(value)) errors.push(`${path9}: 패턴 ${schema.pattern} 불일치`);
+      if (schema.format === "date-time" && !DATE_TIME.test(value)) errors.push(`${path9}: date-time 형식 아님`);
     }
     if (t === "integer" || t === "number") {
-      if (schema.minimum !== void 0 && value < schema.minimum) errors.push(`${path7}: ${value} < ${schema.minimum}`);
-      if (schema.maximum !== void 0 && value > schema.maximum) errors.push(`${path7}: ${value} > ${schema.maximum}`);
+      if (schema.minimum !== void 0 && value < schema.minimum) errors.push(`${path9}: ${value} < ${schema.minimum}`);
+      if (schema.maximum !== void 0 && value > schema.maximum) errors.push(`${path9}: ${value} > ${schema.maximum}`);
     }
     if (t === "array") {
-      if (schema.minItems !== void 0 && value.length < schema.minItems) errors.push(`${path7}: 항목 ${value.length} < ${schema.minItems}`);
-      if (schema.maxItems !== void 0 && value.length > schema.maxItems) errors.push(`${path7}: 항목 ${value.length} > ${schema.maxItems}`);
+      if (schema.minItems !== void 0 && value.length < schema.minItems) errors.push(`${path9}: 항목 ${value.length} < ${schema.minItems}`);
+      if (schema.maxItems !== void 0 && value.length > schema.maxItems) errors.push(`${path9}: 항목 ${value.length} > ${schema.maxItems}`);
       if (schema.uniqueItems) {
         const seen = new Set(value.map((v) => JSON.stringify(canonical2(v))));
-        if (seen.size !== value.length) errors.push(`${path7}: 중복 항목`);
+        if (seen.size !== value.length) errors.push(`${path9}: 중복 항목`);
       }
       const prefix = schema.prefixItems ?? [];
       prefix.forEach((s, i) => {
-        if (i < value.length) errors.push(...check(s, value[i], `${path7}[${i}]`));
+        if (i < value.length) errors.push(...check(s, value[i], `${path9}[${i}]`));
       });
       if (schema.items !== void 0) {
-        for (let i = prefix.length; i < value.length; i++) errors.push(...check(schema.items, value[i], `${path7}[${i}]`));
+        for (let i = prefix.length; i < value.length; i++) errors.push(...check(schema.items, value[i], `${path9}[${i}]`));
       }
     }
     if (t === "object") {
       for (const key of schema.required ?? []) {
-        if (!(key in value)) errors.push(`${path7}: 필수 속성 '${key}' 없음`);
+        if (!(key in value)) errors.push(`${path9}: 필수 속성 '${key}' 없음`);
       }
       const props = schema.properties ?? {};
       for (const [key, v] of Object.entries(value)) {
-        if (key in props) errors.push(...check(props[key], v, `${path7}.${key}`));
-        else if (schema.additionalProperties !== void 0) errors.push(...check(schema.additionalProperties, v, `${path7}.${key}`));
+        if (key in props) errors.push(...check(props[key], v, `${path9}.${key}`));
+        else if (schema.additionalProperties !== void 0) errors.push(...check(schema.additionalProperties, v, `${path9}.${key}`));
       }
     }
-    for (const s of schema.allOf ?? []) errors.push(...check(s, value, path7));
-    if (schema.anyOf && !schema.anyOf.some((s) => check(s, value, path7).length === 0)) {
-      errors.push(`${path7}: anyOf 중 일치하는 스키마 없음`);
+    for (const s of schema.allOf ?? []) errors.push(...check(s, value, path9));
+    if (schema.anyOf && !schema.anyOf.some((s) => check(s, value, path9).length === 0)) {
+      errors.push(`${path9}: anyOf 중 일치하는 스키마 없음`);
     }
-    if (schema.oneOf && schema.oneOf.filter((s) => check(s, value, path7).length === 0).length !== 1) {
-      errors.push(`${path7}: oneOf 중 정확히 하나가 일치해야 함`);
+    if (schema.oneOf && schema.oneOf.filter((s) => check(s, value, path9).length === 0).length !== 1) {
+      errors.push(`${path9}: oneOf 중 정확히 하나가 일치해야 함`);
     }
-    if (schema.not && check(schema.not, value, path7).length === 0) errors.push(`${path7}: not 조건 위반`);
+    if (schema.not && check(schema.not, value, path9).length === 0) errors.push(`${path9}: not 조건 위반`);
     if (schema.if !== void 0) {
-      const branch = check(schema.if, value, path7).length === 0 ? schema.then : schema.else;
-      if (branch !== void 0) errors.push(...check(branch, value, path7));
+      const branch = check(schema.if, value, path9).length === 0 ? schema.then : schema.else;
+      if (branch !== void 0) errors.push(...check(branch, value, path9));
     }
     return errors;
   }
@@ -2660,9 +3938,9 @@ function validateDocument(doc, schema = loadSchema()) {
 }
 function validateRun({ out, runId, agent, model, now }) {
   const dir = runDir(out, runId);
-  if (!existsSync4(path5.join(dir, "run.json"))) throw new EngineError(41, `run ${runId}이 없습니다.`);
-  const run = readJson(path5.join(dir, "run.json"));
-  const draft = readJson(path5.join(dir, "draft.json"));
+  if (!existsSync5(path7.join(dir, "run.json"))) throw new EngineError(41, `run ${runId}이 없습니다.`);
+  const run = readJson(path7.join(dir, "run.json"));
+  const draft = readJson(path7.join(dir, "draft.json"));
   if (draftHash(draft) !== run.draftHash) {
     throw new EngineError(31, "V-ENGINE-INTEGRITY: draft.json이 prepare 산출과 다릅니다. prepare부터 다시 실행하세요.");
   }
@@ -2674,12 +3952,12 @@ function validateRun({ out, runId, agent, model, now }) {
     { checkId: "V-ENGINE-INTEGRITY", status: "pass", message: null }
   ];
   let interpretation = null;
-  const interpFile = path5.join(dir, "interpretation.json");
-  if (!existsSync4(interpFile)) {
+  const interpFile = path7.join(dir, "interpretation.json");
+  if (!existsSync5(interpFile)) {
     checks.push({ checkId: "V-SCHEMA", status: "fail", message: "interpretation.json이 없습니다." });
   } else {
     try {
-      interpretation = JSON.parse(readFileSync4(interpFile, "utf8"));
+      interpretation = JSON.parse(readFileSync5(interpFile, "utf8"));
     } catch {
       checks.push({ checkId: "V-SCHEMA", status: "fail", message: "interpretation.json이 올바른 JSON이 아닙니다." });
     }
@@ -2697,9 +3975,9 @@ function validateRun({ out, runId, agent, model, now }) {
   const status = checks.some((c) => c.status === "fail") ? "invalid" : "valid";
   const validation = { status, validatorVersion: VALIDATOR_VERSION, checkedAt: now, checks };
   const analysis = { ...doc, validation };
-  writeJson(path5.join(dir, "analysis.json"), analysis);
-  writeJson(path5.join(dir, "validation.json"), validation);
-  writeJson(path5.join(dir, "run.json"), { ...run, status: status === "valid" ? "validated" : "failed" });
+  writeJson(path7.join(dir, "analysis.json"), analysis);
+  writeJson(path7.join(dir, "validation.json"), validation);
+  writeJson(path7.join(dir, "run.json"), { ...run, status: status === "valid" ? "validated" : "failed" });
   return { status, checks, analysis };
 }
 
@@ -2746,21 +4024,21 @@ var Ctx = class {
     if (this._root) return this._root;
     let root;
     if (this.opts.project) {
-      root = path6.resolve(this.opts.project);
+      root = path8.resolve(this.opts.project);
     } else {
       let dir = process.cwd();
       for (; ; ) {
-        if (existsSync5(path6.join(dir, ".git"))) {
+        if (existsSync6(path8.join(dir, ".git"))) {
           root = dir;
           break;
         }
-        const up = path6.dirname(dir);
+        const up = path8.dirname(dir);
         if (up === dir) break;
         dir = up;
       }
     }
     try {
-      if (!root || !statSync4(root).isDirectory()) throw new Error("not dir");
+      if (!root || !statSync5(root).isDirectory()) throw new Error("not dir");
       accessSync(root, fsc.R_OK);
     } catch {
       throw new EngineError(EXIT.NO_PROJECT, "프로젝트 루트를 찾을 수 없거나 읽을 수 없습니다. --project로 지정하세요.");
@@ -2769,13 +4047,13 @@ var Ctx = class {
     return root;
   }
   get out() {
-    return path6.resolve(this.opts.out ?? path6.join(this.projectRoot, ".harness-lens"));
+    return path8.resolve(this.opts.out ?? path8.join(this.projectRoot, ".harness-lens"));
   }
   get scope() {
     return this.opts.scope ?? "project";
   }
   get configDir() {
-    return path6.resolve(this.opts["config-dir"] ?? process.env.CLAUDE_CONFIG_DIR ?? path6.join(homedir3(), ".claude"));
+    return path8.resolve(this.opts["config-dir"] ?? process.env.CLAUDE_CONFIG_DIR ?? path8.join(homedir4(), ".claude"));
   }
 };
 function checkRuntime(ctx) {
@@ -2783,7 +4061,7 @@ function checkRuntime(ctx) {
   if (major < MIN_NODE_MAJOR) return { ok: false, code: "node_too_old", message: NODE_MESSAGE };
   if (!SUPPORTED_PLATFORMS.includes(process.platform)) return { ok: false, code: "platform_unsupported", message: `지원하지 않는 플랫폼입니다: ${process.platform}` };
   let dir = ctx.out;
-  while (!existsSync5(dir)) dir = path6.dirname(dir);
+  while (!existsSync6(dir)) dir = path8.dirname(dir);
   try {
     accessSync(dir, fsc.W_OK);
   } catch {
@@ -2795,10 +4073,30 @@ function requireRuntime(ctx) {
   const r = ctx.time("check-runtime", () => checkRuntime(ctx));
   if (!r.ok) throw new EngineError(r.exit ?? EXIT.RUNTIME, r.message);
 }
-function engineLimitations(col, ctx, sessions, extra = []) {
-  const out = [{ code: "static_analysis_only", message: "정적 구성만 분석했습니다. 실제 성능·비용 절감을 확정하지 않으며 수준은 구조적 지원 수준입니다." }];
-  if (sessions.status === "disabled") out.push({ code: "sessions_disabled", message: "세션 기록 집계를 껐습니다(--no-sessions). 모든 축이 구성 기반 예측입니다." });
-  else if (sessions.reason === SESSIONS_NOT_IMPLEMENTED) out.push({ code: SESSIONS_NOT_IMPLEMENTED, message: "세션 기록 실측 집계는 아직 구현되지 않았습니다(다음 단계). 모든 축이 구성 기반 예측이고 토큰 지표는 미확인입니다." });
+var SESSION_REASON = {
+  no_session_logs: "세션 기록이 없습니다",
+  session_format_unsupported: "세션 기록 형식을 해석하지 못했습니다(지원하지 않는 형식 또는 버전)",
+  session_aggregation_failed: "세션 기록 집계 중 오류가 났습니다",
+  no_attributed_sessions: "이 프로젝트에 귀속된 세션이 없습니다",
+  session_lines_skipped: "해석하지 못한 줄이 5%를 넘었습니다"
+};
+function engineLimitations(col, ctx, sessions, info, extra = []) {
+  var _a;
+  const usable = sessions.status === "available" || sessions.status === "partial";
+  const out = [];
+  if (!usable || !sessions.coverage.sessionsAttributed) out.push({ code: "static_analysis_only", message: "정적 구성만 분석했습니다. 실제 성능·비용 절감을 확정하지 않으며 수준은 구조적 지원 수준입니다." });
+  else out.push({ code: "session_measures_correlational", message: `세션 기록을 숫자로만 집계해 일부 축을 실측했습니다(귀속 세션 ${sessions.coverage.sessionsAttributed}개). 실측 대역의 임계값은 휴리스틱이고, 구성과 지표의 관계는 상관관계일 뿐 인과가 아닙니다.` });
+  if (sessions.status === "disabled") out.push({ code: "sessions_disabled", message: "세션 기록 집계를 껐습니다(--no-sessions 또는 config.json). 모든 축이 구성 기반 예측입니다." });
+  else if (!usable) out.push({ code: sessions.reason ?? "no_session_logs", message: `세션 기록 실측: ${SESSION_REASON[sessions.reason] ?? sessions.reason}. 모든 축이 구성 기반 예측이고 토큰 지표는 미확인입니다.` });
+  else {
+    if (sessions.status === "partial") out.push({ code: "session_lines_skipped", message: `세션 기록 줄의 ${(sessions.coverage.skippedRatio * 100).toFixed(1)}%를 해석하지 못해 건너뛰었습니다(모르는 레코드 타입 포함). 형식이 바뀌었을 수 있습니다.` });
+    if (sessions.tokens) out.push({ code: "weighted_not_a_bill", message: `환산값은 공개 가격표(${sessions.tokens.weighting.pricingTableVersion}) 기준 ${sessions.tokens.weighting.referenceModel} 새 입력 토큰 환산 상대값이며 청구액이 아닙니다.` });
+    if (info.unknownModels) out.push({ code: "unknown_model_pricing", message: "가격표에 없는 모델의 토큰은 환산값에서 뺐습니다(토큰 수에는 포함)." });
+    if (sessions.coverage.sessionsUnattributed) out.push({ code: "unattributed_sessions", message: `귀속이 불확실한 세션 ${sessions.coverage.sessionsUnattributed}개(봇 ${((_a = sessions.tokens) == null ? void 0 : _a.unattributed.botSessions) ?? 0}개)는 합계에 넣지 않았습니다.` });
+    if (info.estimatedShare > 0) out.push({ code: "estimated_attribution_included", message: `합계에 추정 귀속(삭제된 워크트리 추정·봇 자동 귀속) 환산값 ${(info.estimatedShare * 100).toFixed(1)}%가 포함돼 있습니다.` });
+    if (info.unreadableFiles) out.push({ code: "session_files_unreadable", message: `세션 기록 파일 ${info.unreadableFiles}개를 읽지 못했습니다.` });
+    if (info.stateCorrupted) out.push({ code: "session_state_rebuilt", message: "세션 누적 집계 파일이 손상돼 처음부터 다시 만들었습니다. 원본 기록이 정리된 구간은 빠졌을 수 있습니다." });
+  }
   if (ctx.scope === "project") {
     const unscoped = col.sources.filter((s) => s.reason === "user_scope_not_collected" || s.reason === "managed_settings_not_collected");
     out.push(unscoped.length ? { code: "user_scope_not_collected", message: `수집하지 않은 사용자·관리형 설정 파일 ${unscoped.length}개가 있습니다. 실제 유효 설정은 다를 수 있으며 가능 범위로 표시합니다.` } : { code: "user_scope_absent", message: "사용자·관리형 설정 파일이 없어 가능 범위를 프로젝트 근거로만 정했습니다(파일 존재만 확인하고 열지 않았습니다)." });
@@ -2810,6 +4108,23 @@ function engineLimitations(col, ctx, sessions, extra = []) {
   if (col.sources.some((s) => s.status === "skipped_sensitive")) out.push({ code: "sensitive_files_skipped", message: "민감한 이름의 파일(.env, 키 파일 등)은 열지 않았습니다." });
   return [...out, ...extra];
 }
+function configSinceMs(ctx, col) {
+  const nowMs = Date.parse(ctx.now);
+  let best = null;
+  for (const src of col.sources) {
+    if (src.status !== "read" || src.origin !== "project_shared" && src.origin !== "project_local") continue;
+    try {
+      const m = Math.floor(statSync5(path8.join(ctx.projectRoot, src.path)).mtimeMs / 1e3) * 1e3;
+      if (best === null || m > best) best = m;
+    } catch {
+    }
+  }
+  const idx = readIndex(ctx.out);
+  let streak = null;
+  for (let i = idx.length - 1; i >= 0 && idx[i].configurationHash === col.configurationHash; i--) streak = Date.parse(idx[i].analyzedAt);
+  const cands = [best, streak].filter((x) => x !== null && Number.isFinite(x));
+  return cands.length ? Math.min(nowMs, ...cands) : null;
+}
 function runCollect(ctx) {
   return ctx.time("collect", () => {
     const col = collect({ projectRoot: ctx.projectRoot, scope: ctx.scope, configDir: ctx.configDir, skillDir: skillDir() });
@@ -2819,7 +4134,7 @@ function runCollect(ctx) {
     const runId = `${compactUtc(ctx.now)}-${col.configurationHash.slice(7, 15)}`;
     let rootReal = ctx.projectRoot;
     try {
-      rootReal = realpathSync3(rootReal);
+      rootReal = realpathSync4(rootReal);
     } catch {
     }
     const meta = {
@@ -2828,7 +4143,7 @@ function runCollect(ctx) {
       analysisType: "static",
       scope: { preset: ctx.scope, sources: col.origins },
       configurationHash: col.configurationHash,
-      project: { displayName: truncate(path6.basename(rootReal) || "project", 200), rootPathHash: sha256tag(rootReal.split(path6.sep).join("/")) },
+      project: { displayName: truncate(path8.basename(rootReal) || "project", 200), rootPathHash: sha256tag(rootReal.split(path8.sep).join("/")) },
       analyzer: { agent: "unknown", model: null, modelSource: "unknown" },
       engineInfo: { version: ENGINE_VERSION, nodeVersion: process.version, platform: process.platform, sessionParserVersion: SESSION_PARSER_VERSION, pricingTableVersion: PRICING_TABLE_VERSION }
     };
@@ -2874,6 +4189,17 @@ function interpretationTemplate(axes, comparison) {
     limitations: []
   };
 }
+function previousAnalysis(prev, tokens) {
+  var _a;
+  const start = Date.parse(prev.meta.analyzedAt);
+  const end = Date.parse(((_a = prev.validation) == null ? void 0 : _a.checkedAt) ?? prev.meta.analyzedAt);
+  return {
+    snapshotId: prev.meta.snapshotId,
+    wallClockMs: Number.isFinite(end - start) && end >= start ? end - start : null,
+    llmTokens: tokens,
+    method: tokens ? "session_window" : "unknown"
+  };
+}
 function cmdPrepare(ctx) {
   const t0 = performance.now();
   requireRuntime(ctx);
@@ -2883,11 +4209,28 @@ function cmdPrepare(ctx) {
   try {
     ctx.log("Harness Lens: 구성 수집 중(읽기 전용)…");
     const c = runCollect(ctx);
-    const sessions = ctx.time("aggregate-sessions", () => aggregateSessions({ disabled: !!ctx.opts["no-sessions"] }));
-    const axes = computeMaturity(c.axes, sessions);
     const prevId = latestSnapshotId(out);
+    const prevSnap = prevId ? loadSnapshot(out, prevId) : null;
     const dir = runDir(out, c.runId);
-    rmSync2(dir, { recursive: true, force: true });
+    rmSync3(dir, { recursive: true, force: true });
+    const agg = ctx.time("aggregate-sessions", () => {
+      var _a;
+      return aggregateSessions({
+        disabled: !!ctx.opts["no-sessions"],
+        configDir: ctx.configDir,
+        projectRoot: ctx.projectRoot,
+        out,
+        configSinceMs: configSinceMs(ctx, c.col),
+        fullRescan: !!ctx.opts["full-rescan"],
+        nowMs: Date.parse(ctx.now),
+        log: (m) => ctx.log(m),
+        stagingDir: sessionsStagingDir(dir),
+        previousWindow: prevSnap ? { startMs: Date.parse(prevSnap.meta.analyzedAt), endMs: Date.parse(((_a = prevSnap.validation) == null ? void 0 : _a.checkedAt) ?? prevSnap.meta.analyzedAt) } : null
+      });
+    });
+    const { sessions } = agg;
+    const axes = computeMaturity(c.axes, sessions, agg.info);
+    if (sessions.status === "available" || sessions.status === "partial") c.meta.analysisType = "static_with_sessions";
     const rescanWarnings = [];
     const draft = {
       schemaVersion: SCHEMA_VERSION,
@@ -2901,12 +4244,12 @@ function cmdPrepare(ctx) {
         sessions,
         selfCost: null,
         comparison: null,
-        limitations: engineLimitations(c.col, ctx, sessions)
+        limitations: engineLimitations(c.col, ctx, sessions, agg.info)
       }
     };
     if (prevId) {
       ctx.log(`Harness Lens: 이전 스냅샷 ${prevId}과 비교 중…`);
-      draft.engine.comparison = ctx.time("diff", () => diffAnalyses(loadSnapshot(out, prevId), draft));
+      draft.engine.comparison = ctx.time("diff", () => diffAnalyses(prevSnap, draft));
     }
     const finishSelfCost = (inventoryTokens2) => {
       const prepareMs = Math.round(performance.now() - t0);
@@ -2915,14 +4258,14 @@ function cmdPrepare(ctx) {
         componentId: c.col.selfComponentId,
         alwaysLoadedTokens: { value: c.col.selfAlwaysLoadedTokens, method: "estimate_utf8_bytes" },
         currentRun,
-        previousAnalysis: prevId ? { snapshotId: prevId, wallClockMs: null, llmTokens: null, method: "unknown" } : null,
+        previousAnalysis: prevSnap ? previousAnalysis(prevSnap, agg.previousTokens) : null,
         budgets: [
           budget("always_loaded_tokens", c.col.selfAlwaysLoadedTokens),
           budget("background_processes", 0),
           budget("reanalysis_engine_ms", prevId ? prepareMs : null),
           budget("engine_max_rss_bytes", Math.max(...currentRun.map((r) => r.maxRssBytes))),
           budget("llm_input_inventory_tokens", inventoryTokens2),
-          budget("llm_tokens_per_analysis", null)
+          budget("llm_tokens_per_analysis", agg.previousTokens ? agg.previousTokens.freshInput + agg.previousTokens.cacheWrite + agg.previousTokens.output : null)
         ]
       };
     };
@@ -2938,7 +4281,7 @@ function cmdPrepare(ctx) {
     const inventoryTokens = Math.ceil(Buffer.byteLength(compact, "utf8") / 4);
     finishSelfCost(inventoryTokens);
     const { axes: _ignored, ...engineNoAxes } = draft.engine;
-    writeJson(path6.join(dir, "inventory.json"), {
+    writeJson(path8.join(dir, "inventory.json"), {
       meta: draft.meta,
       inventory: engineNoAxes.inventory,
       evidence: engineNoAxes.evidence,
@@ -2947,11 +4290,11 @@ function cmdPrepare(ctx) {
       limitations: draft.engine.limitations,
       knowledgeBaseKeys: c.kbKeys
     });
-    writeJson(path6.join(dir, "sessions.json"), sessions);
-    writeJson(path6.join(dir, "draft.json"), draft);
-    atomicWrite(path6.join(dir, "inventory.compact.json"), compact);
-    writeJson(path6.join(dir, "interpretation.template.json"), interpretationTemplate(axes, draft.engine.comparison));
-    writeJson(path6.join(dir, "run.json"), {
+    writeJson(path8.join(dir, "sessions.json"), sessions);
+    writeJson(path8.join(dir, "draft.json"), draft);
+    atomicWrite(path8.join(dir, "inventory.compact.json"), compact);
+    writeJson(path8.join(dir, "interpretation.template.json"), interpretationTemplate(axes, draft.engine.comparison));
+    writeJson(path8.join(dir, "run.json"), {
       runId: c.runId,
       status: "prepared",
       startedAt: ctx.now,
@@ -2970,9 +4313,9 @@ function cmdPrepare(ctx) {
     const result = {
       ok: true,
       runId: c.runId,
-      compactInventoryPath: path6.join(dir, "inventory.compact.json"),
-      interpretationTemplatePath: path6.join(dir, "interpretation.template.json"),
-      interpretationPath: path6.join(dir, "interpretation.json"),
+      compactInventoryPath: path8.join(dir, "inventory.compact.json"),
+      interpretationTemplatePath: path8.join(dir, "interpretation.template.json"),
+      interpretationPath: path8.join(dir, "interpretation.json"),
       hasComparison: draft.engine.comparison !== null,
       sessionsStatus: sessions.status,
       estimatedInventoryTokens: inventoryTokens
@@ -2988,7 +4331,7 @@ function cmdCollect(ctx) {
   requireRuntime(ctx);
   ensureOutDir(ctx.out);
   const c = runCollect(ctx);
-  writeJson(path6.join(runDir(ctx.out, c.runId), "inventory.json"), {
+  writeJson(path8.join(runDir(ctx.out, c.runId), "inventory.json"), {
     meta: c.meta,
     inventory: c.inventory,
     evidence: c.evidence,
@@ -3016,15 +4359,20 @@ function cmdValidate(ctx) {
 function cmdSnapshot(ctx) {
   var _a;
   if (!ctx.opts.run) throw new EngineError(EXIT.USAGE, "--run <runId>가 필요합니다.");
-  const file = path6.join(runDir(ctx.out, ctx.opts.run), "analysis.json");
-  if (!existsSync5(file)) throw new EngineError(EXIT.NOT_FOUND, `run ${ctx.opts.run}의 analysis.json이 없습니다. validate를 먼저 실행하세요.`);
+  const file = path8.join(runDir(ctx.out, ctx.opts.run), "analysis.json");
+  if (!existsSync6(file)) throw new EngineError(EXIT.NOT_FOUND, `run ${ctx.opts.run}의 analysis.json이 없습니다. validate를 먼저 실행하세요.`);
   const analysis = readJson(file);
   if (((_a = analysis.validation) == null ? void 0 : _a.status) !== "valid") throw new EngineError(EXIT.INVALID, "검증을 통과하지 못한 결과는 스냅샷으로 저장하지 않습니다.");
   const { value: safe } = rescanAndRedact(analysis);
   ctx.time("snapshot", () => commitSnapshot(ctx.out, safe));
-  const runFile = path6.join(runDir(ctx.out, ctx.opts.run), "run.json");
-  if (existsSync5(runFile)) writeJson(runFile, { ...readJson(runFile), status: "snapshotted" });
-  return { result: { ok: true, snapshotId: safe.meta.snapshotId, analysisPath: path6.join(snapshotDir(ctx.out, safe.meta.snapshotId), "analysis.json") } };
+  try {
+    promoteState(ctx.out, sessionsStagingDir(runDir(ctx.out, ctx.opts.run)));
+  } catch {
+    ctx.log("경고: 세션 누적 집계를 확정하지 못했습니다. 다음 분석에서 같은 구간을 다시 읽습니다.");
+  }
+  const runFile = path8.join(runDir(ctx.out, ctx.opts.run), "run.json");
+  if (existsSync6(runFile)) writeJson(runFile, { ...readJson(runFile), status: "snapshotted" });
+  return { result: { ok: true, snapshotId: safe.meta.snapshotId, analysisPath: path8.join(snapshotDir(ctx.out, safe.meta.snapshotId), "analysis.json") } };
 }
 function openInBrowser(file) {
   const target = pathToFileURL(file).href;
@@ -3046,18 +4394,18 @@ function cmdRender(ctx) {
   let html;
   try {
     html = ctx.time("render", () => renderReport(analysis));
-    atomicWrite(path6.join(snapshotDir(ctx.out, id), "report.html"), html);
-    atomicWrite(path6.join(ctx.out, "report.html"), html);
+    atomicWrite(path8.join(snapshotDir(ctx.out, id), "report.html"), html);
+    atomicWrite(path8.join(ctx.out, "report.html"), html);
   } catch {
     throw new EngineError(EXIT.RENDER, "리포트를 만들지 못했습니다. 스냅샷은 저장돼 있습니다.");
   }
-  const reportPath = path6.join(ctx.out, "report.html");
+  const reportPath = path8.join(ctx.out, "report.html");
   const opened = ctx.opts.open ? openInBrowser(reportPath) : false;
   return { result: { ok: true, snapshotId: id, reportPath, opened } };
 }
 function cmdFinalize(ctx) {
   const out = ctx.out;
-  if (!existsSync5(out)) throw new EngineError(EXIT.NOT_FOUND, "결과 디렉터리가 없습니다. prepare를 먼저 실행하세요.");
+  if (!existsSync6(out)) throw new EngineError(EXIT.NOT_FOUND, "결과 디렉터리가 없습니다. prepare를 먼저 실행하세요.");
   const unlock = acquireLock(out);
   try {
     const v = cmdValidate(ctx);
@@ -3084,12 +4432,12 @@ function resolveTo(ctx) {
   if (to && !to.startsWith("run:")) return loadSnapshot(ctx.out, to);
   let runId = to == null ? void 0 : to.slice(4);
   if (!runId) {
-    const dir = path6.join(ctx.out, "runs");
-    const runs = existsSync5(dir) ? readdirSync4(dir).filter((d) => existsSync5(path6.join(dir, d, "draft.json"))).sort() : [];
+    const dir = path8.join(ctx.out, "runs");
+    const runs = existsSync6(dir) ? readdirSync5(dir).filter((d) => existsSync6(path8.join(dir, d, "draft.json"))).sort() : [];
     runId = runs[runs.length - 1];
   }
-  const file = runId && path6.join(runDir(ctx.out, runId), "draft.json");
-  if (!file || !existsSync5(file)) throw new EngineError(EXIT.NOT_FOUND, "비교할 run이 없습니다.");
+  const file = runId && path8.join(runDir(ctx.out, runId), "draft.json");
+  if (!file || !existsSync6(file)) throw new EngineError(EXIT.NOT_FOUND, "비교할 run이 없습니다.");
   return readJson(file);
 }
 function cmdDiff(ctx) {
@@ -3104,9 +4452,19 @@ function cmdDiff(ctx) {
   return { result: { ok: true, comparison } };
 }
 function cmdAggregateSessions(ctx) {
-  const s = aggregateSessions({ disabled: !!ctx.opts["no-sessions"] });
-  ctx.log("aggregate-sessions: 세션 기록 실측 집계는 아직 구현되지 않았습니다(다음 단계). 세션 기록을 읽지 않았습니다.");
-  return { result: { ok: true, implemented: false, status: s.status, reason: s.reason } };
+  requireRuntime(ctx);
+  const agg = ctx.time("aggregate-sessions", () => aggregateSessions({
+    disabled: !!ctx.opts["no-sessions"],
+    configDir: ctx.configDir,
+    projectRoot: ctx.projectRoot,
+    out: ctx.out,
+    configSinceMs: null,
+    fullRescan: !!ctx.opts["full-rescan"],
+    nowMs: Date.parse(ctx.now),
+    log: (m) => ctx.log(m)
+  }));
+  const s = agg.sessions;
+  return { result: { ok: true, status: s.status, reason: s.reason, sessions: s } };
 }
 var HANDLERS = {
   "check-runtime": (ctx) => {
@@ -3133,7 +4491,7 @@ function main(argv) {
     const { result, exit = 0 } = HANDLERS[command](ctx);
     if (json) process.stdout.write(`${JSON.stringify(result)}
 `);
-    else if (command === "diff" || command === "check-runtime" || command === "collect") process.stdout.write(stableStringify(result));
+    else if (command === "diff" || command === "check-runtime" || command === "collect" || command === "aggregate-sessions") process.stdout.write(stableStringify(result));
     if (!json && exit === EXIT.INVALID) {
       for (const c of result.checks ?? []) process.stderr.write(`${c.checkId}: ${c.status} ${c.message ?? ""}
 `);
@@ -3144,8 +4502,8 @@ function main(argv) {
     let message = err instanceof EngineError ? err.message : "내부 오류가 발생했습니다.";
     if (code === EXIT.INTERNAL && ctx) {
       try {
-        const file = path6.join(ctx.out, ctx.opts.run ? path6.join("runs", ctx.opts.run) : "", "error.json");
-        if (existsSync5(path6.dirname(file))) {
+        const file = path8.join(ctx.out, ctx.opts.run ? path8.join("runs", ctx.opts.run) : "", "error.json");
+        if (existsSync6(path8.dirname(file))) {
           writeFileSync2(file, stableStringify({ message: String((err == null ? void 0 : err.message) ?? err).slice(0, 300), engineVersion: ENGINE_VERSION, at: ctx.now }));
           message = `${message} ${file}`;
         }

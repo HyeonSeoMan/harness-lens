@@ -157,7 +157,9 @@ export function runSemanticChecks(doc) {
       if (m.requirement && m.current !== null) {
         const expected = Math.min(1, m.current / m.requirement.required);
         if (Math.abs(expected - m.progress) > 0.005) maturity.push(`${a.axis} 진행도 ${m.progress} ≠ ${expected.toFixed(3)}`);
-        if ((m.state === 'measured') !== (m.current >= m.requirement.required)) maturity.push(`${a.axis} 상태와 진행도 불일치`);
+        // 표본이 요구량에 닿았어도 대역 지표가 없으면 예측으로 남을 수 있다(blockedReason 필수).
+        if (m.state === 'measured' && m.current < m.requirement.required) maturity.push(`${a.axis} 상태와 진행도 불일치`);
+        if (m.state === 'predicted' && m.current >= m.requirement.required && !m.blockedReason) maturity.push(`${a.axis} 상태와 진행도 불일치`);
       }
       if (a.measured && a.measured.predictedLevel !== null
         && a.measured.deltaFromPredicted !== a.measured.band - a.measured.predictedLevel) {
@@ -176,7 +178,8 @@ export function runSemanticChecks(doc) {
       if (!bucketsMatch(tokens.total, sumBuckets(tokens.byLocation.map((l) => l.tokens)))) problems.push('위치별 합 ≠ total');
       if (!bucketsMatch(tokens.total, sumBuckets(tokens.byModel.map((m) => m.tokens)))) problems.push('모델별 합 ≠ total');
       const share = tokens.byLocation.reduce((s, l) => s + l.weightedShare, 0);
-      if (Math.abs(share - 1) > 0.005) problems.push(`위치별 비중 합 ${share}`);
+      // 환산값이 0이면(귀속된 응답 없음) 비중은 모두 0이다.
+      if (tokens.total.weighted > 0 ? Math.abs(share - 1) > 0.005 : share !== 0) problems.push(`위치별 비중 합 ${share}`);
     }
     record('V-TOKEN-SUM', problems);
   }
