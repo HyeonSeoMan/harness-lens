@@ -523,14 +523,21 @@
         "coverage": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["filesScanned", "linesRead", "linesSkipped", "skippedRatio", "sessionsAttributed", "sessionsUnattributed", "incremental", "configSince"],
+          "required": ["filesScanned", "linesRead", "linesSkipped", "skippedRatio", "sessionsAttributed", "sessionsUnattributed", "sessionsExcluded", "incremental", "configSince"],
           "properties": {
             "filesScanned": { "$ref": "#/$defs/count" },
             "linesRead": { "$ref": "#/$defs/count" },
             "linesSkipped": { "$ref": "#/$defs/count" },
             "skippedRatio": { "$ref": "#/$defs/ratio" },
             "sessionsAttributed": { "$ref": "#/$defs/count" },
-            "sessionsUnattributed": { "$ref": "#/$defs/count" },
+            "sessionsUnattributed": {
+              "description": "귀속이 실제로 불확실한 메인 세션 수(cwd 없음, 매핑·언급 없는 봇). 합계에 넣지 않는다.",
+              "$ref": "#/$defs/count"
+            },
+            "sessionsExcluded": {
+              "description": "이 프로젝트와 무관한 것이 확실해 집계에서 뺀 메인 세션 수(다른 프로젝트 cwd, 다른 저장소에 매핑된 봇). 토큰은 어디에도 넣지 않는다.",
+              "$ref": "#/$defs/count"
+            },
             "incremental": { "type": "boolean" },
             "configSince": {
               "description": "현재 구성 해시가 처음 관측된 시각. 실측 진행도는 이 이후 세션만 센다.",

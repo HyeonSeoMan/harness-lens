@@ -295,7 +295,7 @@ export function reportClient() {
       ['Claude Code 버전', sess.clientVersions ? sess.clientVersions.min + ' ~ ' + sess.clientVersions.max : '미확인'],
       ['읽은 기록', '파일 ' + num(cov.filesScanned) + '개 · 줄 ' + num(cov.linesRead) + ' (건너뜀 ' + num(cov.linesSkipped) + ')' + (cov.incremental ? ' · 증분' : ' · 전체')],
       ['중복 제거', 'assistant 줄 ' + num(sess.dedup.assistantLines) + ' → 응답 ' + num(sess.dedup.uniqueResponses) + ' (합성 ' + sess.dedup.excludedSynthetic + ' · API 오류 ' + sess.dedup.excludedApiError + ' 제외)'],
-      ['귀속', '귀속 세션 ' + num(cov.sessionsAttributed) + ' · 미귀속 ' + num(cov.sessionsUnattributed) + (cov.configSince ? ' · 현재 구성 이후 ' + cov.configSince.slice(0, 10) : '')],
+      ['귀속', '귀속 세션 ' + num(cov.sessionsAttributed) + ' · 미귀속(불확실) ' + num(cov.sessionsUnattributed) + (cov.sessionsExcluded ? ' · 무관한 프로젝트 제외 ' + num(cov.sessionsExcluded) : '') + (cov.configSince ? ' · 현재 구성 이후 ' + cov.configSince.slice(0, 10) : '')],
     ].map(function (kv) { return el('div', null, [el('b', null, kv[0]), kv[1]]); })));
     sSec2.appendChild(el('p', { class: 'muted' }, '원문(대화·코드·도구 입력)은 읽어 두지 않고 숫자만 집계했습니다. 환산값은 공개 가격표(' + (sess.tokens ? sess.tokens.weighting.pricingTableVersion : '—') + ') 기준 ' + (sess.tokens ? sess.tokens.weighting.referenceModel : '') + ' 새 입력 토큰으로 환산한 상대값이며 청구액이 아닙니다.'));
     var tk = sess.tokens;
@@ -315,7 +315,8 @@ export function reportClient() {
         var meth = Object.keys(l.attribution).filter(function (k) { return l.attribution[k] > 0; }).map(function (k) { return METHOD[k] + ' ' + l.attribution[k]; }).join(', ');
         return bucketRow(LOC[l.location], l.tokens).concat([pct(l.weightedShare), num(l.sessions), meth || '—']);
       }).concat([bucketRow(el('b', null, '합계(귀속분)'), tk.total).concat(['100%', num(cov.sessionsAttributed), '']),
-        bucketRow(el('span', { class: 'muted' }, '미귀속(합계 제외)'), tk.unattributed.tokens).concat(['—', num(tk.unattributed.sessions), '봇 ' + tk.unattributed.botSessions])])));
+        bucketRow(el('span', { class: 'muted' }, '미귀속(불확실, 합계 제외)'), tk.unattributed.tokens).concat(['—', num(tk.unattributed.sessions), '봇 ' + tk.unattributed.botSessions])])));
+      if (cov.sessionsExcluded) sSec2.appendChild(el('p', { class: 'muted' }, '이 프로젝트와 무관한 세션 ' + num(cov.sessionsExcluded) + '개(다른 프로젝트 경로, 다른 저장소에 매핑된 봇)는 위 표 어디에도 넣지 않았습니다.'));
       if (tk.byModel.length) {
         sSec2.appendChild(el('details', null, [el('summary', null, '모델별'), table(TOKH, tk.byModel.map(function (m) { return bucketRow(m.model, m.tokens); }))]));
       }

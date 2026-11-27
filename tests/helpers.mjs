@@ -47,7 +47,7 @@ export function pinMtimes(dir) {
 // 합성 세션 기록 픽스처(examples/fixtures/claude-config)를 임시 설정 디렉터리로 복사하며 경로 자리표시자를 바꾼다.
 // {{PROJECT}}: 분석 대상, {{WORKTREE}}: .git 파일로 대상에 연결된 워커 워크트리, {{BOTS}}·{{WORKSPACES}}: Orca 경로 규약.
 export const SENTINELS = ['SENTINEL_TEXT_7f3a', 'SENTINEL_CODE_7f3a', 'SENTINEL_INPUT_7f3a', 'SENTINEL_RESULT_7f3a', 'SENTINEL_TITLE_7f3a', 'SENTINELID', 'SENTINELREQ'];
-export function makeSessionLogs(p, { mapping = false } = {}) {
+export function makeSessionLogs(p, { mapping = false, botMap = null } = {}) {
   const configDir = path.join(p.base, 'claude-config');
   const worktree = path.join(p.base, 'workspaces', 'sample-app', 'wt-live');
   const bots = path.join(p.base, 'bots');
@@ -68,6 +68,7 @@ export function makeSessionLogs(p, { mapping = false } = {}) {
   mkdirSync(p.out, { recursive: true });
   const config = { orcaPaths: { bots, workspaces } };
   if (mapping) config.sessionAttribution = { bots: { 'mapped-bot': p.project } };
+  if (botMap) config.sessionAttribution = { bots: { ...config.sessionAttribution?.bots, ...botMap } };
   writeFileSync(path.join(p.out, 'config.json'), JSON.stringify(config));
   return { configDir, worktree, bots, workspaces };
 }

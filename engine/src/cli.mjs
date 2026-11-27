@@ -139,6 +139,7 @@ function engineLimitations(col, ctx, sessions, info, extra = []) {
     if (sessions.tokens) out.push({ code: 'weighted_not_a_bill', message: `환산값은 공개 가격표(${sessions.tokens.weighting.pricingTableVersion}) 기준 ${sessions.tokens.weighting.referenceModel} 새 입력 토큰 환산 상대값이며 청구액이 아닙니다.` });
     if (info.unknownModels) out.push({ code: 'unknown_model_pricing', message: '가격표에 없는 모델의 토큰은 환산값에서 뺐습니다(토큰 수에는 포함).' });
     if (sessions.coverage.sessionsUnattributed) out.push({ code: 'unattributed_sessions', message: `귀속이 불확실한 세션 ${sessions.coverage.sessionsUnattributed}개(봇 ${sessions.tokens?.unattributed.botSessions ?? 0}개)는 합계에 넣지 않았습니다.` });
+    if (sessions.coverage.sessionsExcluded) out.push({ code: 'unrelated_sessions_excluded', message: `이 프로젝트와 무관한 세션 ${sessions.coverage.sessionsExcluded}개(다른 프로젝트 경로, 다른 저장소에 매핑된 봇)는 합계·미귀속 어디에도 넣지 않았습니다.` });
     if (info.estimatedShare > 0) out.push({ code: 'estimated_attribution_included', message: `합계에 추정 귀속(삭제된 워크트리 추정·봇 자동 귀속) 환산값 ${(info.estimatedShare * 100).toFixed(1)}%가 포함돼 있습니다.` });
     if (info.unreadableFiles) out.push({ code: 'session_files_unreadable', message: `세션 기록 파일 ${info.unreadableFiles}개를 읽지 못했습니다.` });
     if (info.stateCorrupted) out.push({ code: 'session_state_rebuilt', message: '세션 누적 집계 파일이 손상돼 처음부터 다시 만들었습니다. 원본 기록이 정리된 구간은 빠졌을 수 있습니다.' });
