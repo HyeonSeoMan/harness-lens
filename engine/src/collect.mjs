@@ -6,6 +6,7 @@ import path from 'node:path';
 import { MAX_IMPORT_DEPTH, SCRIPT_LIMIT_BYTES, TEXT_LIMIT_BYTES } from './constants.mjs';
 import { displayPath, listDirInside, readTextInside, resolveInside, toPosix } from './fsguard.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
+import { safetyHookTargets } from './safety-hook.mjs';
 import {
   AXIS_LABEL, REENTRY, SPEC_CMD, VERIFY_CMD, detectRole, hasAny, hasBlockMarker, narrativeAxes,
 } from './lexicon.mjs';
@@ -462,6 +463,7 @@ export class Collector {
     // ESM 이름 import는 그 이름의 export 안에 표지가 있고 스크립트가 그 이름을 호출할 때만 차단으로 본다.
     const imports = [];
     let blockVia = block ? 'script' : null;
+    const blockingCalls = [];
     if (script !== null) {
       const dir = path.posix.dirname(path.posix.normalize(scriptRel));
       for (const imp of hookImports(script)) {
@@ -472,10 +474,15 @@ export class Collector {
           ?? this.readFile(scriptRoot, cands[0], origin, SCRIPT_LIMIT_BYTES);
         if (f.status !== 'ok') continue;
         imports.push({ disp: f.disp, hash: sha256hex(f.raw) });
-        if (block) continue;
         const exported = blockingExports(f.text);
+        for (const name of imp.names ?? []) {
+          if (!exported.has(name)) continue;
+          const alias = new RegExp(`\\b${name}\\s+as\\s+(\\w+)`).exec(script)?.[1] ?? name;
+          blockingCalls.push(alias);
+        }
+        if (block) continue;
         const called = (n) => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, '\\$')}\\s*\\(`).test(script.replace(/^\s*import\b[^;]*?from\s*["'][^"']*["'];?/gm, ''));
-        const hit = imp.names === null ? exported.size > 0 : exported.has('*') || imp.names.some((n) => exported.has(n) && called(n));
+        const hit = imp.names === null ? exported.size > 0 : exported.has('*') || blockingCalls.some(called);
         if (hit) { block = true; blockVia = f.disp; }
       }
     }
@@ -485,6 +492,7 @@ export class Collector {
     const matchers = (matcher ?? '').split('|').map((m) => m.trim()).filter(Boolean);
     const writeEdit = matchers.some((m) => /^(Write|Edit|MultiEdit)$/.test(m));
     const highCostOnly = matchers.length > 0 && matchers.every((m) => HIGH_COST_TOOLS.has(m));
+    const safetyTargets = block ? safetyHookTargets({ event, matcher, script, blockingCalls }) : [];
 
     let primaryAxis = null;
     let ruleIds = [];
@@ -494,7 +502,7 @@ export class Collector {
         if (spec && (event === 'UserPromptSubmit' || writeEdit)) { primaryAxis = 'spec_clarity'; ruleIds = ['SC-L3-01']; }
         else if (verify && event === 'PreToolUse') { primaryAxis = 'verification_gate_strength'; ruleIds = ['VG-L3-02']; }
         else if (highCostOnly && event === 'PreToolUse') { primaryAxis = 'cost_efficiency'; ruleIds = ['CE-L3-02']; }
-        else { primaryAxis = 'safety_boundary'; ruleIds = event === 'PreToolUse' ? ['SB-L2-02'] : []; }
+        else if (safetyTargets.length) { primaryAxis = 'safety_boundary'; ruleIds = ['SB-L2-04']; }
       }
     } else if (event === 'Stop' || event === 'SubagentStop') {
       if (type === 'prompt' || type === 'agent') { primaryAxis = 'verification_gate_strength'; ruleIds = ['VG-L3-03']; }
@@ -536,9 +544,18 @@ export class Collector {
     ].filter(Boolean).join(', ');
     this.addEvidence({
       comp, path: settingsDisp, keyPath: keyBase, family: 'hook', mechanism: 'harness_enforced',
-      fact: `${event}${matcher ? `(${this.clean(matcher, 60)})` : ''} Hook: ${label} (${describe})`,
+      fact: primaryAxis === 'safety_boundary'
+        ? `${event} Hook: 보호 대상(${safetyTargets.join(', ')}), 정적 패턴·도구 호출 한정, 설정 해제·다른 경로 우회 가능; ${label} (${describe})`
+        : `${event}${matcher ? `(${this.clean(matcher, 60)})` : ''} Hook: ${label} (${describe})`,
       primaryAxis, ruleIds, levelCap, tags,
     });
+    if (safetyTargets.length && primaryAxis !== 'safety_boundary') {
+      this.addEvidence({
+        comp, path: settingsDisp, keyPath: keyBase, family: 'hookSafety', mechanism: 'harness_enforced',
+        fact: `${event} Hook 보호 대상(${safetyTargets.join(', ')}): matcher·입력 검사·차단 분기 일치(정적 패턴). 도구 호출 한정, 설정 해제·다른 실행 경로 우회 가능, 실행 검증 아님`,
+        primaryAxis: 'safety_boundary', ruleIds: ['SB-L2-04'], levelCap, tags: { ...tags, safetyTargets },
+      });
+    }
     if (typeof h.timeout === 'number') {
       this.addEvidence({
         comp, path: settingsDisp, keyPath: `${keyBase}/timeout`, family: 'timeout', mechanism: 'harness_enforced',

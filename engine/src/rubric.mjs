@@ -54,7 +54,7 @@ function axisCandidates(axis, prim, ctx) {
     }
   }
   if (axis === 'safety_boundary') {
-    const managed = prim.filter((e) => e._tags.origin === 'managed' && (e.ruleIds.includes('SB-L2-02') || e.ruleIds.includes('SB-L2-03')));
+    const managed = prim.filter((e) => e._tags.origin === 'managed' && (e.ruleIds.includes('SB-L2-04') || e.ruleIds.includes('SB-L2-03')));
     if (managed.length) {
       managed.forEach((e) => addRule(e, 'SB-L3-03'));
       push('SB-L3-03', managed);
@@ -201,7 +201,7 @@ export function computeTensions(col, axes) {
   add('T2', 'tension', [VG, CE], evs.filter((e) => has(e, 'VG-L2-01', 'VG-L2-02', 'VG-L3-03')));
   {
     const risky = aSet.filter((e) => ['auto', 'dontAsk', 'bypassPermissions'].includes(e._tags.defaultMode) || e._tags.bareBash);
-    const guard = evs.some((e) => has(e, 'SB-L2-02', 'SB-L2-03'));
+    const guard = evs.some((e) => has(e, 'SB-L2-04', 'SB-L2-03'));
     if (!guard) add('T3', 'tension', [A, VG, SB], risky);
   }
   {

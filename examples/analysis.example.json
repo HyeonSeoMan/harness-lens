@@ -1,6 +1,6 @@
 {
   "schemaVersion": "0.1",
-  "rubricVersion": "0.4",
+  "rubricVersion": "0.5",
   "meta": {
     "snapshotId": "20261127T091500Z-3f9a1c2e",
     "analyzedAt": "2026-11-27T09:15:00Z",
@@ -109,8 +109,8 @@
       },
       {
         "id": "ev_000000000007", "componentId": "c_000000000003", "path": ".claude/settings.json", "line": 22, "keyPath": "/hooks/PreToolUse/0",
-        "fact": "PreToolUse(Bash) Hook이 차단 표지(exit 2)가 있는 스크립트를 실행한다", "mechanism": "harness_enforced",
-        "primaryAxis": "safety_boundary", "secondaryAxes": [], "ruleIds": ["SB-L2-02"], "void": null, "levelCap": null
+        "fact": "PreToolUse(Bash): 입력 command의 위험 git 검사 분기와 exit 2 일치(정적 패턴). 도구 호출 한정, 설정 해제·다른 경로 우회 가능", "mechanism": "harness_enforced",
+        "primaryAxis": "safety_boundary", "secondaryAxes": [], "ruleIds": ["SB-L2-04"], "void": null, "levelCap": null
       },
       {
         "id": "ev_000000000008", "componentId": "c_000000000004", "path": ".claude/settings.json", "line": 31, "keyPath": "/hooks/Stop/0",

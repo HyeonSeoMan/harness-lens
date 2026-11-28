@@ -1,6 +1,6 @@
-# 평가 루브릭 v0.4
+# 평가 루브릭 v0.5
 
-- 루브릭 버전: `0.4` (분석 결과의 `rubricVersion`). 이전 버전과의 차이는 §4.1
+- 루브릭 버전: `0.5` (분석 결과의 `rubricVersion`). 이전 버전과의 차이는 §4.1
 - 대상: PRD v0.3 §7.1의 8개 축, FR-07a, FR-10, FR-11
 - 근거: `docs/research/03-evaluation-axes.md`(축·척도·긴장), `docs/research/02-session-logs.md`(세션 지표)
 - 성격: 이 문서의 규칙은 **엔진이 결정론적으로 실행한다.** 사용자 LLM은 수준을 고르지 않고, 엔진이 계산한 수준을 해석만 한다(`analysis-protocol.md`).
@@ -48,6 +48,7 @@ PRD §7.1의 네 단계 위계(서술 < 절차 < Hook·권한 < 관리형·sandb
 - 예: `reviewer.md` 파일 자체(역할), `tools` 필드, `model` 필드, `maxTurns` 필드는 근거 4개다. 각각 다른 축에 귀속된다.
 - 서술 근거는 **(파일, 축)마다 하나**다. 그 파일에서 해당 어휘가 처음 나온 줄을 `line`으로 쓰고, 일치한 줄 수는 속성으로만 남긴다.
 - `permissions.allow`·`ask`·`deny`는 목록 전체가 근거 하나다(`keyPath: /permissions/deny`). 규칙 수는 속성이다.
+- 0.5: 같은 Hook의 명세 검사 사실(SC)과 보호 대상 차단 사실(SB)은 서로 다른 근거다. 핸들러의 기존 근거를 두 축에 중복 사용하지 않고, 보호 조건(§2.8)이 맞으면 같은 componentId·keyPath에 별도 family(`hookSafety`)·ID의 SB 근거를 만든다. 이미 SB에 귀속된 핸들러는 별도 근거를 더하지 않는다.
 
 ### 1.5 귀속 순서
 
@@ -56,7 +57,7 @@ PRD §7.1의 네 단계 위계(서술 < 절차 < Hook·권한 < 관리형·sandb
 | 근거 | 귀속 순서 |
 |---|---|
 | 서술 한 줄이 여러 어휘에 맞음 | `safety_boundary` > `verification_gate_strength` > `spec_clarity` > `execution_stability` > `autonomy` > `cost_efficiency` > `context_efficiency` > `throughput` |
-| 차단 표지가 있는 PreToolUse·UserPromptSubmit Hook | 명세 어휘 → SC / 검증 명령 어휘 → VG / matcher가 고비용 도구만 → CE / 그 외 → SB |
+| 차단 표지가 있는 PreToolUse·UserPromptSubmit Hook | 명세 어휘 → SC / 검증 명령 어휘 → VG / matcher가 고비용 도구만 → CE / 그 외는 SB-L2-04 보호 조건에 맞는 PreToolUse만 SB, 나머지 미귀속. SC·VG·CE 귀속이어도 보호 조건을 따로 만족하면 SB용 보호 사실 근거를 추가한다 |
 | Stop·SubagentStop Hook | 검증 명령 어휘 + 차단 표지, 또는 `prompt`·`agent` 타입 → VG / 그 외 → 미귀속 |
 | PostToolUse Hook | 차단 표지 있음 → VG-L2 / 검증 명령 어휘만 있음 → VG-L1 / 그 외 → 미귀속 |
 | Skill·Agent 파일(역할) | `reviewer` > `spec` > `recovery` > `parallel` > `explorer` 순으로 역할을 정한다. 역할 없는 Skill → CX(지연 로드), 역할 없는 Agent → 미귀속 |
@@ -312,13 +313,17 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 |---|---|---|---|
 | SB-L1-01 | 1 | 상시 로드 지침에 LEX-NAR-SB 일치 줄이 있다 | narrative |
 | SB-L2-01 | 2 | Subagent에 `tools` 허용 목록 또는 `disallowedTools`가 있다 | harness_enforced |
-| SB-L2-02 | 2 | 차단 표지가 있는 PreToolUse Hook이 있다(§1.5에서 SC·VG·CE로 가지 않은 것) | harness_enforced |
+| SB-L2-02 | — | 폐기(0.5). 대상 구분 없는 차단 표지 조건과 SC·VG·CE 제외 단서를 SB-L2-04로 대체 | — |
+| SB-L2-04 | 2 | 읽을 수 있는 PreToolUse 스크립트에서 matcher의 도구, 보호 대상 입력 검사, 해당 분기의 차단 표지가 함께 맞는다(아래 정적 조건). SC·VG·CE 귀속 여부와 무관하다 | harness_enforced |
 | SB-L2-03 | 2 | `permissions.deny`가 1개 이상이다 | harness_enforced |
 | SB-L3-01 | 3 | 유효 설정 `sandbox.enabled: true` | org_enforced |
 | SB-L3-02 | 3 | 유효 설정 `disableBypassPermissionsMode: "disable"` | org_enforced |
 | SB-L3-03 | 3 | 관리형 설정에서 온 SB 근거(deny, 차단 Hook)가 있다 | org_enforced |
 
 - 이 축만 C(도구 호출 단위 규칙)를 2, D(OS·조직 단위)를 3으로 나눈다. 권한 규칙과 Hook은 Claude Code 도구 호출만 보지만, sandbox는 Bash 하위 프로세스까지 막고 관리형 설정은 사용자가 끌 수 없다. 조사 03은 PreToolUse 차단 Hook을 3으로 제안했으나 PRD §7.1 위계에 맞춰 2로 둔다.
+- SB-L2-04 정적 조건(휴리스틱): `PreToolUse`의 읽을 수 있는 스크립트에 `if (...)` 검사와 같은 분기의 차단 호출·응답이 있어야 한다. 보호 경로는 matcher가 `Write`·`Edit`·`MultiEdit`·`NotebookEdit` 중 하나를 포함하고, 스크립트가 `file_path`·`notebook_path`를 읽으며, 조건식에 `inside`·`startsWith`·`includes`·`match`·`test` 호출 및 경로 관련 식별자(`path`, `target`, `dirs`, `protected*`, `file*` 또는 입력 경로를 직접 대입받은 변수)가 있어야 한다. 위험 git은 matcher에 `Bash`가 있고 조건식이 `command`와 `git push/reset/clean/checkout/restore`, `push --force`, `reset --hard`, `clean -…f` 중 하나를 함께 검사해야 한다. matcher 생략·`*`·`.*`는 전체 도구로 본다. 그 밖의 복잡한 matcher는 추정하지 않는다.
+- 셸은 `.tool_input.command`를 직접 받은 변수의 단순 `case` 분기에서 위험 git 패턴과 차단 표지가 함께 있을 때만 지원한다. 차단은 해당 분기의 LEX-BLOCK 종료 호출 또는 코드의 차단 응답 객체, 혹은 1단계 import에서 차단 export로 확인된 함수 호출로 확인한다. 문자열 출력·주석만, 경고만 하는 분기, 분기 밖·else 쪽의 차단 표지, 설정 선언만으로는 인정하지 않는다. 실제 실행·완전한 제어/데이터 흐름·정규식·셸/언어 전체 문법은 증명하지 않으며 복잡한 간접 호출은 놓칠 수 있다. 대상 경로 문자열 원문은 새 근거에 저장하지 않는다.
+- 보호 근거의 fact에는 정적 패턴 판정과 우회 한계를 적는다. 도구 호출 한정 검사이므로 설정 해제, 다른 도구·프로세스·간접 실행 경로를 통한 우회를 막는다고 주장하지 않는다. 프로젝트 Hook만으로 수준 3을 주지 않으며 COM-02 상한·COM-03 무력화는 별도 보호 사실에도 동일하게 적용한다. 기존 SC 수준 조건은 그대로다.
 - `permissions.ask`는 AU에 귀속하고 SB에는 참고로 표시한다(PRD §7.1 표는 ask를 SB 근거로 적었다. PR 설명의 PRD 변경 제안 참고).
 - 반례: deny 규칙은 Bash 하위 프로세스의 파일 접근을 막지 못할 수 있다. 사용자 범위를 수집하지 않으면 sandbox 여부는 미확인이다.
 
@@ -330,7 +335,7 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 |---|---|---|---|---|
 | T1 | 긴장 | VG ↔ TP | VG-L1-02, VG-L2-03, VG-L3-01, VG-L3-02 중 하나에 맞는 Hook이 있다(검증 명령을 실행하거나 실패를 돌려주는 Hook) | 그 Hook 근거 |
 | T2 | 긴장 | VG ↔ CE | VG-L2-01, VG-L2-02, VG-L3-03 중 하나(별도 모델 호출) | 그 근거 |
-| T3 | 긴장 | AU ↔ VG, SB | (a)에 유효 `defaultMode` ∈ {`auto`, `dontAsk`, `bypassPermissions`} 또는 allow에 인자 없는 `Bash`·`Bash(*)`가 있고, SB-L2-02·SB-L2-03 근거가 없다 | (a) 근거 |
+| T3 | 긴장 | AU ↔ VG, SB | (a)에 유효 `defaultMode` ∈ {`auto`, `dontAsk`, `bypassPermissions`} 또는 allow에 인자 없는 `Bash`·`Bash(*)`가 있고, SB-L2-04·SB-L2-03 근거가 없다 | (a) 근거 |
 | T4 | 긴장 | VG, SB ↔ AU | `permissions.ask` 3개 이상(휴리스틱) 또는 Notification Hook | ask·Hook 근거 |
 | T5 | 긴장 | AU ↔ CE, ES | `maxTurns` 없는 Subagent가 있거나, 차단 표지가 있는 Stop Hook에 LEX-REENTRY가 없다 | 그 Agent·Hook 근거 |
 | T6 | 긴장 | CX ↔ SC | Skill 3개 이상이 `context: fork`이거나, Subagent에 `omitClaudeMd: true`가 있다(키 존재는 구현 전 공식 문서 재확인) | 그 근거 |
@@ -352,6 +357,7 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 
 | 버전 | 변경 |
 |---|---|
+| 0.5 | 오너 결정 ⑤(N10): 보호 경로·위험 git 차단 Hook의 보호 사실을 SC와 별개인 SB 근거로 인정. SB-L2-02 폐기, SB-L2-04 신설: matcher·입력 검사·차단 분기 일치 필요. 설정 존재만·경고만으로 상향하지 않으며 정적 판정·우회 한계를 fact에 표시. 단일 근거 귀속·상한·무력화 유지. 0.4와 비교 시 `comparability: limited`, 모든 축 `comparable: false`, 사유 `rubric_version_changed`이며 수준 변화는 구성 개선량이 아님 |
 | 0.4 (2026-11-28 정정) | SC-L2-04·VG-L2-04의 명령 후보 해석을 본문에 명시. 명세 경로가 든 셸 조건식만 제외하며 if·elif·while·until 줄 전체를 제외하던 구현은 철회. 조건 명령·부정 명령과 then/do 뒤 게이트를 유지하고, 따옴표 안 표시 문자열은 후보로 만들지 않는다. 기존 명령 영역 구현 결함 정정이며 어휘·규칙 ID·수준은 변경하지 않음 |
 | 0.4 | 수집 범위를 CI·Git Hook으로 확장. SC-L2-04·SC-L3-02·VG-L2-04·VG-L3-04 추가. 실행 결과와 필수 PR 검사 설정은 수집하지 않으므로 SC·VG 실측은 계속 예측 상태이며 사유는 needs_ci_pr_results |
 | 0.3 | 소유자 결정 반영(`docs/reviews/2026-11-27-diceforge-defects.md` #1·#2·#4·#5·#6·#9). LEX-BLOCK에 언어별 종료 관례(`process.exit(2)` 등)와 따옴표 없는·작은따옴표 키 추가, Hook 스크립트가 상대 경로로 불러오는 파일 1단계 스캔(§1.7). LEX-ROLE은 `name` 우선, `description`은 LEX-NEG 절 제외. 빈 영역: 실측 상태 축은 `unconfigured`에서 뺀다(프로토콜 emptyAreas 행). CE-M-01 폐기, CE는 실측 불가(`band_metric_undefined`), `cache_hit_ratio`는 참고 지표. CX-M-01 폐기, CX-M-02(모델 창 크기 대비 p90 비율). ES-M-01 폐기, ES-M-02(Bash 제외 오류율), 표본도 Bash 제외 도구 호출. 참고 지표 `bash_error_rate`, `context_p90_window_ratio`, `bot_weighted_share`, `worker_weighted_share`와 `sessions.toolUsage` 추가 |

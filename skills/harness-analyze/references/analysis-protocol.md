@@ -3,7 +3,9 @@
 사용자 LLM이 Harness Lens 분석을 수행하는 표준 절차다. `SKILL.md`가 호출되면 이 문서를 처음부터 끝까지 순서대로 따른다.
 
 - 결과 계약: `schemas/analysis.schema.json` (schemaVersion `0.1`)
-- 수준 판정 기준: `references/evaluation-rubric.md` (rubricVersion `0.4`)
+- 수준 판정 기준: `references/evaluation-rubric.md` (rubricVersion `0.5`)
+
+루브릭 0.5에서는 같은 차단 Hook의 SC 사실과 SB 보호 사실이 서로 다른 근거 ID로 나타날 수 있다. SB-L2-04는 matcher·입력 검사·차단 분기가 맞은 정적 근거이며, 우회 불가나 실행 성공을 뜻하지 않는다. 0.4와 비교하면 `comparability: limited`, 모든 축 `comparable: false`인 이유가 기준 변경이므로 수준 변화를 구성 개선으로 설명하지 않는다.
 - 엔진 명령: `docs/spec/engine-cli.md` (저장소 문서. 배포본에는 아래 요약만 있다)
 
 ## 0. 역할 분담
