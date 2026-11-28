@@ -84,3 +84,23 @@ test('압축 인벤토리: 예산을 넘으면 근거 fact를 축별 상위 N개
   full.engine.evidence.forEach((e) => { e.fact = facts.get(e.id); });
   assert.ok(tokens(`${JSON.stringify(full)}\n`) > 6000);
 });
+
+test('실측 요약이 커 fact 최소치로도 넘으면 설명 속성·재구성 가능한 중복만 생략한다', () => {
+  const { draft } = bigDraft(4, 40);
+  const comp = draft.engine.inventory.components[0];
+  comp.paths = ['CLAUDE.md'];
+  comp.attributes = { description: '설명'.repeat(5000), command: 'npm test', headings: ['title'], active: false };
+  draft.engine.axes.forEach((a) => { a.source.evidenceIds = draft.engine.evidence.filter((e) => e.primaryAxis === a.axis).map((e) => e.id); });
+  draft.engine.sessions.axisMetrics = [{ metricId: 'example_metric', value: 0.4, sampleSize: 24 }];
+  const original = structuredClone(draft);
+  const text = compactInventory(draft, []);
+  const compact = JSON.parse(text);
+  assert.ok(tokens(text) <= 6000);
+  assert.ok(compact.compaction.omitted.includes('descriptive_component_attributes'));
+  assert.equal(compact.engine.inventory.components[0].name, undefined);
+  assert.deepEqual(compact.engine.inventory.components[0].attributes, { active: false });
+  assert.ok(compact.engine.axes.every((a) => !('evidenceIds' in a.source)));
+  assert.deepEqual(compact.engine.sessions.axisMetrics, original.engine.sessions.axisMetrics);
+  assert.deepEqual(compact.engine.evidence.map((e) => e.id), original.engine.evidence.map((e) => e.id));
+  assert.deepEqual(draft, original, '정식 인벤토리·스냅샷은 바꾸지 않는다');
+});

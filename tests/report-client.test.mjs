@@ -149,7 +149,8 @@ test('B11·F 가능 범위는 어느 값의 범위인지 밝히고, 원시 사�
   }
   assert.match(text, /자율성 실측 대역 1 \(실측\) · 구조 수준 3 강제 검증 · 실측 대역 범위 0–2 \(표본이 요구량의 2배 미만이라 실측 대역 ±1\)/);
   assert.match(text, /엔진 근거 \d+개 · 가능 범위 2–3 \(수집하지 않은 사용자 설정 파일이 있어 실제 수준이 더 높을 수 있음\)/);
-  assert.match(text, /CI·PR 데이터 필요\(아직 수집하지 않음\)/);
+  assert.match(text, /CI·PR 실행 결과 필요\(설정 수집과 별개\)/);
+  assert.doesNotMatch(text, /needs_ci_pr_results/);
   assert.doesNotMatch(text, /CI·PR 데이터 필요\(MVP 3\)/);
 });
 

@@ -3,9 +3,9 @@
 export const ENGINE_VERSION = '0.4.0';
 export const VALIDATOR_VERSION = '0.4.0';
 export const SCHEMA_VERSION = '0.1';
-export const RUBRIC_VERSION = '0.3';
+export const RUBRIC_VERSION = '0.4';
 // 세션 기록 파서 규칙 버전(engine-cli.md §8). 규칙이 바뀌면 올리고, 누적 상태를 처음부터 다시 만든다.
-export const SESSION_PARSER_VERSION = '3';
+export const SESSION_PARSER_VERSION = '4';
 export { PRICING_TABLE_VERSION } from './pricing.mjs';
 
 export const MIN_NODE_MAJOR = 20;
@@ -40,8 +40,8 @@ export const AXIS_MAX = Object.fromEntries(AXES.map((a) => [a, a === 'throughput
 
 // 루브릭 §1.9 실측 전환 표.
 export const MATURITY_RULES = {
-  spec_clarity: { measurable: false, blockedReason: 'needs_ci_pr_data' },
-  verification_gate_strength: { measurable: false, blockedReason: 'needs_ci_pr_data' },
+  spec_clarity: { measurable: false, blockedReason: 'needs_ci_pr_results' },
+  verification_gate_strength: { measurable: false, blockedReason: 'needs_ci_pr_results' },
   execution_stability: { measurable: true, unit: 'tool_calls', required: 500 },
   throughput: { measurable: true, unit: 'sessions', required: 20 },
   // 0.3: cache_hit_ratio를 참고 지표로 내렸다(클라이언트 동작 영향이 커서 하네스 축 실측으로 약하다). 대역 지표가 정해질 때까지 예측.

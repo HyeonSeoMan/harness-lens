@@ -42,6 +42,59 @@ function setup(t) {
 const metric = (s, id) => s.axisMetrics.find((m) => m.metricId === id);
 const direct = (s) => s.tokens.byLocation.find((l) => l.location === 'direct');
 
+test('N3. 같은 파일·세션을 반복 교체해도 보존 세대는 하나이며 coverage 줄은 최신 세대만 센다', (t) => {
+  const p = setup(t);
+  for (let i = 0; i < 12; i++) {
+    p.replace([p.row(`rotated-${i}`)]);
+    const s = p.agg(true);
+    assert.equal(s.coverage.linesRead, 1);
+    assert.equal(s.tokens.total.freshInput, (i + 1) * 100);
+    assert.equal(metric(s, 'tool_error_rate').sampleSize, i + 1);
+  }
+  const cursor = readJson(path.join(p.out, 'sessions', 'cursor.json'));
+  assert.equal(Object.keys(cursor.files).length, 2);
+});
+
+test('R8. 시각 없는 세대를 합쳐도 firstTs·lastTs는 null로 보존한다', (t) => {
+  const p = setup(t);
+  for (let i = 0; i < 4; i++) {
+    p.replace([p.row(`no-time-${i}`, { timestamp: undefined })]);
+    p.agg(true);
+  }
+  const cursor = readJson(path.join(p.out, 'sessions', 'cursor.json'));
+  for (const file of Object.values(cursor.files)) {
+    assert.equal(file.firstTs, null);
+    assert.equal(file.lastTs, null);
+  }
+});
+
+test('N4. archive·event 중복 제거 키는 원시 응답의 90일 보존 기한 후에도 유지한다', (t) => {
+  const p = setup(t);
+  const old = p.row('old', { timestamp: '2025-01-01T00:00:00Z' });
+  p.write([old]);
+  p.agg(true);
+  p.replace([old]);
+  const s = p.agg(true, { nowMs: Date.parse('2027-11-27T00:00:00Z') });
+  assert.equal(s.tokens.total.freshInput, 100);
+  assert.equal(readFileSync(path.join(p.out, 'sessions', 'archived-keys.bin')).length, 8);
+  assert.equal(readFileSync(path.join(p.out, 'sessions', 'events.bin')).length, 8);
+});
+
+test('N5. 구버전 parser 상태와 v1 archive는 재사용하지 않고 현재 원본에서 다시 집계한다', (t) => {
+  const p = setup(t);
+  p.write([p.row('current')]);
+  p.agg(true);
+  const cursorPath = path.join(p.out, 'sessions', 'cursor.json');
+  const cursor = readJson(cursorPath);
+  cursor.parserVersion = '1';
+  writeFileSync(cursorPath, JSON.stringify(cursor));
+  writeFileSync(path.join(p.out, 'sessions', 'archive.json'), JSON.stringify({ days: { '2020-01-01': { bad: true } }, responses: 999 }));
+  const result = aggregateSessions({ configDir: p.configDir, projectRoot: p.projectRoot, out: p.out, nowMs: Date.parse(NOW), configSinceMs: null });
+  assert.equal(result.info.stateReset, true);
+  assert.equal(result.sessions.tokens.total.freshInput, 100);
+  assert.equal(result.sessions.coverage.incremental, false);
+});
+
 // ---------- 1. 캐시 분할 ----------
 test('1. 같은 message.id에서 1시간 분할이 있는 줄과 총량만 있는 줄을 병합해도 cacheWrite는 병합 총량이다(순서 무관)', (t) => {
   const p = setup(t);
@@ -190,7 +243,7 @@ test('6. copytruncate 뒤 이전 offset보다 크게 다시 자란 파일은 처
   appendFileSync(p.file, p.lines([p.row('F')]));
   const c = p.agg(true);
   assert.equal(c.dedup.uniqueResponses, 6);
-  assert.equal(c.coverage.linesRead, 2 + 3 + 1);
+  assert.equal(c.coverage.linesRead, 3 + 1, 'coverage는 최신 세대만 세며 과거 세대 줄 수를 다시 더하지 않는다');
 });
 
 // ---------- 8. archive만 남은 컨텍스트 추이 ----------

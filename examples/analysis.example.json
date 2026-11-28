@@ -1,6 +1,6 @@
 {
   "schemaVersion": "0.1",
-  "rubricVersion": "0.3",
+  "rubricVersion": "0.4",
   "meta": {
     "snapshotId": "20261127T091500Z-3f9a1c2e",
     "analyzedAt": "2026-11-27T09:15:00Z",
@@ -13,7 +13,7 @@
       "version": "0.1.0",
       "nodeVersion": "v22.22.1",
       "platform": "darwin",
-      "sessionParserVersion": "2",
+      "sessionParserVersion": "4",
       "pricingTableVersion": "2026-11-01"
     }
   },
@@ -163,14 +163,14 @@
         "axis": "spec_clarity", "level": 2, "levelStatus": "assessed",
         "source": { "ruleId": "SC-L2-01", "evidenceIds": ["ev_000000000001", "ev_000000000006"], "capRuleIds": [] },
         "range": { "min": 2, "max": 3, "reasonCodes": ["user_scope_not_collected"] },
-        "maturity": { "state": "predicted", "measurable": false, "requirement": null, "current": null, "progress": null, "blockedReason": "needs_ci_pr_data" },
+        "maturity": { "state": "predicted", "measurable": false, "requirement": null, "current": null, "progress": null, "blockedReason": "needs_ci_pr_results" },
         "measured": null
       },
       {
         "axis": "verification_gate_strength", "level": 3, "levelStatus": "assessed",
         "source": { "ruleId": "VG-L3-01", "evidenceIds": ["ev_000000000002", "ev_000000000008", "ev_00000000000b"], "capRuleIds": [] },
         "range": { "min": 3, "max": 3, "reasonCodes": [] },
-        "maturity": { "state": "predicted", "measurable": false, "requirement": null, "current": null, "progress": null, "blockedReason": "needs_ci_pr_data" },
+        "maturity": { "state": "predicted", "measurable": false, "requirement": null, "current": null, "progress": null, "blockedReason": "needs_ci_pr_results" },
         "measured": null
       },
       {

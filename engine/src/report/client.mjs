@@ -32,6 +32,7 @@ export function reportClient() {
   };
   var BSTATUS = { within: '예산 이내', exceeded: '초과', unmeasured: '미측정' };
   var BLOCKED = {
+    needs_ci_pr_results: 'CI·PR 실행 결과 필요(설정 수집과 별개)',
     needs_ci_pr_data: 'CI·PR 데이터 필요(아직 수집하지 않음)', session_format_unconfirmed: '세션 기록 형식 미확인', band_metric_undefined: '대역 지표 미정(캐시 적중률은 참고 지표)',
     sessions_disabled: '세션 집계 꺼짐', no_session_logs: '세션 기록 없음', session_format_unsupported: '세션 기록 형식 미지원',
     session_aggregation_failed: '세션 집계 오류', insufficient_samples: '표본 부족', metric_unavailable: '대역 지표 없음',

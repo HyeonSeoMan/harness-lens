@@ -143,6 +143,7 @@ function engineLimitations(col, ctx, sessions, info, extra = []) {
     if (info.estimatedShare > 0) out.push({ code: 'estimated_attribution_included', message: `합계에 추정 귀속(삭제된 워크트리 추정·봇 자동 귀속) 환산값 ${(info.estimatedShare * 100).toFixed(1)}%가 포함돼 있습니다.` });
     if (info.unreadableFiles) out.push({ code: 'session_files_unreadable', message: `세션 기록 파일 ${info.unreadableFiles}개를 읽지 못했습니다.` });
     if (info.stateCorrupted) out.push({ code: 'session_state_rebuilt', message: '세션 누적 집계 파일이 손상돼 처음부터 다시 만들었습니다. 원본 기록이 정리된 구간은 빠졌을 수 있습니다.' });
+    if (info.stateReset) out.push({ code: 'session_state_reset', message: '세션 파서 버전 또는 저장소가 바뀌어 누적 상태를 다시 만들었습니다. 구버전 archive는 재사용하지 않으며 원본 기록이 정리된 구간은 빠졌을 수 있습니다.' });
   }
   if (ctx.scope === 'project') {
     const unscoped = col.sources.filter((s) => s.reason === 'user_scope_not_collected' || s.reason === 'managed_settings_not_collected');
@@ -155,7 +156,7 @@ function engineLimitations(col, ctx, sessions, info, extra = []) {
   if (col.sources.some((s) => s.status === 'unreadable')) out.push({ code: 'source_unreadable', message: '읽지 못한 출처가 있어 일부 축은 판정 불가이거나 범위가 넓습니다.' });
   if (col.sources.some((s) => s.status === 'out_of_scope' && s.origin !== 'user' && s.origin !== 'managed')) out.push({ code: 'source_out_of_scope', message: '수집 루트 밖을 가리키는 경로(심볼릭 링크·import 등)는 따라가지 않았습니다.' });
   if (col.sources.some((s) => s.status === 'skipped_sensitive')) out.push({ code: 'sensitive_files_skipped', message: '민감한 이름의 파일(.env, 키 파일 등)은 열지 않았습니다.' });
-  return [...out, ...extra];
+  return [...out, ...(col.gateLimitations ?? []), ...extra];
 }
 
 // 현재 구성 해시가 처음 관측된 시각(루브릭 §1.9). 같은 해시가 이어진 마지막 스냅샷 묶음의 첫 시각과
@@ -273,14 +274,23 @@ export function compactInventory(draft, kbKeys) {
   const target = BUDGETS.llm_input_inventory_tokens.target;
   let text = serializeCompact(build(null));
   if (estimateTokens(text) <= target) return text;
-  // 축별 근거 수의 최댓값부터 줄여 예산 안에 드는 가장 큰 N을 쓴다. 1로도 넘으면 1을 쓰고 예산 초과로 보고한다.
+  // 축별 근거 수의 최댓값부터 줄여 예산 안에 드는 가장 큰 N을 쓴다. 1로도 넘으면 마지막 압축 단계로 간다.
   const counts = new Map();
   for (const ev of e.evidence) counts.set(ev.primaryAxis ?? '', (counts.get(ev.primaryAxis ?? '') ?? 0) + 1);
   for (let n = Math.max(1, ...counts.values()) - 1; n >= 1; n--) {
     text = serializeCompact(build(n));
     if (estimateTokens(text) <= target) return text;
   }
-  return text;
+  // 실측 지표가 복원되면 fact 최소 1개로도 넘을 수 있다. 마지막 단계에서만
+  // 비판정 설명과 재구성 가능한 중복을 생략한다. 근거 ID·규칙·실측 수치는 보존한다.
+  const lean = build(1);
+  for (const c of lean.engine.inventory.components) {
+    for (const key of ['command', 'description', 'headings']) delete c.attributes[key];
+    if (c.name === c.paths?.[0]) delete c.name;
+  }
+  for (const a of lean.engine.axes) delete a.source.evidenceIds;
+  lean.compaction.omitted.push('descriptive_component_attributes', 'name_equal_first_path', 'axis_source_evidenceIds');
+  return serializeCompact(lean);
 }
 
 function interpretationTemplate(axes, comparison) {

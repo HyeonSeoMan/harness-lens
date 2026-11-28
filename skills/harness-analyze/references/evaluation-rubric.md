@@ -1,6 +1,6 @@
-# 평가 루브릭 v0.3
+# 평가 루브릭 v0.4
 
-- 루브릭 버전: `0.3` (분석 결과의 `rubricVersion`). 이전 버전과의 차이는 §4.1
+- 루브릭 버전: `0.4` (분석 결과의 `rubricVersion`). 이전 버전과의 차이는 §4.1
 - 대상: PRD v0.3 §7.1의 8개 축, FR-07a, FR-10, FR-11
 - 근거: `docs/research/03-evaluation-axes.md`(축·척도·긴장), `docs/research/02-session-logs.md`(세션 지표)
 - 성격: 이 문서의 규칙은 **엔진이 결정론적으로 실행한다.** 사용자 LLM은 수준을 고르지 않고, 엔진이 계산한 수준을 해석만 한다(`analysis-protocol.md`).
@@ -145,8 +145,8 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 
 | 축 | 실측 가능 | 요구량 (휴리스틱) | 대역 규칙 | 지표 → 대역 (휴리스틱) |
 |---|---|---|---|---|
-| spec_clarity | 아니오 (`needs_ci_pr_data`, MVP 3) | — | — | — |
-| verification_gate_strength | 아니오 (`needs_ci_pr_data`, MVP 3) | — | — | 대리 지표(Hook 차단 수, 리뷰어 호출 비율)는 `axisMetrics`에만 싣는다 |
+| spec_clarity | 아니오 (`needs_ci_pr_results`: CI·PR 실행 결과 필요) | — | — | — |
+| verification_gate_strength | 아니오 (`needs_ci_pr_results`: CI·PR 실행 결과 필요) | — | — | 대리 지표(Hook 차단 수, 리뷰어 호출 비율)는 `axisMetrics`에만 싣는다 |
 | execution_stability | 예 | Bash를 뺀 도구 호출 500회(서브에이전트 포함) | ES-M-02 | `non_bash_tool_error_rate` ≤ 0.02 → 3, ≤ 0.05 → 2, ≤ 0.10 → 1, 그 외 0. ES-M-01(`tool_error_rate`, 전체 도구)은 폐기(0.3) |
 | throughput | 예 | 세션 20회 | TP-M-01 | `turn_duration_p50_ms` ≤ 30,000 → 3, ≤ 90,000 → 2, ≤ 300,000 → 1, 그 외 0 (작업 크기 미보정) |
 | cost_efficiency | 아니오 (`band_metric_undefined`, 0.3) | — | — | CE-M-01(`cache_hit_ratio` 대역)은 폐기. 캐시 적중은 클라이언트 동작(프롬프트 캐시 관리) 영향이 커서 하네스 축 실측으로 약하다. `cache_hit_ratio`, `weighted_tokens_per_session`, `bot_weighted_share`, `worker_weighted_share`는 참고 지표로만 싣는다. 성공 작업당 비용 같은 대역 지표가 정해질 때까지 예측 |
@@ -193,7 +193,9 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 | SC-L1-01 | 1 | 상시 로드 지침에 LEX-NAR-SC 일치 줄이 있다 | narrative |
 | SC-L2-01 | 2 | 역할이 `spec`인 Skill이 있다 | procedure |
 | SC-L2-02 | 2 | 역할이 `spec`인 Subagent가 있다 | procedure |
+| SC-L2-04 | 2 | CI·Git Hook 설정의 명령 영역에 LEX-SPEC-CMD가 있다(실행 결과는 미확인) | procedure |
 | SC-L2-03 | 2 | 유효 설정 `permissions.defaultMode`가 `plan`이다 | harness_enforced |
+| SC-L3-02 | 3 | 활성 Git Hook 실행 파일에 LEX-SPEC-CMD와 실패 종료 표지가 있다 | harness_enforced |
 | SC-L3-01 | 3 | 차단 표지가 있는 UserPromptSubmit Hook, 또는 matcher에 `Write`·`Edit`가 들어간 PreToolUse Hook의 명령·스크립트에 LEX-SPEC-CMD가 있다 | harness_enforced |
 
 - 서술은 아무리 구체적이어도 1이다. 조사 03은 구체적 명령·완료 정의 서술을 2로 제안했지만, PRD §7.1의 강제력 위계를 따른다. 구체성은 LLM이 finding으로 설명한다.
@@ -209,7 +211,9 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 | VG-L1-02 | 1 | PostToolUse Hook 명령·스크립트에 LEX-VERIFY-CMD가 있지만 차단 표지는 없다 | harness_enforced |
 | VG-L2-01 | 2 | 역할이 `reviewer`인 Subagent가 있다 | procedure |
 | VG-L2-02 | 2 | 역할이 `reviewer`인 Skill이 있다 | procedure |
+| VG-L2-04 | 2 | CI·Git Hook 설정의 명령 영역에 LEX-VERIFY-CMD가 있다. 명세 어휘와 겹친 명령은 SC에만 귀속한다 | procedure |
 | VG-L2-03 | 2 | 차단 표지가 있는 PostToolUse Hook이 있다(이미 실행된 뒤라 막지 못하고 Claude에게 돌려준다) | harness_enforced |
+| VG-L3-04 | 3 | 활성 Git Hook 실행 파일에 LEX-VERIFY-CMD와 실패 종료 표지가 있다 | harness_enforced |
 | VG-L3-01 | 3 | Stop·SubagentStop Hook 명령·스크립트에 LEX-VERIFY-CMD와 차단 표지가 함께 있다 | harness_enforced |
 | VG-L3-02 | 3 | 차단 표지가 있는 PreToolUse Hook 명령·스크립트에 LEX-VERIFY-CMD가 있다(검증 없는 커밋 차단 등) | harness_enforced |
 | VG-L3-03 | 3 | Stop·SubagentStop Hook의 `type`이 `prompt` 또는 `agent`다 | harness_enforced |
@@ -346,6 +350,7 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 
 | 버전 | 변경 |
 |---|---|
+| 0.4 | 수집 범위를 CI·Git Hook으로 확장. SC-L2-04·SC-L3-02·VG-L2-04·VG-L3-04 추가. 실행 결과와 필수 PR 검사 설정은 수집하지 않으므로 SC·VG 실측은 계속 예측 상태이며 사유는 needs_ci_pr_results |
 | 0.3 | 소유자 결정 반영(`docs/reviews/2026-11-27-diceforge-defects.md` #1·#2·#4·#5·#6·#9). LEX-BLOCK에 언어별 종료 관례(`process.exit(2)` 등)와 따옴표 없는·작은따옴표 키 추가, Hook 스크립트가 상대 경로로 불러오는 파일 1단계 스캔(§1.7). LEX-ROLE은 `name` 우선, `description`은 LEX-NEG 절 제외. 빈 영역: 실측 상태 축은 `unconfigured`에서 뺀다(프로토콜 emptyAreas 행). CE-M-01 폐기, CE는 실측 불가(`band_metric_undefined`), `cache_hit_ratio`는 참고 지표. CX-M-01 폐기, CX-M-02(모델 창 크기 대비 p90 비율). ES-M-01 폐기, ES-M-02(Bash 제외 오류율), 표본도 Bash 제외 도구 호출. 참고 지표 `bash_error_rate`, `context_p90_window_ratio`, `bot_weighted_share`, `worker_weighted_share`와 `sessions.toolUsage` 추가 |
 | 0.2 | 가능 범위: 수집하지 않은 사용자·관리형 설정 파일이 실제로 있을 때만 넓힌다(§1.8). ES-L3-03 폐기, ES-L3-04 추가: Subagent 2개 이상이 모두 `maxTurns`를 가질 때만 3. T1 트리거에 VG-L2-03(차단 표지가 있는 PostToolUse Hook) 추가. 자기 구성 요소(`harness_lens`)의 경로를 설치 위치 대신 고정 라벨 `harness-lens/SKILL.md`로 표시(COM-08) |
 | 0.1 | 최초 공개 |
