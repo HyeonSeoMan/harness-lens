@@ -178,7 +178,7 @@
     },
     {
       "axis": "safety_boundary",
-      "rationale": "PreToolUse 차단 Hook(SB-L2-02)과 deny 3개(SB-L2-03)가 있다. sandbox·관리형 설정이 없어 3은 아니다.",
+      "rationale": "PreToolUse 차단 Hook(SB-L2-04)과 deny 3개(SB-L2-03)가 있다. sandbox·관리형 설정이 없어 3은 아니다.",
       "conditions": [
         "관리형 설정·sandbox는 수집 범위 밖이다"
       ],

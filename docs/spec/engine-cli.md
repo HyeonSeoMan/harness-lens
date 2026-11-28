@@ -3,7 +3,7 @@
 - 대상: MVP 1 결정론적 엔진 `skills/harness-analyze/scripts/harness-lens.mjs`(소스 `engine/`)
 - 관련: PRD v0.3 §5, FR-02~FR-11, §6.1, §9, §11, §11.1, §14.1 / `docs/research/01~03`
 - 데이터 계약: `skills/harness-analyze/schemas/analysis.schema.json` (schemaVersion `0.1`)
-- 수준 규칙: `skills/harness-analyze/references/evaluation-rubric.md` (rubricVersion `0.4`)
+- 수준 규칙: `skills/harness-analyze/references/evaluation-rubric.md` (rubricVersion `0.5`)
 - LLM 절차: `skills/harness-analyze/references/analysis-protocol.md`
 
 ## 1. 원칙
@@ -88,6 +88,7 @@ finalize = validate → snapshot → render
   2. 비밀정보를 제거한다(§7).
   3. 구성 요소를 식별한다. Harness Lens 자신은 `kind: "harness_lens"`다.
   4. 근거를 추출하고 루브릭 규칙으로 축을 귀속한다.
+     - 루브릭 0.5: 보호 대상·matcher·차단 분기가 일치하는 PreToolUse는 SB-L2-04 근거다. 기존 SC·VG·CE 근거가 있으면 동일 Hook에 별도 보호 사실 ID를 만들어 단일 귀속을 유지한다. 읽기 실패 상한과 disableAllHooks 무력화는 두 사실에 모두 적용한다. 스크립트 실행 없이 정적 패턴만 보고, 보호 근거 fact에 도구 호출 한정·우회 가능성을 남긴다.
   5. 수준·범위를 계산하고 긴장 후보를 찾는다.
   6. 구성 해시를 계산한다.
 - 출력: `runs/<runId>/inventory.json`. 스키마의 `engine` 중 `inventory`, `evidence`, `axes`(성숙도 제외), `tensionCandidates`, `limitations`와 `meta` 초안을 담는다. `--json`이면 `{ "ok", "runId", "configurationHash", "components", "evidence", "unreadable" }` 요약을 낸다.
@@ -223,6 +224,7 @@ finalize = validate → snapshot → render
   | 그 외 | `full` | — |
 
 - 예측 → 실측 전환은 비교 가능하며 `reason: "maturity_changed"`를 붙인다.
+- 예: 동일 구성의 루브릭 0.4 → 0.5 재평가로 SB가 1 → 2가 되어도 `limited`와 모든 축 `comparable: false`를 유지한다. 수치는 판정 기준 변경 결과이며 구성 개선량으로 해석하지 않는다.
 - 비교는 수준과 구성만 본다. LLM 해석 텍스트는 비교하지 않는다.
 
 ### 4.8 `render`

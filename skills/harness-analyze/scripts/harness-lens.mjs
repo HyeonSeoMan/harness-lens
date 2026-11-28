@@ -57,7 +57,7 @@ var unitsToWeighted = (units) => units / REF_INPUT;
 var ENGINE_VERSION = "0.4.0";
 var VALIDATOR_VERSION = "0.4.0";
 var SCHEMA_VERSION = "0.1";
-var RUBRIC_VERSION = "0.4";
+var RUBRIC_VERSION = "0.5";
 var SESSION_PARSER_VERSION = "5";
 var MIN_NODE_MAJOR = 20;
 var SUPPORTED_PLATFORMS = ["darwin", "linux", "win32"];
@@ -383,6 +383,63 @@ var AXIS_LABEL = {
   autonomy: "자율성",
   safety_boundary: "안전 경계"
 };
+
+// src/safety-hook.mjs
+function closing(text, start, open, close) {
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    const c = text[i];
+    if (c === '"' || c === "'" || c === "`") {
+      const quote = c;
+      while (++i < text.length) {
+        if (text[i] === "\\") i++;
+        else if (text[i] === quote) break;
+      }
+    } else if (c === open) depth++;
+    else if (c === close && --depth === 0) return i;
+  }
+  return -1;
+}
+function safetyHookTargets({ event, matcher, script, blockingCalls = [] }) {
+  if (event !== "PreToolUse" || !script) return [];
+  const tokens = /\/\*[\s\S]*?\*\/|\/\/[^\n]*|"(?:\\[\s\S]|[^"\\])*"|'(?:\\[\s\S]|[^'\\])*'|`(?:\\[\s\S]|[^`\\])*`/g;
+  const blank = (s) => s.replace(/[^\n]/g, " ");
+  const code = script.replace(tokens, (s) => s.startsWith("/") ? blank(s) : s);
+  const withoutStrings = (s) => s.replace(tokens, blank);
+  const syntax = withoutStrings(code);
+  const tools = (matcher ?? "*").split("|").map((m) => m.trim());
+  const matches = (names) => tools.some((m) => ["*", ".*", ...names].includes(m));
+  const targets = /* @__PURE__ */ new Set();
+  const calls = blockingCalls.filter((n) => /^[\w$]+$/.test(n));
+  const blocks = (body) => {
+    const executable = withoutStrings(body);
+    if (hasBlockMarker(executable) || calls.some((n) => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, "\\$")}\\s*\\(`).test(executable))) return true;
+    return [...body.matchAll(/\{[^{}]*\}/g)].some((m) => executable[m.index] === "{" && /["']?(?:decision|permissionDecision|continue)["']?\s*:/.test(m[0]) && hasBlockMarker(m[0]));
+  };
+  const pathNames = [...code.matchAll(/\b(?:const|let|var)\s+(\w+)\s*=\s*[^;\n]*\b(?:file_path|notebook_path)\b/g)].map((m) => m[1]);
+  const riskyGit = /(?:git\s+(?:push|reset|clean|checkout|restore)|push\s+--force|reset\s+--hard|clean\s+-[a-z]*f)/i;
+  for (const hit of code.matchAll(/\bif\s*\(/g)) {
+    if (!syntax.slice(hit.index).startsWith("if")) continue;
+    const start = hit.index + hit[0].length - 1;
+    const end = closing(code, start, "(", ")");
+    if (end < 0) continue;
+    const condition = code.slice(start + 1, end);
+    const rest = code.slice(end + 1).trimStart();
+    const bodyEnd = rest.startsWith("{") ? closing(rest, 0, "{", "}") : rest.indexOf(";");
+    if (bodyEnd < 0 || !blocks(rest.slice(0, bodyEnd + 1))) continue;
+    if (matches(["Write", "Edit", "MultiEdit", "NotebookEdit"]) && /\b(?:file_path|notebook_path)\b/.test(code) && /\b(?:inside|startsWith|includes|match|test)\s*\(/.test(condition) && (/\b(?:path|target|dirs|protected\w*|file\w*)\b/i.test(condition) || pathNames.some((n) => new RegExp(`\\b${n}\\b`).test(condition)))) targets.add("protected_path");
+    if (matches(["Bash"]) && /\bcommand\b/.test(condition) && riskyGit.test(condition)) targets.add("risky_git");
+  }
+  const shell = code.replace(/^\s*#.*$/gm, "");
+  if (matches(["Bash"])) for (const m of shell.matchAll(/\bcase\s+["']?\$(\w+)["']?\s+in\b([\s\S]*?)\besac\b/g)) {
+    if (!new RegExp(`\\b${m[1]}=[^\\n]*\\.tool_input\\.command`).test(shell.slice(0, m.index))) continue;
+    for (const branch of m[2].split(";;")) {
+      const end = branch.indexOf(")");
+      if (end >= 0 && riskyGit.test(branch.slice(0, end)) && blocks(branch.slice(end + 1))) targets.add("risky_git");
+    }
+  }
+  return [...targets].sort(compareCodeUnits);
+}
 
 // src/redact.mjs
 var SENSITIVE_NAMES = [
@@ -979,7 +1036,7 @@ var Collector = class {
     }
   }
   collectHook({ event, matcher, h, g, hi, ord, settingsDisp, origin, scriptRoot }) {
-    var _a;
+    var _a, _b;
     const type = typeof h.type === "string" ? h.type : "command";
     const command = typeof h.command === "string" ? h.command : "";
     const promptText = typeof h.prompt === "string" ? h.prompt : "";
@@ -1009,6 +1066,7 @@ ${promptText}`;
     let block = hasBlockMarker(text);
     const imports = [];
     let blockVia = block ? "script" : null;
+    const blockingCalls = [];
     if (script !== null) {
       const dir = path2.posix.dirname(path2.posix.normalize(scriptRel));
       for (const imp of hookImports(script)) {
@@ -1018,10 +1076,15 @@ ${promptText}`;
         const f = ((_a = cands.map((c) => [c, this.readFile(scriptRoot, c, origin, SCRIPT_LIMIT_BYTES, cands.length > 1)]).find(([, r]) => r.status === "ok")) == null ? void 0 : _a[1]) ?? this.readFile(scriptRoot, cands[0], origin, SCRIPT_LIMIT_BYTES);
         if (f.status !== "ok") continue;
         imports.push({ disp: f.disp, hash: sha256hex(f.raw) });
-        if (block) continue;
         const exported = blockingExports(f.text);
+        for (const name of imp.names ?? []) {
+          if (!exported.has(name)) continue;
+          const alias = ((_b = new RegExp(`\\b${name}\\s+as\\s+(\\w+)`).exec(script)) == null ? void 0 : _b[1]) ?? name;
+          blockingCalls.push(alias);
+        }
+        if (block) continue;
         const called = (n) => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, "\\$")}\\s*\\(`).test(script.replace(/^\s*import\b[^;]*?from\s*["'][^"']*["'];?/gm, ""));
-        const hit = imp.names === null ? exported.size > 0 : exported.has("*") || imp.names.some((n) => exported.has(n) && called(n));
+        const hit = imp.names === null ? exported.size > 0 : exported.has("*") || blockingCalls.some(called);
         if (hit) {
           block = true;
           blockVia = f.disp;
@@ -1035,6 +1098,7 @@ ${script ?? ""}`, REENTRY);
     const matchers = (matcher ?? "").split("|").map((m) => m.trim()).filter(Boolean);
     const writeEdit = matchers.some((m) => /^(Write|Edit|MultiEdit)$/.test(m));
     const highCostOnly = matchers.length > 0 && matchers.every((m) => HIGH_COST_TOOLS.has(m));
+    const safetyTargets = block ? safetyHookTargets({ event, matcher, script, blockingCalls }) : [];
     let primaryAxis = null;
     let ruleIds = [];
     const tags = { event, block, verify, reentry, hook: true };
@@ -1049,9 +1113,9 @@ ${script ?? ""}`, REENTRY);
         } else if (highCostOnly && event === "PreToolUse") {
           primaryAxis = "cost_efficiency";
           ruleIds = ["CE-L3-02"];
-        } else {
+        } else if (safetyTargets.length) {
           primaryAxis = "safety_boundary";
-          ruleIds = event === "PreToolUse" ? ["SB-L2-02"] : [];
+          ruleIds = ["SB-L2-04"];
         }
       }
     } else if (event === "Stop" || event === "SubagentStop") {
@@ -1117,12 +1181,26 @@ ${script ?? ""}`, REENTRY);
       keyPath: keyBase,
       family: "hook",
       mechanism: "harness_enforced",
-      fact: `${event}${matcher ? `(${this.clean(matcher, 60)})` : ""} Hook: ${label} (${describe})`,
+      fact: primaryAxis === "safety_boundary" ? `${event} Hook: 보호 대상(${safetyTargets.join(", ")}), 정적 패턴·도구 호출 한정, 설정 해제·다른 경로 우회 가능; ${label} (${describe})` : `${event}${matcher ? `(${this.clean(matcher, 60)})` : ""} Hook: ${label} (${describe})`,
       primaryAxis,
       ruleIds,
       levelCap,
       tags
     });
+    if (safetyTargets.length && primaryAxis !== "safety_boundary") {
+      this.addEvidence({
+        comp,
+        path: settingsDisp,
+        keyPath: keyBase,
+        family: "hookSafety",
+        mechanism: "harness_enforced",
+        fact: `${event} Hook 보호 대상(${safetyTargets.join(", ")}): matcher·입력 검사·차단 분기 일치(정적 패턴). 도구 호출 한정, 설정 해제·다른 실행 경로 우회 가능, 실행 검증 아님`,
+        primaryAxis: "safety_boundary",
+        ruleIds: ["SB-L2-04"],
+        levelCap,
+        tags: { ...tags, safetyTargets }
+      });
+    }
     if (typeof h.timeout === "number") {
       this.addEvidence({
         comp,
@@ -4260,7 +4338,7 @@ function axisCandidates(axis, prim, ctx) {
     }
   }
   if (axis === "safety_boundary") {
-    const managed = prim.filter((e) => e._tags.origin === "managed" && (e.ruleIds.includes("SB-L2-02") || e.ruleIds.includes("SB-L2-03")));
+    const managed = prim.filter((e) => e._tags.origin === "managed" && (e.ruleIds.includes("SB-L2-04") || e.ruleIds.includes("SB-L2-03")));
     if (managed.length) {
       managed.forEach((e) => addRule(e, "SB-L3-03"));
       push("SB-L3-03", managed);
@@ -4408,7 +4486,7 @@ function computeTensions(col, axes) {
   add("T2", "tension", [VG, CE], evs.filter((e) => has(e, "VG-L2-01", "VG-L2-02", "VG-L3-03")));
   {
     const risky = aSet.filter((e) => ["auto", "dontAsk", "bypassPermissions"].includes(e._tags.defaultMode) || e._tags.bareBash);
-    const guard = evs.some((e) => has(e, "SB-L2-02", "SB-L2-03"));
+    const guard = evs.some((e) => has(e, "SB-L2-04", "SB-L2-03"));
     if (!guard) add("T3", "tension", [A, VG, SB], risky);
   }
   {
