@@ -126,7 +126,7 @@
 ## 5. 리포트 화면 확인
 
 - 방법: `report.html`을 스크래치 디렉터리에 복사하고 `python3 -m http.server --bind 127.0.0.1`로 띄웠다. Orca 내장 브라우저 탭(1280×900, 라이트)으로 열었다. 콘솔 항목은 0개다.
-- 스크린샷: `docs/screenshots/diceforge-run2-summary.png`(메타·근거 성숙도·요약), `docs/screenshots/diceforge-run2-radar.png`(레이더·축 목록).
+- 스크린샷 2장: 스크린샷 1(메타·근거 성숙도·요약)과 스크린샷 2(레이더·축 목록). 로컬에 보관하고 저장소에는 넣지 않았다.
 - 화면 텍스트(`exec read`)로 §2~§4의 문구를 확인했다.
 
 ## 6. 남은 일
