@@ -128,19 +128,17 @@ node $E finalize --project <프로젝트> --run <runId> --agent claude-code --js
 
 상태는 색만이 아니라 텍스트와 선 스타일로 구분한다. 다크 모드를 지원한다.
 
-<!-- 자리표시: 샘플 프로젝트 화면 예정. 자체 샘플 프로젝트로 새 스크린샷을 만들어 아래 이미지를 교체한다. -->
+### 샘플 화면
 
-> 샘플 프로젝트 화면 예정. 아래는 임시로 저장소 픽스처로 만든 화면이다.
+> **합성 데이터다.** 아래 화면은 가상의 샘플 프로젝트 [`examples/sample-project`](./examples/sample-project/)(todo-api)와 고정 시드로 만든 가짜 세션 기록으로 엔진을 실제로 돌려 만든 리포트다. 실제 사용자의 설정·대화·경로는 들어 있지 않다.
 
-| 첫 분석 | 재분석과 변경 비교 |
-|---|---|
-| ![첫 분석 리포트](./docs/screenshots/report-before.png) | ![재분석 리포트](./docs/screenshots/report-after.png) |
+시나리오: 권한 규칙·Bash 차단 Hook·릴리스 점검 Skill이 있던 구성에 **종료 전 검증 Stop Hook**을 더한 뒤 재분석했다. 리포트는 검증 게이트·실행 안정성이 2→3으로 오른 대신, 같은 기간 합성 세션의 턴 시간 중앙값이 약 40초→90초로 늘어 처리 속도 실측 대역이 2→1로 내려간 트레이드오프를 보여준다(상관관계, 시연용 설계 값).
 
-| 세션 기록 실측 | 다크 모드 |
-|---|---|
-| ![세션 기록 실측](./docs/screenshots/report-sessions-measured.png) | ![다크 모드](./docs/screenshots/report-after-dark.png) |
+| 라이트 (1200px) | 다크 (1200px) | 휴대폰 폭 (390px) |
+|---|---|---|
+| [![재분석 리포트, 라이트 모드](./docs/images/sample-report-light.png)](./docs/images/sample-report-light.png) | [![재분석 리포트, 다크 모드](./docs/images/sample-report-dark.png)](./docs/images/sample-report-dark.png) | [![재분석 리포트, 390px 폭](./docs/images/sample-report-mobile.png)](./docs/images/sample-report-mobile.png) |
 
-픽스처: `examples/fixtures/harness-before` → `harness-after`, 세션 기록은 `examples/fixtures/claude-config`(합성). 기록이 없을 때의 화면: [report-sessions-none.png](./docs/screenshots/report-sessions-none.png).
+이미지는 전체 페이지라 길다. 눌러서 원본 크기로 본다. 다시 만드는 방법은 [샘플 프로젝트 README](./examples/sample-project/README.md)에 있다. 테스트 픽스처로 만든 이전 화면(세션 기록이 없을 때 등)은 [`docs/screenshots/`](./docs/screenshots/)에 있다.
 
 ## 근거 성숙도: 예측과 실측
 
@@ -229,7 +227,7 @@ node $E finalize --project <프로젝트> --run <runId> --agent claude-code --js
 | `skills/harness-analyze/` | 배포 단위 Skill. 엔진 번들(`scripts/`), 스키마, 참고 문서, 리포트 템플릿 포함 |
 | `engine/` | 엔진 소스(Node.js 20 이상, ESM, 런타임 의존성 없음). `npm run build`로 단일 번들 생성(esbuild, 개발 의존성) |
 | `tests/` | e2e·결정론·보안·검증·성능 예산 테스트. 커밋된 번들을 실행한다 |
-| `examples/` | 픽스처(before·after·비밀정보·악성 지시문·합성 세션 기록), 예시 해석, 스키마 예시 |
+| `examples/` | 픽스처(before·after·비밀정보·악성 지시문·합성 세션 기록), 예시 해석, 스키마 예시, README 스크린샷용 합성 샘플 프로젝트(`sample-project/`) |
 
 ## 라이선스
 
