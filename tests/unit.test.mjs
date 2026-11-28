@@ -2,6 +2,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RedactionCounter, detectSecrets, isSensitiveFile, keepEnvValue, redactString, targetsAnalyzer, urlSchemeHost } from '../engine/src/redact.mjs';
+import { spawnSync } from 'node:child_process';
+import { browserCommand } from '../engine/src/cli.mjs';
 import { hookScriptPath } from '../engine/src/collect.mjs';
 import { parseFrontmatter } from '../engine/src/frontmatter.mjs';
 import { serializeForScript } from '../engine/src/render.mjs';
@@ -55,4 +57,19 @@ test('결정론 직렬화와 반올림', () => {
   assert.equal(stableStringify({ b: 1, a: { d: 2, c: 3 } }), '{\n  "a": {\n    "c": 3,\n    "d": 2\n  },\n  "b": 1\n}\n');
   assert.equal(roundHalfEven(0.12345, 4), 0.1234);
   assert.equal(roundHalfEven(2.5, 0), 2);
+});
+
+test('render --open: Windows는 start 제목과 URL을 직접 인용해 &가 든 경로도 한 인자로 넘긴다', () => {
+  const target = 'file:///C:/Users/a%20b/R&D/.harness-lens/report.html';
+  assert.deepEqual(browserCommand('darwin', target), ['open', [target], {}]);
+  assert.deepEqual(browserCommand('linux', target), ['xdg-open', [target], {}]);
+  const [cmd, args, extra] = browserCommand('win32', target);
+  assert.equal(cmd, 'cmd');
+  assert.deepEqual(args, ['/d', '/s', '/c', `"start "" "${target}""`]);
+  assert.equal(extra.windowsVerbatimArguments, true);
+  if (process.platform !== 'win32') return;
+  // 실제 cmd로 같은 인용을 해석해 본다. start 대신 echo로 바꿔 브라우저를 열지 않는다.
+  const r = spawnSync(cmd, args.map((a) => a.replace('"start ', '"echo ')), { ...extra, encoding: 'utf8' });
+  assert.equal(r.status, 0, r.stderr);
+  assert.equal(r.stdout.trim(), `"" "${target}"`);
 });

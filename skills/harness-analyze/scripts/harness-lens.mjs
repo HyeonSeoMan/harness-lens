@@ -5276,11 +5276,16 @@ function cmdSnapshot(ctx) {
   if (existsSync6(runFile)) writeJson(runFile, { ...readJson(runFile), status: "snapshotted" });
   return { result: { ok: true, snapshotId: safe.meta.snapshotId, analysisPath: path8.join(snapshotDir(ctx.out, safe.meta.snapshotId), "analysis.json") } };
 }
+function browserCommand(platform, target) {
+  if (platform === "darwin") return ["open", [target], {}];
+  if (platform === "win32") return ["cmd", ["/d", "/s", "/c", `"start "" "${target}""`], { windowsVerbatimArguments: true }];
+  return ["xdg-open", [target], {}];
+}
 function openInBrowser(file) {
   const target = pathToFileURL(file).href;
   try {
-    const [cmd, args] = process.platform === "darwin" ? ["open", [target]] : process.platform === "win32" ? ["cmd", ["/c", "start", '""', target]] : ["xdg-open", [target]];
-    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
+    const [cmd, args, extra] = browserCommand(process.platform, target);
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true, ...extra });
     child.on("error", () => {
     });
     child.unref();

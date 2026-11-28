@@ -488,11 +488,19 @@ function cmdSnapshot(ctx) {
   return { result: { ok: true, snapshotId: safe.meta.snapshotId, analysisPath: path.join(snapshotDir(ctx.out, safe.meta.snapshotId), 'analysis.json') } };
 }
 
+// Windows: libuv 인용은 '""'를 "\"\""로 바꿔 start가 제목으로 받지 못하고, 따옴표 없는 & 등은 cmd가 해석한다.
+// 그래서 Node의 shell 실행과 같은 cmd /d /s /c "<명령>" 형식으로 직접 인용해 넘긴다(Windows 경로에는 "가 올 수 없다).
+export function browserCommand(platform, target) {
+  if (platform === 'darwin') return ['open', [target], {}];
+  if (platform === 'win32') return ['cmd', ['/d', '/s', '/c', `"start "" "${target}""`], { windowsVerbatimArguments: true }];
+  return ['xdg-open', [target], {}];
+}
+
 function openInBrowser(file) {
   const target = pathToFileURL(file).href;
   try {
-    const [cmd, args] = process.platform === 'darwin' ? ['open', [target]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', target]] : ['xdg-open', [target]];
-    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
+    const [cmd, args, extra] = browserCommand(process.platform, target);
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true, ...extra });
     child.on('error', () => {});
     child.unref();
     return true;
