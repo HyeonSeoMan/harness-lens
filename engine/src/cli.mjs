@@ -274,14 +274,23 @@ export function compactInventory(draft, kbKeys) {
   const target = BUDGETS.llm_input_inventory_tokens.target;
   let text = serializeCompact(build(null));
   if (estimateTokens(text) <= target) return text;
-  // 축별 근거 수의 최댓값부터 줄여 예산 안에 드는 가장 큰 N을 쓴다. 1로도 넘으면 1을 쓰고 예산 초과로 보고한다.
+  // 축별 근거 수의 최댓값부터 줄여 예산 안에 드는 가장 큰 N을 쓴다. 1로도 넘으면 마지막 압축 단계로 간다.
   const counts = new Map();
   for (const ev of e.evidence) counts.set(ev.primaryAxis ?? '', (counts.get(ev.primaryAxis ?? '') ?? 0) + 1);
   for (let n = Math.max(1, ...counts.values()) - 1; n >= 1; n--) {
     text = serializeCompact(build(n));
     if (estimateTokens(text) <= target) return text;
   }
-  return text;
+  // 실측 지표가 복원되면 fact 최소 1개로도 넘을 수 있다. 마지막 단계에서만
+  // 비판정 설명과 재구성 가능한 중복을 생략한다. 근거 ID·규칙·실측 수치는 보존한다.
+  const lean = build(1);
+  for (const c of lean.engine.inventory.components) {
+    for (const key of ['command', 'description', 'headings']) delete c.attributes[key];
+    if (c.name === c.paths?.[0]) delete c.name;
+  }
+  for (const a of lean.engine.axes) delete a.source.evidenceIds;
+  lean.compaction.omitted.push('descriptive_component_attributes', 'name_equal_first_path', 'axis_source_evidenceIds');
+  return serializeCompact(lean);
 }
 
 function interpretationTemplate(axes, comparison) {

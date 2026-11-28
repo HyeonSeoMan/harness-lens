@@ -498,7 +498,13 @@ export class Collector {
       },
     });
     const keyBase = pointer('hooks', event, g, 'hooks', hi);
-    const describe = [block ? (blockVia && blockVia !== 'script' ? `차단 표지 있음(import ${path.posix.basename(blockVia)})` : '차단 표지 있음') : '차단 표지 없음', verify ? '검증 명령 어휘' : null, levelCap ? '스크립트 확인 불가' : null].filter(Boolean).join(', ');
+    // 차단 표지는 문자열 패턴 탐지임을, 검증 명령 어휘는 검증 판정에 쓰는 이벤트에서만 근거임을 fact에 드러낸다.
+    const verifyEvent = event === 'PreToolUse' || event === 'PostToolUse' || event === 'Stop' || event === 'SubagentStop';
+    const describe = [
+      block ? (blockVia && blockVia !== 'script' ? `차단 표지(문자열 패턴) 있음(import ${path.posix.basename(blockVia)})` : '차단 표지(문자열 패턴) 있음') : '차단 표지(문자열 패턴) 없음',
+      verify ? (verifyEvent ? '검증 명령 어휘' : '검증 명령 어휘 있음(이 이벤트는 검증 판정에 쓰지 않음)') : null,
+      levelCap ? '스크립트 확인 불가' : null,
+    ].filter(Boolean).join(', ');
     this.addEvidence({
       comp, path: settingsDisp, keyPath: keyBase, family: 'hook', mechanism: 'harness_enforced',
       fact: `${event}${matcher ? `(${this.clean(matcher, 60)})` : ''} Hook: ${label} (${describe})`,

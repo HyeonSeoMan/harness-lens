@@ -6,7 +6,7 @@ export const REPORT_CSS = `
   --grid: #c9c9c2; --current: #1f5fbf; --previous: #7a7a72; --band: rgba(31, 95, 191, 0.16);
   --warn-bg: #fff4dc; --warn-line: #c98a00; --added: #1d7a3a; --removed: #b3261e; --modified: #8a5a00;
   --code-bg: #efefea;
-  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --was: #7a7a72;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -14,7 +14,7 @@ export const REPORT_CSS = `
     --grid: #4a4a45; --current: #7fb0ff; --previous: #9c9c94; --band: rgba(127, 176, 255, 0.20);
     --warn-bg: #3a2f14; --warn-line: #e0a830; --added: #6fcf8a; --removed: #ff8a80; --modified: #e6b450;
     --code-bg: #2a2a27;
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --was: #9c9c94;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
   }
 }
 * { box-sizing: border-box; }
@@ -24,6 +24,8 @@ h1 { font-size: 24px; margin: 0 0 4px; }
 h2 { font-size: 19px; margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 h3 { font-size: 16px; margin: 18px 0 8px; }
 p { margin: 6px 0; }
+/* 긴 비분리 문자열(경로·식별자)이 페이지 폭을 넘기지 않게 한다. 표는 .tablewrap 가로 스크롤에 맡긴다. */
+p, li, summary, .meta div { overflow-wrap: anywhere; }
 .muted { color: var(--muted); }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin: 10px 0; }
 .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 6px 18px; margin: 12px 0; }
@@ -37,11 +39,8 @@ p { margin: 6px 0; }
 .bar span.seg.on { background: var(--current); border: 1px solid var(--current); }
 .mini { display: inline-block; vertical-align: middle; width: 80px; height: 8px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; margin-right: 6px; }
 .mini span { display: block; height: 100%; background: var(--current); }
-svg.radar .pt-was { fill: none; stroke: var(--was); stroke-width: 1.5; stroke-dasharray: 2 3; opacity: 0.8; }
 .sharewrap { margin: 6px 0 10px; }
 svg.share { width: 100%; height: auto; display: block; }
-svg.share .seglabel { fill: #fff; font-size: 12px; font-weight: 600; }
-svg.share .seglabel.ink { fill: #111; }
 svg .c1, .swatch.c1 { fill: var(--s1); background: var(--s1); }
 svg .c2, .swatch.c2 { fill: var(--s2); background: var(--s2); }
 svg .c3, .swatch.c3 { fill: var(--s3); background: var(--s3); }
@@ -73,6 +72,7 @@ svg.radar .cur { stroke: var(--current); stroke-width: 2.5; fill: none; }
 svg.radar .cur.predicted { stroke-dasharray: 7 5; }
 svg.radar .prev { stroke: var(--previous); stroke-width: 2; fill: none; stroke-dasharray: 2 4; opacity: 0.9; }
 svg.radar .pt-pred { fill: var(--panel); stroke: var(--current); stroke-width: 2.5; }
+svg.radar .pt-pred.faded { opacity: 0.45; }
 svg.radar .pt-meas { fill: var(--current); stroke: var(--current); }
 svg.radar .pt-prev { fill: var(--previous); }
 svg.radar .unknown { fill: none; stroke: var(--warn-line); stroke-width: 2; stroke-dasharray: 3 3; }
