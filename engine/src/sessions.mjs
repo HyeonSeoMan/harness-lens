@@ -545,9 +545,11 @@ export function toolCategory(name) {
 }
 
 // 문자열 값 어딘가에 R 경로가 경로 경계로 나오는가. 값은 저장하지 않고 불리언만 남긴다.
+// roots는 / 구분자라 Windows 경로(C:\a\b)의 역슬래시도 /로 바꿔 비교한다.
 function mentionsRoot(value, roots, depth = 0) {
   if (depth > 8 || value === null || value === undefined) return false;
   if (typeof value === 'string') {
+    if (value.includes('\\')) value = value.replace(/\\/g, '/');
     for (const r of roots) {
       let i = value.indexOf(r);
       while (i !== -1) {

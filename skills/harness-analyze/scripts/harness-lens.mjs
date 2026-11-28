@@ -1840,7 +1840,7 @@ function reportClient() {
     return sec;
   }
   function table(headers, rows) {
-    return el("div", { class: "tablewrap" }, el("table", null, [
+    return el("div", { class: "tablewrap" }, el("table", { style: "min-width: " + headers.length * 80 + "px; word-break: keep-all" }, [
       el("thead", null, el("tr", null, headers.map(function(h) {
         return el("th", { scope: "col" }, h);
       }))),
@@ -3358,6 +3358,7 @@ function toolCategory(name) {
 function mentionsRoot(value, roots, depth = 0) {
   if (depth > 8 || value === null || value === void 0) return false;
   if (typeof value === "string") {
+    if (value.includes("\\")) value = value.replace(/\\/g, "/");
     for (const r of roots) {
       let i = value.indexOf(r);
       while (i !== -1) {
