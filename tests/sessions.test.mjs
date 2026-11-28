@@ -1,12 +1,13 @@
 // 세션 기록 실측 집계(FR-10, FR-11, PRD §6.1, engine-cli.md §8). 합성 픽스처만 쓴다.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, utimesSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import {
   SENTINELS, analyze, engine, exampleInterpretation, makeProject, makeSessionLogs, readJson, readTree,
 } from './helpers.mjs';
 import { appendResponse, writeSyntheticLogs } from './support/synth-sessions.mjs';
+import { aggregateSessions } from '../engine/src/session-aggregate.mjs';
 
 const NOW = '2026-11-27T09:00:00Z';
 
@@ -19,6 +20,50 @@ function prepare(p, configDir, extra = [], now = NOW) {
 
 const loc = (s, name) => s.tokens.byLocation.find((l) => l.location === name);
 const four = (b) => [b.freshInput, b.cacheWrite, b.cacheRead, b.output];
+
+test('전체 스캔 범위는 무관한 옛 기록을 포함하지만 컨텍스트는 귀속 관측일만 쓰며 구성 시각과 봇 매핑에 불변이다', (t) => {
+  const p = makeProject('harness-after');
+  t.after(p.cleanup);
+  const configDir = path.join(p.base, 'trend-config');
+  const dir = path.join(configDir, 'projects', '-synthetic');
+  const bots = path.join(p.base, 'bots');
+  const bot = path.join(bots, 'old-bot');
+  mkdirSync(dir, { recursive: true });
+  mkdirSync(bot, { recursive: true });
+  mkdirSync(p.out, { recursive: true });
+  const usage = { input_tokens: 10, cache_creation_input_tokens: 20, cache_read_input_tokens: 30, output_tokens: 40 };
+  for (const [sid, project, date] of [
+    ['excluded', path.join(p.base, 'another-project'), '2026-11-02'],
+    ['old-bot', bot, '2026-11-03'],
+    ['target-26', p.project, '2026-11-26'],
+    ['target-27', p.project, '2026-11-27'],
+  ]) appendResponse(path.join(dir, sid + '.jsonl'), { sid, project, id: sid, t: Date.parse(date + 'T12:00:00Z'), usage });
+  const config = { orcaPaths: { bots, workspaces: path.join(p.base, 'workspaces') } };
+  writeFileSync(path.join(p.out, 'config.json'), JSON.stringify(config));
+  const baseline = prepare(p, configDir, [], '2026-11-28T09:00:00Z').sessions;
+  assert.deepEqual(baseline.window, { from: '2026-11-02', to: '2026-11-27', rawLogsFrom: '2026-11-02' });
+  assert.deepEqual(baseline.contextPerTurn.series.map((x) => x.date), ['2026-11-26', '2026-11-27']);
+  assert.equal(baseline.contextPerTurn.requests, 2);
+  assert.equal(baseline.coverage.sessionsExcluded, 1);
+  assert.deepEqual(four(baseline.tokens.total), [20, 40, 60, 80]);
+  assert.deepEqual(four(baseline.tokens.unattributed.tokens), [10, 20, 30, 40]);
+  const noConfigSince = aggregateSessions({ configDir, projectRoot: p.project, out: p.out, nowMs: Date.parse('2026-11-28T09:00:00Z'), configSinceMs: null }).sessions;
+  assert.equal(noConfigSince.coverage.configSince, null);
+  assert.deepEqual(noConfigSince.contextPerTurn, baseline.contextPerTurn);
+  assert.equal(noConfigSince.axisMetrics.find((m) => m.metricId === 'context_p90_tokens').sampleSize, 2);
+  for (const date of ['2026-11-26', '2026-11-27']) {
+    const ts = new Date(date + 'T00:00:00Z');
+    utimesSync(path.join(p.project, 'CLAUDE.md'), ts, ts);
+    const s = prepare(p, configDir, [], '2026-11-28T09:00:00Z').sessions;
+    assert.deepEqual(s.contextPerTurn, baseline.contextPerTurn);
+    assert.equal(s.axisMetrics.find((m) => m.metricId === 'context_p90_tokens').sampleSize, date.endsWith('26') ? 2 : 1);
+  }
+  config.sessionAttribution = { bots: { 'old-bot': p.project } };
+  writeFileSync(path.join(p.out, 'config.json'), JSON.stringify(config));
+  const mapped = prepare(p, configDir, [], '2026-11-28T09:00:00Z').sessions;
+  assert.deepEqual(mapped.contextPerTurn, baseline.contextPerTurn);
+  assert.deepEqual(four(mapped.tokens.total), [30, 60, 90, 120]);
+});
 
 test('중복 제거: message.id로 묶어 필드별 최댓값, 합성·API 오류·잘린 줄·부모 요약 수치 제외', (t) => {
   const p = makeProject('harness-after');
