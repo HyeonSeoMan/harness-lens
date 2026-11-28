@@ -12,3 +12,16 @@
 검증: 합성 픽스처로 수집·축 판정·해시·외부 경계·스키마 및 N3~N5를 회귀 검사한다. DiceForge는 읽기만 하고 산출물은 `/tmp/harness-lens-stage5-scope-validation`에 기록했으며 `prepare --no-sessions --strict-budget`의 압축 인벤토리는 5,499토큰 추정으로 6,000 이내다. 세션을 제외한 수집 범위·압축 입력 검증이며 실측 데이터 수집을 검증한 것은 아니다.
 
 로컬 전체 테스트 93/93 및 번들 일치 검사가 통과했다. 12만 응답·이벤트를 포함한 성능 회귀의 최초 RSS 175.7MiB·1,315ms, 증분 RSS 148.2MiB·298ms로 200MiB·5초 예산 안이었다(이 실행 환경의 관측값).
+
+## PR 독립 검수 후 보완
+
+- B1: `.git/config`를 일반 수집 함수 대신 경계 검사된 판독 함수로만 읽는다. 파일 자체는 sources·configurationHash·configSince에 넣지 않는다. hooksPath가 Hook의 활성 여부를 바꾸면 Hook의 기존 해시에 반영되지만, 브랜치·remote 등 무관한 변경은 영향을 주지 않는다. 합성 24세션과 최근 config 변경으로 CX 실측·표본·해시·configSince 유지 및 입력 파일 내용·mtime·크기 보존을 회귀 검사한다.
+- R1: hooksPath의 `./`·후행 슬래시·역슬래시를 정규화하고 `[core] # 주석`을 허용한다. 같은 Hook이 한 번만 수집됨을 검사한다.
+- R2·R3: YAML 스칼라 블록은 `-`가 아니라 키 열을 기준으로 끝낸다. CircleCI run 객체의 이름은 제외하고 command 값만 본다. Jenkinsfile은 sh/bat/powershell 한 줄 리터럴만 판정한다. 복잡한 Groovy나 여러 줄 문자열은 보수적으로 미분류한다.
+- R4: 새 저장소 게이트의 검증 어휘는 실제 실행 명령 형태로 제한하고 셸 test·echo·변수 대입을 제외한다. L3는 찾은 명령에 직접 연결된 `|| exit 양수`, 또는 앞서 활성화한 errexit 아래의 단독 명령만 후보로 한다. 임의 파일 안의 종료 표지로 올리지 않는다.
+- R5: Windows에서 존재만으로 실행 가능하다고 추정하는 대안은 적용하지 않았다. 대신 실행 비트를 미확인으로 두고 `git_hook_executable_unconfirmed` 한계를 명시하며 POSIX chmod 단언은 Windows에서 건너뛴다. 플랫폼별 실행 비트·구성 해시 차이 가능성도 명세에 기록한다.
+- R6: 워크트리·서브모듈의 외부 gitdir를 따라가는 대안은 읽기 경계상 적용하지 않고 `git_hook_activation_unresolved`를 남긴다. 추적된 Hook은 절차 근거로만 수집한다.
+- R7: `client.mjs` 변경은 리포트 담당 범위이므로 이 PR에서 하지 않는다. #16이 머지된 main에도 새 `needs_ci_pr_results` 매핑은 없어 후속 연결이 필요하다.
+- R8·R9: 시각 없는 세대의 firstTs·lastTs를 모두 null로 유지하는 테스트, 설정 변형·표시 문자열 반례·세션 포함 재분석 테스트를 추가했다.
+
+실제 DiceForge 세션 포함 재검증(산출물 `/tmp/harness-lens-pr17-review-with-sessions`, 분석 대상 쓰기 없음)에서 configSince는 main과 같은 `2026-11-27T11:10:06Z`, CX는 `measured`·28세션, TP 28·AU 195·ES 72표본으로 복원됐다. 다만 이 실행의 압축 인벤토리는 6,437토큰으로 strict-budget가 종료 60을 반환했다. 기존 압축기는 fact를 축당 1개까지 줄여도 구조·세션 요약이 크면 더 줄이지 못한다. 이 별도 압축 한계를 감추거나 예산을 늘리지 않았으며, 수집 범위·실측 창 수정과 분리해 코디네이터에게 보고한다.

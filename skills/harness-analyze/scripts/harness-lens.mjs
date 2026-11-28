@@ -1307,13 +1307,20 @@ ${script ?? ""}`, REENTRY);
   collectRepositoryGates() {
     const root = this.projectRoot;
     let hooksDir = ".git/hooks";
-    const config = this.readFile(root, ".git/config", "project_local", TEXT_LIMIT_BYTES, true);
+    const config = readTextInside(root, ".git/config", TEXT_LIMIT_BYTES);
+    this.gateLimitations = [];
+    const git = resolveInside(root, ".git");
+    if (git.status === "ok" && !git.isDir) this.gateLimitations.push({ code: "git_hook_activation_unresolved", message: "워크트리·서브모듈의 외부 gitdir는 따라가지 않아 Git Hook 활성 경로를 확인하지 못했습니다. 추적된 Hook은 절차 근거로만 봅니다." });
+    if (this.platform === "win32") this.gateLimitations.push({ code: "git_hook_executable_unconfirmed", message: "Windows에서는 Git Hook 실행 비트를 확인하지 못해 강제 수준으로 올리지 않습니다. 실행 비트가 다른 플랫폼과 구성 해시가 다를 수 있습니다." });
     if (config.status === "ok") {
       let core = false;
       for (const line of config.text.split("\n")) {
-        if (/^\s*\[/.test(line)) core = /^\s*\[core\]\s*$/i.test(line);
+        if (/^\s*\[/.test(line)) core = /^\s*\[core\]\s*(?:[#;].*)?$/i.test(line);
         const m = core && /^\s*hooksPath\s*=\s*([^#;]+?)\s*$/i.exec(line);
-        if (m) hooksDir = m[1].replace(/^"(.*)"$/, "$1");
+        if (m) {
+          const value = m[1].replace(/^"(.*)"$/, "$1").replace(/\\/g, "/");
+          hooksDir = value.split("/").includes("..") || path2.posix.isAbsolute(value) || /^[A-Za-z]:/.test(value) ? value : path2.posix.normalize(value).replace(/\/$/, "");
+        }
       }
     }
     const collectGate = (rel, kind, origin, active = false) => {
@@ -1321,10 +1328,17 @@ ${script ?? ""}`, REENTRY);
       if (f.status !== "ok") return;
       const commands = [];
       let blockIndent = null;
+      let runObject = null;
       f.text.split("\n").forEach((line, i) => {
+        var _a, _b;
         if (!line.trim() || /^\s*#/.test(line)) return;
         if (targetsAnalyzer(line)) {
           this.r8Hits++;
+          return;
+        }
+        if (path2.basename(rel) === "Jenkinsfile") {
+          const sh = /^\s*(?:sh|bat|powershell)\s*(?:\(\s*)?["']([^"']+)["']/.exec(line);
+          if (sh) commands.push([i + 1, sh[1]]);
           return;
         }
         if (!/\.ya?ml$/i.test(rel)) {
@@ -1332,15 +1346,19 @@ ${script ?? ""}`, REENTRY);
           return;
         }
         const indent = line.search(/\S/);
+        if (runObject && indent <= runObject.parent) runObject = null;
+        if (runObject) runObject.child ?? (runObject.child = indent);
         if (blockIndent !== null && indent > blockIndent) {
           commands.push([i + 1, line]);
           return;
         }
         blockIndent = null;
-        const m = /^(\s*)(?:-\s*)?(?:run|script|entry):\s*(.*)$/.exec(line);
+        const m = /^(\s*)(-\s*)?(run|script|entry|command):\s*(.*)$/.exec(line);
         if (!m) return;
-        if (/^[|>][-+]?\s*$/.test(m[2]) || !m[2]) blockIndent = indent;
-        else commands.push([i + 1, m[2]]);
+        if (m[3] === "command" && (!runObject || indent !== runObject.child)) return;
+        if (m[3] === "run" && !m[4]) runObject = { parent: m[1].length + (((_a = m[2]) == null ? void 0 : _a.length) ?? 0), child: null };
+        if (/^[|>][-+]?\s*(?:#.*)?$/.test(m[4]) || !m[4] && m[3] === "script") blockIndent = m[1].length + (((_b = m[2]) == null ? void 0 : _b.length) ?? 0);
+        else if (m[4]) commands.push([i + 1, m[4]]);
       });
       const comp = this.addComponent({
         kind,
@@ -1364,9 +1382,17 @@ ${script ?? ""}`, REENTRY);
         ["spec_clarity", SPEC_CMD, "SC-L2-04"],
         ["verification_gate_strength", VERIFY_CMD, "VG-L2-04"]
       ]) {
-        const hit = commands.find(([, cmd]) => hasAny(cmd, words) && (axis === "spec_clarity" || !hasAny(cmd, SPEC_CMD)));
+        const verification = (cmd) => /(?:^|[;&|]\s*|\s)(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|check)(?:\b|:)|node\s+--test\b|pytest\b|ruff\b|eslint\b|tsc\b|prettier\s+--check\b|cargo\s+(?:test|clippy)\b|go\s+(?:test|vet)\b|mvn\s+(?:test|verify)\b|gradle\s+(?:test|check)\b)/i.test(cmd) && !/^\s*(?:echo|printf|export|[\w]+\s*=)\b/.test(cmd);
+        const hit = commands.find(([, cmd]) => {
+          const candidate = cmd.replace(/^\s*-\s+/, "").trim();
+          if (/^(?:echo|printf|export|test|\[)(?:\s|$)|^[\w]+\s*=/.test(candidate)) return false;
+          return (axis === "spec_clarity" ? hasAny(candidate, words) : verification(candidate)) && (axis === "spec_clarity" || !hasAny(candidate, SPEC_CMD));
+        });
         if (!hit) continue;
-        const enforced = kind === "git_hook" && active && /(?:set\s+-[a-z]*e|\bexit\s+[1-9]|process\.exit\([1-9])/.test(commands.map(([, c]) => c).join("\n"));
+        const before = commands.filter(([line]) => line < hit[0]).map(([, cmd]) => cmd).join("\n");
+        const linkedFailure = /\|\|\s*exit\s+[1-9]\d*\s*$/.test(hit[1]);
+        const standaloneWithErrexit = /^\s*set\s+-[a-z]*e[a-z]*\s*$/m.test(before) && !/\bset\s+\+[a-z]*e/.test(before) && !/[;&|]/.test(hit[1]);
+        const enforced = kind === "git_hook" && active && (linkedFailure || standaloneWithErrexit);
         const ruleId = enforced ? axis === "spec_clarity" ? "SC-L3-02" : "VG-L3-04" : rule;
         this.addEvidence({
           comp,
@@ -1391,7 +1417,7 @@ ${script ?? ""}`, REENTRY);
     ]) {
       if (visited.has(dir)) continue;
       visited.add(dir);
-      const active = kind === "git_hook" && dir === hooksDir;
+      const active = kind === "git_hook" && dir === hooksDir && !(git.status === "ok" && !git.isDir);
       const origin = active ? "project_local" : declaredOrigin;
       const listed = listDirInside(root, dir);
       if (listed.status === "escape") this.addSource(displayPath(path2.resolve(root, dir), root), origin, "out_of_scope", "outside_root_or_symlink_escape");
@@ -1402,7 +1428,7 @@ ${script ?? ""}`, REENTRY);
         const rel = `${dir}/${name}`;
         const r = resolveInside(root, rel);
         if (r.isDir) continue;
-        const executable = active && r.status === "ok" && !!(statSync2(r.real).mode & 73);
+        const executable = active && this.platform !== "win32" && r.status === "ok" && !!(statSync2(r.real).mode & 73);
         collectGate(rel, kind, dir === hooksDir ? "project_local" : origin, executable);
       }
     }
@@ -1505,7 +1531,8 @@ ${script ?? ""}`, REENTRY);
       r8Hits: this.r8Hits,
       plugins: this.plugins,
       selfComponentId: self.id,
-      selfAlwaysLoadedTokens: this.selfAlwaysLoadedTokens
+      selfAlwaysLoadedTokens: this.selfAlwaysLoadedTokens,
+      gateLimitations: this.gateLimitations
     };
   }
 };
@@ -3593,8 +3620,10 @@ function scanTranscripts({ configDir, state, env, fullRescan, log }) {
         for (const k of COUNTERS) retired.c[k] += old.c[k];
         retired.durations = [...old.durations, ...retired.durations];
         retired.gaps = [...old.gaps, ...retired.gaps];
-        retired.firstTs = Math.min(old.firstTs ?? Infinity, retired.firstTs ?? Infinity);
-        retired.lastTs = Math.max(old.lastTs ?? 0, retired.lastTs ?? 0);
+        const first = [old.firstTs, retired.firstTs].filter((t) => t !== null);
+        const last = [old.lastTs, retired.lastTs].filter((t) => t !== null);
+        retired.firstTs = first.length ? Math.min(...first) : null;
+        retired.lastTs = last.length ? Math.max(...last) : null;
         retired.cls ?? (retired.cls = old.cls);
         retired.botMention || (retired.botMention = old.botMention);
         if (old.versions) retired.versions = retired.versions ? [compareVersions(old.versions[0], retired.versions[0]) < 0 ? old.versions[0] : retired.versions[0], compareVersions(old.versions[1], retired.versions[1]) > 0 ? old.versions[1] : retired.versions[1]] : old.versions;
@@ -4837,7 +4866,7 @@ function engineLimitations(col, ctx, sessions, info, extra = []) {
   if (col.sources.some((s) => s.status === "unreadable")) out.push({ code: "source_unreadable", message: "읽지 못한 출처가 있어 일부 축은 판정 불가이거나 범위가 넓습니다." });
   if (col.sources.some((s) => s.status === "out_of_scope" && s.origin !== "user" && s.origin !== "managed")) out.push({ code: "source_out_of_scope", message: "수집 루트 밖을 가리키는 경로(심볼릭 링크·import 등)는 따라가지 않았습니다." });
   if (col.sources.some((s) => s.status === "skipped_sensitive")) out.push({ code: "sensitive_files_skipped", message: "민감한 이름의 파일(.env, 키 파일 등)은 열지 않았습니다." });
-  return [...out, ...extra];
+  return [...out, ...col.gateLimitations ?? [], ...extra];
 }
 function configSinceMs(ctx, col) {
   const nowMs = Date.parse(ctx.now);

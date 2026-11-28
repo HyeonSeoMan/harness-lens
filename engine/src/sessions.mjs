@@ -859,8 +859,10 @@ export function scanTranscripts({ configDir, state, env, fullRescan, log }) {
         for (const k of COUNTERS) retired.c[k] += old.c[k];
         retired.durations = [...old.durations, ...retired.durations];
         retired.gaps = [...old.gaps, ...retired.gaps];
-        retired.firstTs = Math.min(old.firstTs ?? Infinity, retired.firstTs ?? Infinity);
-        retired.lastTs = Math.max(old.lastTs ?? 0, retired.lastTs ?? 0);
+        const first = [old.firstTs, retired.firstTs].filter((t) => t !== null);
+        const last = [old.lastTs, retired.lastTs].filter((t) => t !== null);
+        retired.firstTs = first.length ? Math.min(...first) : null;
+        retired.lastTs = last.length ? Math.max(...last) : null;
         retired.cls ??= old.cls;
         retired.botMention ||= old.botMention;
         if (old.versions) retired.versions = retired.versions

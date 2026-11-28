@@ -1,12 +1,13 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { chmodSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 import { collect } from '../engine/src/collect.mjs';
 import { computeAxes, computeMaturity } from '../engine/src/rubric.mjs';
 import { emptySessions } from '../engine/src/session-aggregate.mjs';
 import { createValidator } from '../engine/src/schema-validator.mjs';
-import { bundle, engine, readJson, tempDir } from './helpers.mjs';
+import { bundle, engine, pinMtimes, readJson, tempDir } from './helpers.mjs';
+import { writeSyntheticLogs } from './support/synth-sessions.mjs';
 
 function setup(t) {
   const base = tempDir('hl-gates-');
@@ -42,7 +43,7 @@ test('CI·Git Hook은 읽기 전용 수집·근거·해시에 포함하고 주�
   assert.equal(readFileSync(path.join(p.project, '.husky/pre-commit'), 'utf8'), '#!/bin/sh\nnpm test\n');
 });
 
-test('Git Hook 활성 경로·실행 비트·실패 종료 표지를 확인하며 Claude disableAllHooks는 Git Hook을 무력화하지 않는다', (t) => {
+test('Git Hook 활성 경로·실행 비트·실패 종료 표지를 확인하며 Claude disableAllHooks는 Git Hook을 무력화하지 않는다', { skip: process.platform === 'win32' }, (t) => {
   const p = setup(t);
   p.write('.git/config', '[core]\n hooksPath = .githooks\n');
   p.write('.claude/settings.json', '{"disableAllHooks":true}');
@@ -68,6 +69,79 @@ test('Git Hook 활성 경로·실행 비트·실패 종료 표지를 확인하�
   const inactive = p.collectNow();
   assert.ok(inactive.evidence.some((e) => e.ruleIds.includes('VG-L2-04')));
   assert.notEqual(inactive.configurationHash, col.configurationHash, '실행 비트 변화도 구성 변경이다');
+});
+
+test('B1: 최근 .git/config와 무관한 Git 설정 변경이 실측 창·구성 해시·measured 상태를 바꾸지 않는다', (t) => {
+  const p = setup(t);
+  p.write('CLAUDE.md', '# Harness\n');
+  p.write('.github/workflows/ci.yml', 'steps:\n  - run: npm test\n');
+  pinMtimes(p.project);
+  const config = '[core]\n hooksPath = .githooks\n';
+  p.write('.git/config', config);
+  const configDir = path.join(p.base, 'logs');
+  const logs = writeSyntheticLogs(configDir, { project: p.project, sessions: 24 });
+  const prepare = () => {
+    const prep = engine(['prepare', '--project', p.project, '--out', p.out, '--now', '2026-11-28T09:00:00Z', '--json'], { configDir });
+    assert.equal(prep.code, 0, prep.stderr);
+    return readJson(path.join(path.dirname(prep.json.compactInventoryPath), 'draft.json'));
+  };
+  const first = prepare();
+  p.write('.git/config', `${config}[branch "unrelated"]\n remote = origin\n`);
+  const files = ['CLAUDE.md', '.github/workflows/ci.yml', '.git/config'].map((rel) => path.join(p.project, rel)).concat(logs);
+  const inputState = () => files.map((file) => [readFileSync(file, 'utf8'), statSync(file).mtimeMs, statSync(file).size]);
+  const before = inputState();
+  const second = prepare();
+  assert.deepEqual(inputState(), before, '엔진은 Git 설정·CI·지침·세션 원본의 내용·시각·크기를 보존한다');
+  assert.equal(second.meta.configurationHash, first.meta.configurationHash);
+  assert.equal(first.engine.sessions.coverage.configSince, '2026-11-01T00:00:00Z');
+  assert.deepEqual(second.engine.sessions, first.engine.sessions);
+  for (const draft of [first, second]) {
+    assert.ok(!draft.engine.inventory.sources.some((s) => s.path === '.git/config'));
+    assert.equal(draft.engine.axes.find((a) => a.axis === 'context_efficiency').maturity.state, 'measured');
+    assert.equal(draft.engine.axes.find((a) => a.axis === 'throughput').maturity.current, 24);
+  }
+});
+
+test('R1·R6: hooksPath 표기 변형·core 주석은 한 번만 수집하고 워크트리는 활성 미확인 한계를 남긴다', (t) => {
+  const p = setup(t);
+  p.write('.githooks/pre-commit', 'npm test\n');
+  let hash;
+  for (const value of ['.githooks', '.githooks/', './.githooks', '.githooks\\']) {
+    p.write('.git/config', `[core] # comment\n hooksPath = ${value}\n`);
+    const col = p.collectNow();
+    const hooks = col.components.filter((c) => c.kind === 'git_hook');
+    assert.equal(hooks.length, 1, value);
+    hash ??= col.configurationHash;
+    assert.equal(col.configurationHash, hash);
+    assert.equal(col.sources.filter((s) => s.path === '.githooks/pre-commit').length, 1);
+  }
+  rmSync(path.join(p.project, '.git'), { recursive: true });
+  p.write('.git', 'gitdir: /outside/should-not-read\n');
+  const col = p.collectNow();
+  assert.ok(col.gateLimitations.some((l) => l.code === 'git_hook_activation_unresolved'));
+  assert.ok(col.components.filter((c) => c.kind === 'git_hook').every((c) => !c.attributes.active));
+});
+
+test('R2·R3·R4: YAML 형제 키·CircleCI 이름·Jenkins stage·셸 test는 검증 근거가 아니다', (t) => {
+  const p = setup(t);
+  p.write('.github/workflows/ci.yml', 'steps:\n  - run: |\n      echo done\n    env:\n      MODE: npm test\n    name: npm test\n');
+  p.write('.circleci/config.yml', 'steps:\n  - run:\n      name: Run unit tests\n      command: echo done\n');
+  p.write('Jenkinsfile', "stage('Test') {\n  echo 'npm test'\n}\n");
+  p.write('.git/hooks/pre-commit', '#!/bin/sh\nset -e\ntest -f .env && echo warn\nexit 0\n');
+  chmodSync(path.join(p.project, '.git/hooks/pre-commit'), 0o755);
+  const col = p.collectNow();
+  assert.ok(col.evidence.every((e) => !e.ruleIds.some((r) => r.startsWith('VG-'))));
+  p.write('.circleci/config.yml', 'steps:\n  - run:\n      name: only display\n      command: npm test\n');
+  p.write('Jenkinsfile', "stage('Build') {\n  sh 'npm test'\n}\n");
+  assert.equal(p.collectNow().evidence.filter((e) => e.ruleIds.includes('VG-L2-04')).length, 2);
+});
+
+test('R5: Windows 실행 비트는 강제 근거로 추정하지 않고 한계를 알린다', (t) => {
+  const p = setup(t);
+  p.write('.git/hooks/pre-commit', '#!/bin/sh\nset -e\nnpm test\n');
+  const col = collect({ projectRoot: p.project, scope: 'project', configDir: path.join(p.base, 'empty'), skillDir: path.dirname(path.dirname(bundle)), platform: 'win32' });
+  assert.ok(col.gateLimitations.some((l) => l.code === 'git_hook_executable_unconfirmed'));
+  assert.ok(col.evidence.every((e) => !e.ruleIds.includes('VG-L3-04')));
 });
 
 test('CI·Hook의 심볼릭 링크·외부 hooksPath는 루트 밖 파일을 수집하지 않는다', (t) => {

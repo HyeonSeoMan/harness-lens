@@ -311,10 +311,10 @@ finalize = validate → snapshot → render
 
 - `ci`: `.github/workflows/*.{yml,yaml}`, `.gitlab-ci.{yml,yaml}`, `.circleci/config.{yml,yaml}`, `azure-pipelines.{yml,yaml}`, `Jenkinsfile`.
 - `git_hook`: `.husky/`, `.githooks/`, 기본 `.git/hooks/`의 Git 표준 이벤트 이름 파일, `.pre-commit-config.yaml`. `.sample`·헬퍼 파일은 제외한다.
-- `.git/config`의 `[core] hooksPath`는 정적 상대 경로만 읽고, 해당 경로가 있으면 기본 `.git/hooks` 대신 수집한다. 전역 설정·include·워크트리의 외부 gitdir를 따라가지 않는다. 추적용 `.husky`·`.githooks`는 활성 여부 미확인으로 수집하되 hooksPath와 일치하면 로컬 활성 경로로 한 번만 수집한다.
+- `.git/config`는 hooksPath 판독 보조로만 읽으며 일반 sources·configurationHash·configSince에 포함하지 않는다. `[core] hooksPath`는 정적 상대 경로만 읽고, 해당 경로가 있으면 기본 `.git/hooks` 대신 수집한다. 전역 설정·include·워크트리의 외부 gitdir를 따라가지 않는다. hooksPath의 ./·후행 슬래시·역슬래시는 정규화해 이중 수집하지 않는다. 워크트리의 .git 파일이면 외부 gitdir를 따라가지 않고 git_hook_activation_unresolved 한계를 남긴다. 추적용 `.husky`·`.githooks`는 활성 여부 미확인으로 수집하되 hooksPath와 일치하면 로컬 활성 경로로 한 번만 수집한다.
 - 구성 요소당 파일은 256KiB, 디렉터리당 후보는 경로순 100개까지 읽는다. 넘으면 `unsupported / candidate_limit_exceeded`를 남긴다. 기존 비밀정보 제거·루트 경계 규칙을 그대로 적용한다. 명령·환경 값·파일 원문은 새 근거에 출력하지 않는다.
-- YAML은 `run`·`script`·`entry` 값 및 바로 아래 들여쓰기 블록만 명령 후보로 본다. 주석·표시 이름·환경 변수·외부 uses/include는 판정하지 않는다. 완전한 YAML·셸 해석은 하지 않는다. 명세 어휘는 SC-L2-04, 검증 어휘는 VG-L2-04로 최대 절차 수준 2다. 한 명령이 두 어휘에 맞으면 SC 우선이다.
-- 로컬 활성 경로의 실행 비트가 있는 Git Hook에서 실패 종료 표지(`set -e`, `exit` 양수, `process.exit` 양수)도 찾으면 SC-L3-02·VG-L3-04 후보로 삼는다. 문자열 탐지이며 실제 실패 차단을 보장하지 않는다. Claude `disableAllHooks`는 Git Hook에 적용하지 않는다. 실행 비트로 결정한 활성 여부도 구성 요소·구성 해시에 포함한다.
+- YAML은 `run`·`script`·`entry` 값 및 키 열보다 깊은 스칼라 블록, CircleCI run 객체의 바로 아래 command 값만 명령 후보로 본다. 주석·표시 이름·환경 변수·외부 uses/include는 판정하지 않는다. Jenkinsfile은 sh·bat·powershell의 한 줄 리터럴 명령만 보며 stage 이름은 제외한다. 완전한 YAML·셸 해석은 하지 않는다. 명세 어휘는 SC-L2-04, 검증 어휘는 VG-L2-04로 최대 절차 수준 2다. 한 명령이 두 어휘에 맞으면 SC 우선이다.
+- 검증 명령은 npm/pnpm/yarn/bun의 test·lint·typecheck·check, node --test, pytest·ruff·eslint·tsc·prettier --check, cargo test/clippy·go test/vet·mvn test/verify·gradle test/check로 제한하고 셸 test·표시 문자열은 제외한다. 로컬 활성 경로의 실행 비트가 있는 Git Hook에서 해당 명령에 연결된 || exit 양수 또는 앞선 set -e(이후 해제되지 않고 명령이 조건식·복합문이 아닌 경우)를 찾으면 SC-L3-02·VG-L3-04 후보로 삼는다. 문자열 탐지이며 실제 실패 차단을 보장하지 않는다. Claude `disableAllHooks`는 Git Hook에 적용하지 않는다. 실행 비트로 결정한 활성 여부도 구성 요소·구성 해시에 포함한다. Windows에서는 실행 비트를 추정하지 않고 git_hook_executable_unconfirmed 한계를 남긴다(플랫폼별 해시 차이 가능).
 
 | 출처(`origin`) | 경로 | 범위 |
 |---|---|---|

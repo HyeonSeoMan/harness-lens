@@ -55,6 +55,19 @@ test('N3. 같은 파일·세션을 반복 교체해도 보존 세대는 하나�
   assert.equal(Object.keys(cursor.files).length, 2);
 });
 
+test('R8. 시각 없는 세대를 합쳐도 firstTs·lastTs는 null로 보존한다', (t) => {
+  const p = setup(t);
+  for (let i = 0; i < 4; i++) {
+    p.replace([p.row(`no-time-${i}`, { timestamp: undefined })]);
+    p.agg(true);
+  }
+  const cursor = readJson(path.join(p.out, 'sessions', 'cursor.json'));
+  for (const file of Object.values(cursor.files)) {
+    assert.equal(file.firstTs, null);
+    assert.equal(file.lastTs, null);
+  }
+});
+
 test('N4. archive·event 중복 제거 키는 원시 응답의 90일 보존 기한 후에도 유지한다', (t) => {
   const p = setup(t);
   const old = p.row('old', { timestamp: '2025-01-01T00:00:00Z' });

@@ -156,7 +156,7 @@ function engineLimitations(col, ctx, sessions, info, extra = []) {
   if (col.sources.some((s) => s.status === 'unreadable')) out.push({ code: 'source_unreadable', message: '읽지 못한 출처가 있어 일부 축은 판정 불가이거나 범위가 넓습니다.' });
   if (col.sources.some((s) => s.status === 'out_of_scope' && s.origin !== 'user' && s.origin !== 'managed')) out.push({ code: 'source_out_of_scope', message: '수집 루트 밖을 가리키는 경로(심볼릭 링크·import 등)는 따라가지 않았습니다.' });
   if (col.sources.some((s) => s.status === 'skipped_sensitive')) out.push({ code: 'sensitive_files_skipped', message: '민감한 이름의 파일(.env, 키 파일 등)은 열지 않았습니다.' });
-  return [...out, ...extra];
+  return [...out, ...(col.gateLimitations ?? []), ...extra];
 }
 
 // 현재 구성 해시가 처음 관측된 시각(루브릭 §1.9). 같은 해시가 이어진 마지막 스냅샷 묶음의 첫 시각과
