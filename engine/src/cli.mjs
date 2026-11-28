@@ -488,19 +488,19 @@ function cmdSnapshot(ctx) {
   return { result: { ok: true, snapshotId: safe.meta.snapshotId, analysisPath: path.join(snapshotDir(ctx.out, safe.meta.snapshotId), 'analysis.json') } };
 }
 
-// Windows: libuv 인용은 '""'를 "\"\""로 바꿔 start가 제목으로 받지 못하고, 따옴표 없는 & 등은 cmd가 해석한다.
-// 그래서 Node의 shell 실행과 같은 cmd /d /s /c "<명령>" 형식으로 직접 인용해 넘긴다(Windows 경로에는 "가 올 수 없다).
+// Windows는 cmd를 거치지 않는다. cmd는 따옴표 안에서도 %VAR%·!VAR!를 확장하고 file URL에는 %가 들어간다.
+// rundll32 url.dll,FileProtocolHandler는 URL을 셸 해석 없이 기본 브라우저에 넘긴다(URL은 공백·따옴표가 인코딩돼 한 인자다).
 export function browserCommand(platform, target) {
-  if (platform === 'darwin') return ['open', [target], {}];
-  if (platform === 'win32') return ['cmd', ['/d', '/s', '/c', `"start "" "${target}""`], { windowsVerbatimArguments: true }];
-  return ['xdg-open', [target], {}];
+  if (platform === 'darwin') return ['open', [target]];
+  if (platform === 'win32') return ['rundll32.exe', ['url.dll,FileProtocolHandler', target]];
+  return ['xdg-open', [target]];
 }
 
 function openInBrowser(file) {
   const target = pathToFileURL(file).href;
   try {
-    const [cmd, args, extra] = browserCommand(process.platform, target);
-    const child = spawn(cmd, args, { stdio: 'ignore', detached: true, ...extra });
+    const [cmd, args] = browserCommand(process.platform, target);
+    const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
     child.on('error', () => {});
     child.unref();
     return true;

@@ -545,17 +545,24 @@ export function toolCategory(name) {
 }
 
 // 문자열 값 어딘가에 R 경로가 경로 경계로 나오는가. 값은 저장하지 않고 불리언만 남긴다.
-// roots는 / 구분자라 Windows 경로(C:\a\b)의 역슬래시도 /로 바꿔 비교한다.
-function mentionsRoot(value, roots, depth = 0) {
+// roots는 / 구분자다. R이 Windows 경로(드라이브 문자·UNC)일 때만 값의 역슬래시를 /로 바꾸고 대소문자를 무시한다.
+// POSIX에서 역슬래시는 파일명 문자라 그대로 둔다(/a\\b는 /a/b가 아니다).
+const isWindowsRoot = (r) => /^[A-Za-z]:\//.test(r) || r.startsWith('//');
+
+export function mentionsRoot(value, roots, depth = 0) {
   if (depth > 8 || value === null || value === undefined) return false;
   if (typeof value === 'string') {
-    if (value.includes('\\')) value = value.replace(/\\/g, '/');
-    for (const r of roots) {
-      let i = value.indexOf(r);
+    let winValue = null;
+    for (const root of roots) {
+      const win = isWindowsRoot(root);
+      if (win && winValue === null) winValue = value.replace(/\\/g, '/').toLowerCase();
+      const v = win ? winValue : value;
+      const r = win ? root.toLowerCase() : root;
+      let i = v.indexOf(r);
       while (i !== -1) {
-        const next = value[i + r.length];
+        const next = v[i + r.length];
         if (next === undefined || !/[A-Za-z0-9._-]/.test(next)) return true;
-        i = value.indexOf(r, i + 1);
+        i = v.indexOf(r, i + 1);
       }
     }
     return false;

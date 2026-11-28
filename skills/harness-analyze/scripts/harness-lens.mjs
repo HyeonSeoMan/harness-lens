@@ -58,7 +58,7 @@ var ENGINE_VERSION = "0.4.0";
 var VALIDATOR_VERSION = "0.4.0";
 var SCHEMA_VERSION = "0.1";
 var RUBRIC_VERSION = "0.4";
-var SESSION_PARSER_VERSION = "4";
+var SESSION_PARSER_VERSION = "5";
 var MIN_NODE_MAJOR = 20;
 var SUPPORTED_PLATFORMS = ["darwin", "linux", "win32"];
 var AXES = [
@@ -3355,16 +3355,21 @@ function toolCategory(name) {
   if (name.startsWith("mcp__")) return "mcp";
   return /^[A-Z][A-Za-z]{1,39}$/.test(name) ? name : "other";
 }
+var isWindowsRoot = (r) => /^[A-Za-z]:\//.test(r) || r.startsWith("//");
 function mentionsRoot(value, roots, depth = 0) {
   if (depth > 8 || value === null || value === void 0) return false;
   if (typeof value === "string") {
-    if (value.includes("\\")) value = value.replace(/\\/g, "/");
-    for (const r of roots) {
-      let i = value.indexOf(r);
+    let winValue = null;
+    for (const root of roots) {
+      const win = isWindowsRoot(root);
+      if (win && winValue === null) winValue = value.replace(/\\/g, "/").toLowerCase();
+      const v = win ? winValue : value;
+      const r = win ? root.toLowerCase() : root;
+      let i = v.indexOf(r);
       while (i !== -1) {
-        const next = value[i + r.length];
+        const next = v[i + r.length];
         if (next === void 0 || !/[A-Za-z0-9._-]/.test(next)) return true;
-        i = value.indexOf(r, i + 1);
+        i = v.indexOf(r, i + 1);
       }
     }
     return false;
@@ -5278,15 +5283,15 @@ function cmdSnapshot(ctx) {
   return { result: { ok: true, snapshotId: safe.meta.snapshotId, analysisPath: path8.join(snapshotDir(ctx.out, safe.meta.snapshotId), "analysis.json") } };
 }
 function browserCommand(platform, target) {
-  if (platform === "darwin") return ["open", [target], {}];
-  if (platform === "win32") return ["cmd", ["/d", "/s", "/c", `"start "" "${target}""`], { windowsVerbatimArguments: true }];
-  return ["xdg-open", [target], {}];
+  if (platform === "darwin") return ["open", [target]];
+  if (platform === "win32") return ["rundll32.exe", ["url.dll,FileProtocolHandler", target]];
+  return ["xdg-open", [target]];
 }
 function openInBrowser(file) {
   const target = pathToFileURL(file).href;
   try {
-    const [cmd, args, extra] = browserCommand(process.platform, target);
-    const child = spawn(cmd, args, { stdio: "ignore", detached: true, ...extra });
+    const [cmd, args] = browserCommand(process.platform, target);
+    const child = spawn(cmd, args, { stdio: "ignore", detached: true });
     child.on("error", () => {
     });
     child.unref();
