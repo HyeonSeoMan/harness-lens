@@ -13,7 +13,7 @@
       "version": "0.1.0",
       "nodeVersion": "v22.22.1",
       "platform": "darwin",
-      "sessionParserVersion": "4",
+      "sessionParserVersion": "5",
       "pricingTableVersion": "2026-11-01"
     }
   },

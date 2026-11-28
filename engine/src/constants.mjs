@@ -5,7 +5,7 @@ export const VALIDATOR_VERSION = '0.4.0';
 export const SCHEMA_VERSION = '0.1';
 export const RUBRIC_VERSION = '0.4';
 // 세션 기록 파서 규칙 버전(engine-cli.md §8). 규칙이 바뀌면 올리고, 누적 상태를 처음부터 다시 만든다.
-export const SESSION_PARSER_VERSION = '4';
+export const SESSION_PARSER_VERSION = '5';
 export { PRICING_TABLE_VERSION } from './pricing.mjs';
 
 export const MIN_NODE_MAJOR = 20;

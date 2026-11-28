@@ -488,10 +488,18 @@ function cmdSnapshot(ctx) {
   return { result: { ok: true, snapshotId: safe.meta.snapshotId, analysisPath: path.join(snapshotDir(ctx.out, safe.meta.snapshotId), 'analysis.json') } };
 }
 
+// Windows는 cmd를 거치지 않는다. cmd는 따옴표 안에서도 %VAR%·!VAR!를 확장하고 file URL에는 %가 들어간다.
+// rundll32 url.dll,FileProtocolHandler는 URL을 셸 해석 없이 기본 브라우저에 넘긴다(URL은 공백·따옴표가 인코딩돼 한 인자다).
+export function browserCommand(platform, target) {
+  if (platform === 'darwin') return ['open', [target]];
+  if (platform === 'win32') return ['rundll32.exe', ['url.dll,FileProtocolHandler', target]];
+  return ['xdg-open', [target]];
+}
+
 function openInBrowser(file) {
   const target = pathToFileURL(file).href;
   try {
-    const [cmd, args] = process.platform === 'darwin' ? ['open', [target]] : process.platform === 'win32' ? ['cmd', ['/c', 'start', '""', target]] : ['xdg-open', [target]];
+    const [cmd, args] = browserCommand(process.platform, target);
     const child = spawn(cmd, args, { stdio: 'ignore', detached: true });
     child.on('error', () => {});
     child.unref();

@@ -270,3 +270,40 @@ test('CLAUDE_CONFIG_DIR을 따르고 --config-dir가 우선한다', (t) => {
   assert.equal(viaFlag.json.status, 'available');
   assert.ok(!existsSync(path.join(p.out, 'sessions')), 'aggregate-sessions 단독 실행은 아무것도 확정하지 않는다');
 });
+
+test('귀속: POSIX의 역슬래시는 파일명 문자라 /a\\b 형태를 프로젝트 언급으로 보지 않는다(Windows에서는 구분자)', (t) => {
+  const p = makeProject('harness-after');
+  t.after(p.cleanup);
+  const logs = makeSessionLogs(p);
+  const file = path.join(logs.configDir, 'projects', '-bot-auto', 'S-bot-2.jsonl');
+  const enc = (s) => JSON.stringify(s).slice(1, -1);
+  const backslashed = `${path.dirname(p.project)}\\${path.basename(p.project)}`;
+  writeFileSync(file, readFileSync(file, 'utf8').split(enc(p.project)).join(enc(backslashed)));
+  const { sessions: s } = prepare(p, logs.configDir);
+  if (process.platform === 'win32') {
+    assert.equal(loc(s, 'bot').attribution.auto, 1);
+    assert.equal(s.tokens.unattributed.sessions, 2);
+  } else {
+    assert.equal(loc(s, 'bot')?.attribution.auto ?? 0, 0);
+    assert.equal(s.tokens.unattributed.sessions, 3);
+  }
+});
+
+test('파서 버전 5: 버전 4 커서(이전 botMention)는 재사용하지 않아 증분 결과가 --full-rescan과 같다', (t) => {
+  const p = makeProject('harness-before');
+  t.after(p.cleanup);
+  const logs = makeSessionLogs(p);
+  const r = analyze({ project: p.project, out: p.out, now: NOW, interpretation: exampleInterpretation('harness-before'), configDir: logs.configDir, align: true });
+  assert.equal(r.fin.code, 0, r.fin.stdout);
+  // 버전 4 엔진이 남긴 상태를 흉내 낸다: 언급 판정 결과가 모두 false인 커서.
+  const cursorPath = path.join(p.out, 'sessions', 'cursor.json');
+  const cursor = readJson(cursorPath);
+  cursor.parserVersion = '4';
+  for (const f of Object.values(cursor.files)) f.botMention = false;
+  writeFileSync(cursorPath, JSON.stringify(cursor));
+  const inc = prepare(p, logs.configDir, [], '2026-11-28T09:00:00Z');
+  assert.ok(inc.draft.engine.limitations.some((l) => l.code === 'session_state_reset'));
+  const full = prepare(p, logs.configDir, ['--full-rescan'], '2026-11-28T09:00:00Z');
+  assert.deepEqual(inc.sessions, full.sessions);
+  assert.equal(loc(inc.sessions, 'bot').attribution.auto, 1);
+});

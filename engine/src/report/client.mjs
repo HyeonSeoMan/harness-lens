@@ -142,8 +142,9 @@ export function reportClient() {
     app.appendChild(sec);
     return sec;
   }
+  // 좁은 화면에서 열을 압축하면 한글이 글자마다 줄바꿈된다. 열마다 최소 폭을 두고 .tablewrap 가로 스크롤에 맡긴다.
   function table(headers, rows) {
-    return el('div', { class: 'tablewrap' }, el('table', null, [
+    return el('div', { class: 'tablewrap' }, el('table', { style: 'min-width: ' + headers.length * 80 + 'px; word-break: keep-all' }, [
       el('thead', null, el('tr', null, headers.map(function (h) { return el('th', { scope: 'col' }, h); }))),
       el('tbody', null, rows.map(function (r) { return el('tr', null, r.map(function (c) { return el('td', null, c); })); })),
     ]));

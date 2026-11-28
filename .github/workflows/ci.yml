@@ -24,6 +24,22 @@ jobs:
       # 테스트는 런타임 의존성이 없다. 커밋된 엔진 번들을 그대로 실행한다.
       - run: node --test tests/*.test.mjs
 
+  # 플랫폼 확인(PRD §5 지원 OS). Linux는 위 test 작업이 맡는다.
+  os:
+    name: test (${{ matrix.os }}, Node 22)
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: node --test tests/*.test.mjs
+        shell: bash
+
   bundle:
     name: committed bundle matches fresh build
     runs-on: ubuntu-latest

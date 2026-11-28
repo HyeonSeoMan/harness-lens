@@ -2,7 +2,11 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { RedactionCounter, detectSecrets, isSensitiveFile, keepEnvValue, redactString, targetsAnalyzer, urlSchemeHost } from '../engine/src/redact.mjs';
+import path from 'node:path';
+import { pathToFileURL } from 'node:url';
+import { browserCommand } from '../engine/src/cli.mjs';
 import { hookScriptPath } from '../engine/src/collect.mjs';
+import { mentionsRoot } from '../engine/src/sessions.mjs';
 import { parseFrontmatter } from '../engine/src/frontmatter.mjs';
 import { serializeForScript } from '../engine/src/render.mjs';
 import { roundHalfEven, stableStringify } from '../engine/src/util.mjs';
@@ -55,4 +59,25 @@ test('결정론 직렬화와 반올림', () => {
   assert.equal(stableStringify({ b: 1, a: { d: 2, c: 3 } }), '{\n  "a": {\n    "c": 3,\n    "d": 2\n  },\n  "b": 1\n}\n');
   assert.equal(roundHalfEven(0.12345, 4), 0.1234);
   assert.equal(roundHalfEven(2.5, 0), 2);
+});
+
+test('render --open: Windows는 cmd를 거치지 않아 &·%VAR%·!VAR!가 든 URL도 셸 해석 없이 한 인자로 넘긴다', () => {
+  const target = pathToFileURL(path.join(process.platform === 'win32' ? 'C:\\' : '/', 'a b', 'R&D', '%20b%', '!PATH!', 'report.html')).href;
+  assert.deepEqual(browserCommand('darwin', target), ['open', [target]]);
+  assert.deepEqual(browserCommand('linux', target), ['xdg-open', [target]]);
+  const [cmd, args] = browserCommand('win32', target);
+  assert.equal(cmd, 'rundll32.exe');
+  assert.deepEqual(args, ['url.dll,FileProtocolHandler', target]);
+  assert.ok(!/\s|"/.test(target), 'URL에는 공백·따옴표가 없어 libuv가 따로 인용하지 않는다');
+});
+
+test('경로 언급: Windows 루트만 역슬래시·대소문자를 무시하고 POSIX 역슬래시는 파일명 문자로 둔다', () => {
+  const posix = ['/tmp/P/sample-app'];
+  assert.equal(mentionsRoot({ command: 'cat /tmp/P/sample-app/a.txt' }, posix), true);
+  assert.equal(mentionsRoot({ command: 'cat /tmp/P\\sample-app/a.txt' }, posix), false);
+  assert.equal(mentionsRoot('/tmp/P/sample-app-other/a', posix), false);
+  const win = ['C:/Users/a/sample-app'];
+  for (const v of ['C:\\Users\\a\\sample-app\\src', 'C:/Users/a/sample-app/src', 'c:\\users\\A\\Sample-App', 'C:\\Users\\a/sample-app']) assert.equal(mentionsRoot(v, win), true, v);
+  assert.equal(mentionsRoot('C:\\Users\\a\\sample-app2', win), false);
+  assert.equal(mentionsRoot('\\\\srv\\share\\repo\\x', ['//srv/share/repo']), true);
 });

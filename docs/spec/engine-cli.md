@@ -416,6 +416,7 @@ finalize = validate → snapshot → render
   - `parserVersion` 또는 R(메인 저장소 경로) 해시가 바뀌면 전체를 다시 읽는다. `--full-rescan`도 같다.
   - 원본 파일이 사라져도 카운터는 남긴다(`present: false`).
 - 파서 버전 4: 세대 합치기·coverage 정의 변경 때문에 이전 버전 상태를 재사용하지 않는다. v1 archive도 버리고 현재 원본에서 재집계하며 `session_state_reset` 한계를 남긴다. 원본이 이미 삭제된 기간은 복구할 수 없다. `events.bin`·`archived-keys.bin`에는 90일 만료를 적용하지 않는다. 원시 응답이 archive로 접힌 후에도 재등장한 이벤트·응답을 정확히 한 번만 세기 위해 누적 상태 수명 동안 보존한다(전체 재스캔·버전 변경·손상 시 재생성).
+- 파서 버전 5: 봇 세션의 경로 언급 판정이 Windows 경로(드라이브 문자·UNC)에서 역슬래시·대소문자를 구분하지 않게 바뀌었다. 이전 상태의 `botMention`은 다시 계산되지 않으므로 버전 4 상태를 재사용하지 않고 현재 원본에서 재집계한다(`session_state_reset`, 직전 스냅샷과의 실측 비교는 `session_parser_changed`로 제한). POSIX 경로의 역슬래시는 파일명 문자로 그대로 둔다.
 - 응답 맵(`responses/<YYYY-MM>.jsonl`): 한 줄에 `[키 해시, freshInput, cacheCreation 총량, 1시간 쓰기(병합 최댓값), cacheRead, output, model, 세션 해시, 사이드체인(0|1), 시각(ms)]`. 메모리에서는 응답마다 객체를 만들지 않고 열 단위 typed array에 두며, 쓰기·읽기도 줄 단위로 나눠 한다(메모리 예산 200MiB). `--now`보다 90일 넘게 오래된 응답은 `archive.json`의 일별·위치별·모델별 토큰과 일별 컨텍스트 요약(`requests`, `p50`, `max`)으로 접고 키를 `archived-keys.bin`에 남긴다. 축 지표는 응답 맵(최근 90일)만 쓴다.
 - 귀속은 저장하지 않고 실행마다 다시 정한다. 파일마다 첫 `cwd`의 분류(`direct`·`worktree`·`inferred`·`bot`(봇 이름 해시)·`none`)와 봇 세션의 프로젝트 경로 언급 여부(불리언)만 저장하므로, `config.json`의 봇 매핑을 바꾸면 다음 실행에 바로 반영된다. cwd 분류는 `attribution-cache.json`에 남겨 워크트리가 지워져도 같은 결과를 낸다.
 - 스테이징과 확정: `prepare`는 확정 상태(`sessions/`)를 읽어 새 바이트를 더한 상태를 `runs/<runId>/sessions.staging/`에 쓴다. `snapshot`이 성공하면 `sessions/`를 그것으로 바꾼다(이름 바꾸기). 검증이 실패하면 커서가 전진하지 않으므로 다음 실행에서 같은 구간을 다시 읽는다.

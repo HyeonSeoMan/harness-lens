@@ -1,0 +1,5 @@
+# 플랫폼과 무관하게 LF로 체크아웃한다. Windows autocrlf가 번들·픽스처·SKILL.md를 CRLF로 바꾸면
+# 번들 일치 검사와 바이트 결정론 테스트가 어긋난다.
+* text=auto eol=lf
+*.png binary
+*.bin binary

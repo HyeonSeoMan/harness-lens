@@ -263,3 +263,12 @@ test('B12 축 상세는 차단 표지가 문자열 패턴 탐지임을 적고, H
   assert.match(of('SessionEnd'), /검증 명령 어휘 있음\(이 이벤트는 검증 판정에 쓰지 않음\)/);
   assert.match(of('PostToolUse'), /차단 표지\(문자열 패턴\) 있음, 검증 명령 어휘\)$/);
 });
+
+test('모바일 폭: 표는 열마다 최소 폭과 keep-all을 둬 한글이 글자마다 줄바꿈되지 않고 .tablewrap에서 가로 스크롤된다', () => {
+  const tables = findAll(render(example()), (n) => n.tag === 'table');
+  assert.ok(tables.length > 0);
+  for (const t of tables) {
+    const cols = findAll(t, (n) => n.tag === 'th').length;
+    assert.equal(t.attrs.style, `min-width: ${cols * 80}px; word-break: keep-all`);
+  }
+});
