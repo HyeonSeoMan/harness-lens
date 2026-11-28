@@ -762,7 +762,7 @@ export class Collector {
         const verification = (cmd) => /(?:^|[;&|]\s*|\s)(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|check)(?:\b|:)|node\s+--test\b|pytest\b|ruff\b|eslint\b|tsc\b|prettier\s+--check\b|cargo\s+(?:test|clippy)\b|go\s+(?:test|vet)\b|mvn\s+(?:test|verify)\b|gradle\s+(?:test|check)\b)/i.test(cmd) && !/^\s*(?:echo|printf|export|[\w]+\s*=)\b/.test(cmd);
         const hit = commands.find(([, cmd]) => {
           const candidate = cmd.replace(/^\s*-\s+/, '').trim();
-          if (/^(?:echo|printf|export|test|\[)(?:\s|$)|^[\w]+\s*=/.test(candidate)) return false;
+          if (/^(?:echo|printf|export|test|\[|if|elif|while|until)(?:\s|$)|^[\w]+\s*=/.test(candidate)) return false;
           return (axis === 'spec_clarity' ? hasAny(candidate, words) : verification(candidate)) && (axis === 'spec_clarity' || !hasAny(candidate, SPEC_CMD));
         });
         if (!hit) continue;

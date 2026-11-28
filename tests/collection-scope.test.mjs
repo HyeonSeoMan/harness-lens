@@ -144,6 +144,20 @@ test('R5: Windows 실행 비트는 강제 근거로 추정하지 않고 한계�
   assert.ok(col.evidence.every((e) => !e.ruleIds.includes('VG-L3-04')));
 });
 
+test('N3: 셸 조건문의 명세 경로를 SC 명령으로 오인하지 않고 실제 명령의 위치를 남긴다', (t) => {
+  const p = setup(t);
+  for (const condition of ['if [[ -f task-spec.md ]]; then', 'if [ -f acceptance.md ]; then', 'elif [[ -f task-spec.md ]]; then', 'while [ -f task-spec.md ]; do', 'until [ -f task-spec.md ]; do']) {
+    p.write('.git/hooks/pre-commit', `#!/bin/sh\nset -e\n${condition}\n  echo skip\nfi\n`);
+    let col = p.collectNow();
+    assert.ok(col.evidence.every((e) => !e.ruleIds.some((r) => r.startsWith('SC-'))), condition);
+    p.write('.git/hooks/pre-commit', `#!/bin/sh\nset -e\n${condition}\n  echo skip\nfi\nnode check-task-spec.mjs\n`);
+    col = p.collectNow();
+    const ev = col.evidence.find((e) => e.ruleIds.some((r) => r.startsWith('SC-')));
+    assert.ok(ev, condition);
+    assert.equal(ev.line, 6, condition);
+  }
+});
+
 test('CI·Hook의 심볼릭 링크·외부 hooksPath는 루트 밖 파일을 수집하지 않는다', (t) => {
   const p = setup(t);
   const outside = path.join(p.base, 'outside.yml');

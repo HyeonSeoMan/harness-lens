@@ -271,7 +271,8 @@ export function compactInventory(draft, kbKeys) {
       compaction: { omitted: ['contentHash', 'null_and_empty_array_keys'], factLimitPerAxis: factLimit, omittedFacts },
     });
   };
-  const target = BUDGETS.llm_input_inventory_tokens.target;
+  // 6,000은 실패 상한이다. 수집량 증가에 대비해 압축은 10% 여유를 목표로 한다.
+  const target = Math.floor(BUDGETS.llm_input_inventory_tokens.target * 0.9);
   let text = serializeCompact(build(null));
   if (estimateTokens(text) <= target) return text;
   // 축별 근거 수의 최댓값부터 줄여 예산 안에 드는 가장 큰 N을 쓴다. 1로도 넘으면 마지막 압축 단계로 간다.
@@ -290,6 +291,17 @@ export function compactInventory(draft, kbKeys) {
   }
   for (const a of lean.engine.axes) delete a.source.evidenceIds;
   lean.compaction.omitted.push('descriptive_component_attributes', 'name_equal_first_path', 'axis_source_evidenceIds');
+  if (estimateTokens(serializeCompact(lean)) <= target) return serializeCompact(lean);
+  // 구성 요소의 첫 경로와 같은 근거 경로, 구성 요소에 이미 있는 read 출처는
+  // 무손실로 복원할 수 있다. 다른 경로·실패 출처는 그대로 남긴다.
+  const components = new Map(lean.engine.inventory.components.map((c) => [c.id, c]));
+  for (const ev of lean.engine.evidence) {
+    const paths = components.get(ev.componentId)?.paths;
+    if (paths?.length && ev.path === paths[0]) delete ev.path;
+  }
+  lean.engine.inventory.sources = lean.engine.inventory.sources.filter((src) =>
+    src.status !== 'read' || !lean.engine.inventory.components.some((c) => c.origin === src.origin && c.paths?.includes(src.path)));
+  lean.compaction.omitted.push('evidence_path_equal_first_component_path', 'read_sources_in_components');
   return serializeCompact(lean);
 }
 

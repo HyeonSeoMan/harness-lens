@@ -1390,7 +1390,7 @@ ${script ?? ""}`, REENTRY);
         const verification = (cmd) => /(?:^|[;&|]\s*|\s)(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|check)(?:\b|:)|node\s+--test\b|pytest\b|ruff\b|eslint\b|tsc\b|prettier\s+--check\b|cargo\s+(?:test|clippy)\b|go\s+(?:test|vet)\b|mvn\s+(?:test|verify)\b|gradle\s+(?:test|check)\b)/i.test(cmd) && !/^\s*(?:echo|printf|export|[\w]+\s*=)\b/.test(cmd);
         const hit = commands.find(([, cmd]) => {
           const candidate = cmd.replace(/^\s*-\s+/, "").trim();
-          if (/^(?:echo|printf|export|test|\[)(?:\s|$)|^[\w]+\s*=/.test(candidate)) return false;
+          if (/^(?:echo|printf|export|test|\[|if|elif|while|until)(?:\s|$)|^[\w]+\s*=/.test(candidate)) return false;
           return (axis === "spec_clarity" ? hasAny(candidate, words) : verification(candidate)) && (axis === "spec_clarity" || !hasAny(candidate, SPEC_CMD));
         });
         if (!hit) continue;
@@ -5031,7 +5031,7 @@ function factRanks(evidence, axes) {
   return rank;
 }
 function compactInventory(draft, kbKeys) {
-  var _a;
+  var _a, _b;
   const e = draft.engine;
   const sessions = { ...e.sessions, contextPerTurn: e.sessions.contextPerTurn && { ...e.sessions.contextPerTurn, series: void 0 } };
   if (sessions.tokens) sessions.tokens = { ...sessions.tokens, byModel: void 0 };
@@ -5058,7 +5058,7 @@ function compactInventory(draft, kbKeys) {
       compaction: { omitted: ["contentHash", "null_and_empty_array_keys"], factLimitPerAxis: factLimit, omittedFacts }
     });
   };
-  const target = BUDGETS.llm_input_inventory_tokens.target;
+  const target = Math.floor(BUDGETS.llm_input_inventory_tokens.target * 0.9);
   let text = serializeCompact(build(null));
   if (estimateTokens(text) <= target) return text;
   const counts = /* @__PURE__ */ new Map();
@@ -5074,6 +5074,17 @@ function compactInventory(draft, kbKeys) {
   }
   for (const a of lean.engine.axes) delete a.source.evidenceIds;
   lean.compaction.omitted.push("descriptive_component_attributes", "name_equal_first_path", "axis_source_evidenceIds");
+  if (estimateTokens(serializeCompact(lean)) <= target) return serializeCompact(lean);
+  const components = new Map(lean.engine.inventory.components.map((c) => [c.id, c]));
+  for (const ev of lean.engine.evidence) {
+    const paths = (_b = components.get(ev.componentId)) == null ? void 0 : _b.paths;
+    if ((paths == null ? void 0 : paths.length) && ev.path === paths[0]) delete ev.path;
+  }
+  lean.engine.inventory.sources = lean.engine.inventory.sources.filter((src) => src.status !== "read" || !lean.engine.inventory.components.some((c) => {
+    var _a2;
+    return c.origin === src.origin && ((_a2 = c.paths) == null ? void 0 : _a2.includes(src.path));
+  }));
+  lean.compaction.omitted.push("evidence_path_equal_first_component_path", "read_sources_in_components");
   return serializeCompact(lean);
 }
 function interpretationTemplate(axes, comparison) {
