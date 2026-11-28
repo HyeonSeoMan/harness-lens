@@ -102,3 +102,4 @@
 | 6 | A: `sessions.toolUsage` 도구별 집계, ES-M-02 Bash 제외 오류율, `bash_error_rate` 참고 지표 | #15 |
 | 9 | A: `bot_weighted_share`·`worker_weighted_share` CE 참고 지표 | #15 |
 | 8 | A: 압축 인벤토리 `contentHash`·null 기본값 필드 제거, 근거 `fact` 축별 상위 N개 | #14 |
+| 3, 13 | 표시만 수정(판정 규칙 불변): 상세 표 "구조 수준"·"실측 대역" 칸 분리, 실측 축 범위를 "실측 대역 범위"로 표기, 범위 사유 코드를 문장으로, 레이더는 구조 수준 점선 다각형과 실측 대역 점(이웃 실측끼리만 실선)을 분리, 막대 안 라벨 제거·범례만, 귀속 방법 `direct`를 "작업 경로 일치"로(위치 이름 "프로젝트 세션"과 구분). stage5 backlog B10~B14·E·F·G 라벨 | #16 |

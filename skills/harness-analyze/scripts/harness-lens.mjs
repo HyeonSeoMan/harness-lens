@@ -1054,7 +1054,12 @@ ${script ?? ""}`, REENTRY);
       }
     });
     const keyBase = pointer("hooks", event, g, "hooks", hi);
-    const describe = [block ? blockVia && blockVia !== "script" ? `차단 표지 있음(import ${path2.posix.basename(blockVia)})` : "차단 표지 있음" : "차단 표지 없음", verify ? "검증 명령 어휘" : null, levelCap ? "스크립트 확인 불가" : null].filter(Boolean).join(", ");
+    const verifyEvent = event === "PreToolUse" || event === "PostToolUse" || event === "Stop" || event === "SubagentStop";
+    const describe = [
+      block ? blockVia && blockVia !== "script" ? `차단 표지(문자열 패턴) 있음(import ${path2.posix.basename(blockVia)})` : "차단 표지(문자열 패턴) 있음" : "차단 표지(문자열 패턴) 없음",
+      verify ? verifyEvent ? "검증 명령 어휘" : "검증 명령 어휘 있음(이 이벤트는 검증 판정에 쓰지 않음)" : null,
+      levelCap ? "스크립트 확인 불가" : null
+    ].filter(Boolean).join(", ");
     this.addEvidence({
       comp,
       path: settingsDisp,
@@ -1543,7 +1548,7 @@ function reportClient() {
   };
   var BSTATUS = { within: "예산 이내", exceeded: "초과", unmeasured: "미측정" };
   var BLOCKED = {
-    needs_ci_pr_data: "CI·PR 데이터 필요(MVP 3)",
+    needs_ci_pr_data: "CI·PR 데이터 필요(아직 수집하지 않음)",
     session_format_unconfirmed: "세션 기록 형식 미확인",
     band_metric_undefined: "대역 지표 미정(캐시 적중률은 참고 지표)",
     sessions_disabled: "세션 집계 꺼짐",
@@ -1555,8 +1560,25 @@ function reportClient() {
     no_attributed_sessions: "귀속된 세션 없음",
     session_lines_skipped: "해석 못 한 줄이 많음"
   };
+  var REASON = {
+    user_scope_not_collected: "수집하지 않은 사용자 설정 파일이 있어 실제 수준이 더 높을 수 있음",
+    managed_settings_not_collected: "수집하지 않은 관리형 설정 파일이 있어 실제 수준이 더 높을 수 있음",
+    source_unreadable: "읽지 못한 출처가 있어 수준이 달라질 수 있음",
+    source_out_of_scope: "수집 범위 밖 출처가 있어 수준이 달라질 수 있음",
+    level3_reserved: "처리 속도는 수준 3을 예약해 두어 최대 2",
+    measured_band: "실측 대역 기준",
+    sample_below_2x_requirement: "표본이 요구량의 2배 미만이라 실측 대역 ±1",
+    outside_root_or_symlink_escape: "프로젝트 밖 경로이거나 심볼릭 링크가 밖을 가리킴",
+    import_outside_root: "프로젝트 밖 파일을 불러옴",
+    invalid_json: "JSON 형식 오류",
+    read_error: "읽기 오류",
+    sensitive_filename: "비밀정보가 들 수 있는 파일 이름"
+  };
+  function reasonText(c) {
+    return REASON[c] || c;
+  }
   var LOC = { direct: "프로젝트 세션", worker: "워커 워크트리", subagent: "서브에이전트", bot: "오케스트레이터 봇" };
-  var METHOD = { direct: "직접", worktree: "워크트리 gitdir", inferred: "추정(삭제된 워크트리)", configured: "설정 매핑", auto: "자동 귀속" };
+  var METHOD = { direct: "작업 경로 일치", worktree: "워크트리 gitdir", inferred: "추정(삭제된 워크트리)", configured: "설정 매핑", auto: "자동 귀속" };
   var TOKTYPE = [["freshInput", "새 입력"], ["cacheWrite", "캐시 쓰기"], ["cacheRead", "캐시 읽기"], ["output", "출력"]];
   var METRIC = {
     non_bash_tool_error_rate: "도구 오류율(Bash 제외)",
@@ -1654,6 +1676,19 @@ function reportClient() {
   function stateText(a) {
     return a.maturity.state === "measured" ? "실측" : "예측";
   }
+  function rangeText(a) {
+    var reasons = a.range.reasonCodes.filter(function(c) {
+      return c !== "measured_band";
+    }).map(reasonText);
+    return (a.maturity.state === "measured" ? "실측 대역 범위 " : "가능 범위 ") + a.range.min + "–" + a.range.max + (reasons.length ? " (" + reasons.join(", ") + ")" : "");
+  }
+  function deltaText(me) {
+    if (me.predictedLevel === null) return "";
+    return " · 구조 수준 " + me.predictedLevel + " / 실측 대역 " + me.band + "(다른 척도라 차이를 계산하지 않음)";
+  }
+  function fold(title, count, unit) {
+    return el("summary", null, title + " (" + count + unit + ")");
+  }
   function evList(ids) {
     if (!ids || !ids.length) return el("p", { class: "muted" }, "근거 없음");
     return el("ul", { class: "tight" }, ids.map(function(id) {
@@ -1732,9 +1767,6 @@ function reportClient() {
     var r = R * level / 3;
     return [C + r * Math.cos(ang), C + r * Math.sin(ang)];
   }
-  function value(a) {
-    return a.measured ? a.measured.band : a.level;
-  }
   var svg = s("svg", { class: "radar main", viewBox: "0 0 " + W + " " + W, role: "img", "aria-labelledby": "radar-title" });
   svg.appendChild(s("title", { id: "radar-title" }, "8개 축 구조 프로필 레이더 차트. 정확한 값은 아래 상세 수치 표에 있습니다."));
   [1, 2, 3].forEach(function(lv) {
@@ -1778,24 +1810,32 @@ function reportClient() {
       svg.appendChild(s("rect", { class: "pt-prev", x: p[0] - 4, y: p[1] - 4, width: 8, height: 8 }, s("title", null, "이전 " + AXIS[a.axis] + " 수준 " + d.previousLevel)));
     });
   }
-  drawProfile(value, "cur", function(x, y) {
-    return x.maturity.state === "measured" && y.maturity.state === "measured";
+  function isMeasured(a) {
+    return a.maturity.state === "measured" && !!a.measured;
+  }
+  drawProfile(function(a) {
+    return a.level;
+  }, "cur", function() {
+    return false;
+  });
+  drawProfile(function(a) {
+    return isMeasured(a) ? a.measured.band : null;
+  }, "cur", function() {
+    return true;
   });
   eng.axes.forEach(function(a, i) {
-    var v = value(a);
-    if (v === null) {
+    if (a.level === null) {
       var q = pt(i, 0.45);
       svg.appendChild(s("circle", { class: "unknown", cx: q[0], cy: q[1], r: 9 }));
       svg.appendChild(s("text", { class: "unknown-label", x: q[0], y: q[1] + 4, "text-anchor": "middle" }, "?"));
-      return;
+    } else {
+      var p = pt(i, a.level);
+      svg.appendChild(s("circle", { class: isMeasured(a) ? "pt-pred faded" : "pt-pred", cx: p[0], cy: p[1], r: 5.5 }, s("title", null, AXIS[a.axis] + " " + levelText(a) + " (구조 예측)")));
     }
-    var p = pt(i, v);
-    var measured = a.maturity.state === "measured";
-    if (measured && a.measured.predictedLevel !== null) {
-      var w = pt(i, a.measured.predictedLevel);
-      svg.appendChild(s("circle", { class: "pt-was", cx: w[0], cy: w[1], r: 7 }, s("title", null, AXIS[a.axis] + " 직전 예측 수준 " + a.measured.predictedLevel)));
+    if (isMeasured(a)) {
+      var m = pt(i, a.measured.band);
+      svg.appendChild(s("circle", { class: "pt-meas", cx: m[0], cy: m[1], r: 5 }, s("title", null, AXIS[a.axis] + " 실측 대역 " + a.measured.band + " (세션 지표, 구조 수준과 다른 척도)")));
     }
-    svg.appendChild(s("circle", { class: measured ? "pt-meas" : "pt-pred", cx: p[0], cy: p[1], r: 5.5 }, s("title", null, AXIS[a.axis] + " " + levelText(a) + " (" + stateText(a) + ")")));
   });
   function legendIcon(kind) {
     var g = s("svg", { width: 46, height: 16, viewBox: "0 0 46 16", "aria-hidden": "true" });
@@ -1806,14 +1846,11 @@ function reportClient() {
     }
     if (kind === "meas") {
       g.appendChild(s("line", { class: "cur", x1: 2, y1: 8, x2: 34, y2: 8 }));
-      g.appendChild(s("circle", { class: "pt-meas", cx: 38, cy: 8, r: 5 }));
+      g.appendChild(s("circle", { class: "pt-meas", cx: 38, cy: 8, r: 4.5 }));
     }
     if (kind === "prev") {
       g.appendChild(s("line", { class: "prev", x1: 2, y1: 8, x2: 34, y2: 8 }));
       g.appendChild(s("rect", { class: "pt-prev", x: 34, y: 4, width: 8, height: 8 }));
-    }
-    if (kind === "was") {
-      g.appendChild(s("circle", { class: "pt-was", cx: 23, cy: 8, r: 6 }));
     }
     if (kind === "band") {
       g.appendChild(s("line", { class: "band", x1: 8, y1: 8, x2: 38, y2: 8 }));
@@ -1825,11 +1862,10 @@ function reportClient() {
     return g;
   }
   var legend = el("ul", { class: "legend" }, [
-    el("li", null, [legendIcon("pred"), "현재 · 예측(구성 기반): 점선, 빈 원"]),
-    el("li", null, [legendIcon("meas"), "현재 · 실측: 실선, 채운 점 (변은 양 끝이 모두 실측일 때만 실선)"]),
-    showPrev ? el("li", null, [legendIcon("prev"), "이전 스냅샷 " + cmp.previousSnapshotId + ": 점 무늬 선, 네모"]) : null,
-    el("li", null, [legendIcon("band"), "가능 범위: 수집 범위 밖·미확인 출처가 바꿀 수 있는 수준. 실측 축은 표본이 쌓일수록 좁아집니다"]),
-    measuredCount ? el("li", null, [legendIcon("was"), "실측 축의 직전 예측(구조적 수준): 흐린 점선 원"]) : null,
+    el("li", null, [legendIcon("pred"), "구조 수준(구성 기반 예측, 모든 축): 점선, 빈 원. 실측 축에서는 직전 예측이라 흐리게"]),
+    measuredCount ? el("li", null, [legendIcon("meas"), "실측 대역(세션 지표, 구조 수준과 다른 척도): 채운 점. 이웃 축도 실측일 때만 실선으로 잇습니다"]) : null,
+    showPrev ? el("li", null, [legendIcon("prev"), "이전 스냅샷 " + cmp.previousSnapshotId + " 구조 수준: 점 무늬 선, 네모"]) : null,
+    el("li", null, [legendIcon("band"), "가능 범위: 예측 축은 수집 범위 밖·미확인 출처가 바꿀 수 있는 구조 수준, 실측 축은 실측 대역이 있을 수 있는 구간(표본이 쌓일수록 좁아짐)"]),
     el("li", null, [legendIcon("unknown"), "판정 불가: 관련 출처를 읽지 못함(0점이 아님)"])
   ]);
   var axisList = el("ul", { class: "tight" }, eng.axes.map(function(a) {
@@ -1841,18 +1877,18 @@ function reportClient() {
       var me = a.measured;
       mt = "실측 대역 " + me.band + " (" + me.bandRuleId + ", 휴리스틱) · " + me.metrics.map(function(x) {
         return (METRIC[x.metricId] || x.metricId) + " " + metricValue(x);
-      }).join(", ") + " · 표본 " + unitName + num(me.sampleSize) + "회" + (me.predictedLevel === null ? "" : " · 직전 예측 " + me.predictedLevel + " → 차이 " + (me.deltaFromPredicted > 0 ? "+" : me.deltaFromPredicted < 0 ? "−" : "±") + Math.abs(me.deltaFromPredicted));
+      }).join(", ") + " · 표본 " + unitName + num(me.sampleSize) + "회" + deltaText(me);
     } else if (m.current === null) mt = "실측까지: " + unitName + m.requirement.required + "회 · " + (BLOCKED[m.blockedReason] || m.blockedReason);
     else mt = "실측까지: " + unitName + num(m.current) + " / " + num(m.requirement.required) + "회 · " + Math.round(m.progress * 100) + "% (기준은 휴리스틱)";
     var d = prevLevel[a.axis];
     var delta = d && d.comparable && d.previousLevel !== d.currentLevel ? " · 이전 " + (d.previousLevel === null ? "?" : d.previousLevel) + " → 현재 " + (d.currentLevel === null ? "?" : d.currentLevel) : "";
     var prog = m.measurable && m.progress !== null ? el("span", { class: "mini", role: "img", "aria-label": "진행도 " + Math.round(m.progress * 100) + "%" }, el("span", { style: "width:" + Math.round(m.progress * 100) + "%" })) : null;
-    var shownText = m.state === "measured" ? "실측 대역 " + a.measured.band : levelText(a);
-    return el("li", null, [el("b", null, AXIS[a.axis]), " ", shownText, " (" + stateText(a) + ") · 가능 범위 " + a.range.min + "–" + a.range.max + delta, el("br"), prog, el("span", { class: "muted" }, mt)]);
+    var shownText = m.state === "measured" ? "실측 대역 " + a.measured.band + " (실측) · " + levelText(a).replace("수준", "구조 수준") : levelText(a) + " (예측)";
+    return el("li", null, [el("b", null, AXIS[a.axis]), " ", shownText, " · " + rangeText(a) + delta, el("br"), prog, el("span", { class: "muted" }, mt)]);
   }));
   radarSec.appendChild(el("div", { class: "radar-wrap" }, [
     el("div", { class: "panel" }, svg),
-    el("div", null, [legend, el("p", { class: "notice" }, "레이더의 면적은 종합 점수가 아닙니다. 수준(0~3)은 구조적 지원 수준이며 실제 성능이 아닙니다. 축끼리 더하거나 하네스 간 순위를 매기지 마세요."), axisList])
+    el("div", null, [legend, el("p", { class: "notice" }, "레이더의 면적은 종합 점수가 아닙니다. 구조 수준(0~3)은 구성이 주는 지원 수준이며 실제 성능이 아닙니다. 실측 대역(0~3)은 세션 지표를 휴리스틱 구간으로 나눈 값이라, 같은 눈금에 올렸지만 다른 척도입니다. 둘의 차이는 점수 하락·상승이 아닙니다. 축끼리 더하거나 하네스 간 순위를 매기지 마세요."), axisList])
   ]));
   function shareBar(parts, label) {
     var total = parts.reduce(function(t, x) {
@@ -1867,13 +1903,19 @@ function reportClient() {
       if (!total || !x.value) return;
       var w = x.value / total * W2;
       g.appendChild(s("rect", { class: "seg " + x.cls, x: x0, y: 0, width: Math.max(w - 2, 1), height: H2, rx: 3 }, s("title", null, x.name + " " + num(x.value) + " (" + pct(x.value / total) + ")")));
-      if (w > 110) g.appendChild(s("text", { x: x0 + 6, y: 18, class: x.cls === "c3" || x.cls === "c4" ? "seglabel ink" : "seglabel" }, x.name + " " + pct(x.value / total)));
       x0 += w;
     });
     var legend2 = el("ul", { class: "legend inline" }, parts.map(function(x) {
       return el("li", null, [el("span", { class: "swatch " + x.cls, "aria-hidden": "true" }), x.name + " " + (total ? pct(x.value / total) : "0%")]);
     }));
     return el("div", { class: "sharewrap" }, [g, legend2]);
+  }
+  function day(iso) {
+    return Date.parse(iso.length === 10 ? iso + "T00:00:00Z" : iso);
+  }
+  function spanText(ms) {
+    var d = Math.floor(ms / 864e5), h = Math.floor(ms % 864e5 / 36e5), m = Math.floor(ms % 36e5 / 6e4);
+    return d ? d + "일 " + h + "시간" : h ? h + "시간 " + m + "분" : m + "분";
   }
   function bucketRow(name, b) {
     return [name, num(b.freshInput), num(b.cacheWrite), num(b.cacheRead), num(b.output), num(b.weighted)];
@@ -1882,17 +1924,37 @@ function reportClient() {
   if (usable) {
     var sSec2 = section("세션 기록 실측", "sessions");
     var cov = sess.coverage;
+    var win = sess.window;
+    var tokSpan = win ? Math.round((day(win.to) - day(win.from)) / 864e5 + 1) + "일(날짜 기준)" : null;
+    var axisSpanMs = cov.configSince ? Math.max(0, Date.parse(meta.analyzedAt) - Date.parse(cov.configSince)) : null;
+    var sessAxis = eng.axes.filter(function(a) {
+      return a.maturity.requirement && a.maturity.requirement.unit === "sessions" && a.maturity.current !== null;
+    })[0];
+    var axisSessions = sessAxis ? sessAxis.maturity.current : null;
+    var winLines = [
+      "① 토큰·위치 표: " + (win ? win.from + " ~ " + win.to + " (" + tokSpan + ", 귀속 세션 " + num(cov.sessionsAttributed) + "개)" : "—"),
+      cov.configSince ? "② 축별 실측 지표(집계 창 ‘현재 구성 이후’): " + cov.configSince + " 이후" + (axisSpanMs === null ? "" : " (분석 시각까지 " + spanText(axisSpanMs) + (axisSessions === null ? "" : ", 프로젝트·워커 세션 " + num(axisSessions) + "개") + ")") : "② 축별 실측 지표: 구성 기준 시각이 없어 ①과 같은 누적 창을 씁니다."
+    ];
+    var shortWin = axisSpanMs !== null && axisSpanMs < 7 * 864e5;
+    sSec2.appendChild(el("div", { class: "notice windows" }, [
+      el("b", null, "집계 창이 둘입니다"),
+      el("ul", { class: "tight" }, winLines.map(function(t) {
+        return el("li", null, t);
+      })),
+      el("span", null, "두 창의 값은 서로 비교하지 마세요." + (shortWin ? " 축 실측 창이 짧아 실측 대역이 흔들릴 수 있습니다." : ""))
+    ]));
     sSec2.appendChild(el("div", { class: "meta panel" }, [
-      ["누적 집계 기간", sess.window ? sess.window.from + " ~ " + sess.window.to : "—"],
+      ["토큰 집계 창(①)", win ? win.from + " ~ " + win.to + " · " + tokSpan : "—"],
+      ["축 실측 창(②)", cov.configSince ? cov.configSince + " 이후" + (axisSpanMs === null ? "" : " · 분석 시각까지 " + spanText(axisSpanMs)) : "①과 같음"],
       ["원본 기록 범위", sess.window && sess.window.rawLogsFrom ? sess.window.rawLogsFrom + " 이후(오래된 기록은 Claude Code가 정리)" : "원본 기록 없음(누적값만)"],
       ["Claude Code 버전", sess.clientVersions ? sess.clientVersions.min + " ~ " + sess.clientVersions.max : "미확인"],
       ["읽은 기록", "파일 " + num(cov.filesScanned) + "개 · 줄 " + num(cov.linesRead) + " (건너뜀 " + num(cov.linesSkipped) + ")" + (cov.incremental ? " · 증분" : " · 전체")],
       ["중복 제거", "assistant 줄 " + num(sess.dedup.assistantLines) + " → 응답 " + num(sess.dedup.uniqueResponses) + " (합성 " + sess.dedup.excludedSynthetic + " · API 오류 " + sess.dedup.excludedApiError + " 제외)"],
-      ["귀속", "귀속 세션 " + num(cov.sessionsAttributed) + " · 미귀속(불확실) " + num(cov.sessionsUnattributed) + (cov.sessionsExcluded ? " · 무관한 프로젝트 제외 " + num(cov.sessionsExcluded) : "") + (cov.configSince ? " · 현재 구성 이후 " + cov.configSince.slice(0, 10) : "")]
+      ["귀속", "귀속 세션 " + num(cov.sessionsAttributed) + " · 미귀속(불확실) " + num(cov.sessionsUnattributed) + (cov.sessionsExcluded ? " · 무관한 프로젝트 제외 " + num(cov.sessionsExcluded) : "") + " (① 창 기준)"]
     ].map(function(kv) {
       return el("div", null, [el("b", null, kv[0]), kv[1]]);
     })));
-    sSec2.appendChild(el("p", { class: "muted" }, "원문(대화·코드·도구 입력)은 읽어 두지 않고 숫자만 집계했습니다. 환산값은 공개 가격표(" + (sess.tokens ? sess.tokens.weighting.pricingTableVersion : "—") + ") 기준 " + (sess.tokens ? sess.tokens.weighting.referenceModel : "") + " 새 입력 토큰으로 환산한 상대값이며 청구액이 아닙니다."));
+    sSec2.appendChild(el("p", { class: "muted" }, "원문(대화·코드·도구 입력)은 읽어 두지 않고 숫자만 집계했습니다."));
     var tk = sess.tokens;
     if (tk) {
       sSec2.appendChild(el("h3", null, "토큰 종류별"));
@@ -1900,6 +1962,7 @@ function reportClient() {
         return { name: t[1], value: tk.total[t[0]], cls: "c" + (i + 1) };
       }), "토큰 종류별 비중(토큰 수)"));
       sSec2.appendChild(el("h3", null, "위치별 (환산값 비중)"));
+      sSec2.appendChild(el("p", { class: "muted" }, "환산값: 공개 가격표(" + tk.weighting.pricingTableVersion + ") 기준 " + tk.weighting.referenceModel + " 새 입력 토큰으로 환산한 상대값이며 청구액이 아닙니다. 아래 막대와 표의 ‘환산값’·‘비중’ 칸이 이 단위입니다. 프로젝트 세션은 작업 경로가 이 프로젝트 안인 메인 세션(엔진 값 direct)입니다. 이번 분석 세션은 실행한 곳에 따라 프로젝트 세션·워커 워크트리·오케스트레이터 봇 중 하나로 집계되고, 집계 시점에 기록이 없으면 빠집니다."));
       var locs = tk.byLocation.filter(function(l) {
         return l.sessions > 0 || l.tokens.weighted > 0;
       });
@@ -1929,31 +1992,35 @@ function reportClient() {
       ])));
       if (cov.sessionsExcluded) sSec2.appendChild(el("p", { class: "muted" }, "이 프로젝트와 무관한 세션 " + num(cov.sessionsExcluded) + "개(다른 프로젝트 경로, 다른 저장소에 매핑된 봇)는 위 표 어디에도 넣지 않았습니다."));
       if (tk.byModel.length) {
-        sSec2.appendChild(el("details", null, [el("summary", null, "모델별"), table(TOKH, tk.byModel.map(function(m) {
+        sSec2.appendChild(el("details", null, [fold("모델별", tk.byModel.length, "개 모델"), table(TOKH, tk.byModel.map(function(m) {
           return bucketRow(m.model, m.tokens);
         }))]));
       }
     }
     var cpt = sess.contextPerTurn;
     if (cpt) {
-      sSec2.appendChild(el("h3", null, "턴별 컨텍스트 크기"));
       var dist = cpt.distribution;
+      sSec2.appendChild(el("h3", null, "턴별 컨텍스트 크기 (최근 " + dist.retentionDays + "일 원시 기록)"));
       if (cpt.p50 === null) sSec2.appendChild(el("p", { class: "notice" }, "최근 " + dist.retentionDays + "일 안의 원시 요청이 없어 분포(중앙값·p90·최대)는 미확인입니다. 아래 일별 추이는 접어 둔 누적 요약입니다. 컨텍스트 압축 " + cpt.compactions + "회."));
-      else sSec2.appendChild(el("p", null, "메인 스레드 요청 " + num(cpt.requests) + "개(" + dist.from + " ~ " + dist.to + ", 최근 " + dist.retentionDays + "일 원시 기록)의 입력 크기(새 입력+캐시 쓰기+캐시 읽기): 중앙값 " + num(cpt.p50) + " · p90 " + num(cpt.p90) + " · 최대 " + num(cpt.max) + " 토큰. 세션 첫 요청 중앙값 " + num(cpt.firstRequestP50) + " · 컨텍스트 압축 " + cpt.compactions + "회."));
+      else sSec2.appendChild(el("p", null, "메인 스레드 요청 " + num(cpt.requests) + "개(" + dist.from + " ~ " + dist.to + ", 최근 " + dist.retentionDays + "일 원시 기록)의 입력 크기(새 입력+캐시 쓰기+캐시 읽기): 중앙값 " + num(cpt.p50) + " · p90 " + num(cpt.p90) + "(이 창 기준) · 최대 " + num(cpt.max) + " 토큰. 세션 첫 요청 중앙값 " + num(cpt.firstRequestP50) + " · 컨텍스트 압축 " + cpt.compactions + "회."));
       if (cpt.series.some(function(p) {
         return p.source === "archive";
       })) sSec2.appendChild(el("p", { class: "muted" }, "‘근사’ 표시 날은 " + dist.retentionDays + "일이 지나 일별 요약으로 접은 날입니다. 요청 수·최대는 정확하고 중앙값은 근사일 수 있습니다."));
+      var axisP90 = sess.axisMetrics.filter(function(m) {
+        return m.metricId === "context_p90_tokens";
+      })[0];
+      if (cpt.p90 !== null && axisP90 && axisP90.value !== cpt.p90) sSec2.appendChild(el("p", { class: "muted" }, "축별 실측 지표의 요청 입력 크기 p90 " + num(axisP90.value) + "은 " + (axisP90.sinceConfig ? "현재 구성 이후(② 창) 요청만" : "누적 집계") + " 센 값이라 위 p90 " + num(cpt.p90) + "과 다릅니다."));
       if (cpt.series.length) sSec2.appendChild(trendChart(cpt.series));
     }
     if (sess.axisMetrics.length) {
       sSec2.appendChild(el("h3", null, "축별 실측 지표"));
-      sSec2.appendChild(table(["축", "지표", "값", "표본", "범위"], sess.axisMetrics.map(function(m) {
-        return [AXIS[m.axis], METRIC[m.metricId] || m.metricId, metricValue(m), num(m.sampleSize), m.sinceConfig ? "현재 구성 이후" : "전체"];
+      sSec2.appendChild(table(["축", "지표", "값", "표본", "집계 창"], sess.axisMetrics.map(function(m) {
+        return [AXIS[m.axis], METRIC[m.metricId] || m.metricId, metricValue(m), num(m.sampleSize), m.sinceConfig ? "② 현재 구성 이후" : "① 누적"];
       })));
     }
     if (sess.toolUsage && sess.toolUsage.length) {
       sSec2.appendChild(el("details", null, [
-        el("summary", null, "도구별 호출·오류"),
+        fold("도구별 호출·오류", sess.toolUsage.length, "개 도구"),
         el("p", { class: "muted" }, "Bash 비정상 종료는 테스트 실패처럼 명령의 정상 결과일 수 있어 실행 안정성 대역에서 뺐습니다. Hook 차단·사용자 거절도 오류로 기록될 수 있습니다."),
         table(["도구", "호출", "오류", "오류율"], sess.toolUsage.map(function(u) {
           return [u.tool, num(u.calls), num(u.errors), u.calls ? pct(u.errors / u.calls) : "—"];
@@ -1961,11 +2028,20 @@ function reportClient() {
       ]));
     }
   }
+  function niceCeil(v) {
+    var e = Math.pow(10, Math.floor(Math.log10(v))), f = v / e;
+    return (f <= 1 ? 1 : f <= 2 ? 2 : f <= 2.5 ? 2.5 : f <= 5 ? 5 : 10) * e;
+  }
   function trendChart(series) {
+    if (series.length < 3) {
+      return el("p", { class: "muted trend-text" }, "일별 추이는 " + series.length + "일치뿐이라 그래프 대신 값을 적습니다: " + series.map(function(p) {
+        return p.date + " 요청 " + num(p.requests) + "개 · 중앙값 " + num(p.p50) + " · 최대 " + num(p.max) + " 토큰" + (p.source === "archive" ? "(근사)" : "");
+      }).join(" / ") + ".");
+    }
     var W3 = 640, H3 = 200, L = 64, Rt = 12, T = 12, B = 30;
-    var maxV = Math.max.apply(null, series.map(function(p) {
+    var maxV = niceCeil(Math.max.apply(null, series.map(function(p) {
       return p.max;
-    })) || 1;
+    })) || 1);
     var n3 = series.length;
     var xOf = function(i) {
       return n3 === 1 ? L + (W3 - L - Rt) / 2 : L + i * (W3 - L - Rt) / (n3 - 1);
@@ -1996,7 +2072,7 @@ function reportClient() {
       el("li", null, [el("span", { class: "swatch line-p50", "aria-hidden": "true" }), "일별 중앙값(실선)"]),
       el("li", null, [el("span", { class: "swatch line-max dashed", "aria-hidden": "true" }), "일별 최대(점선)"])
     ]);
-    return el("div", null, [el("div", { class: "panel" }, [g, lg]), el("details", null, [el("summary", null, "일별 표"), table(["날짜", "요청", "중앙값", "최대", "출처"], series.map(function(p) {
+    return el("div", null, [el("div", { class: "panel" }, [g, lg]), el("details", null, [fold("일별 표", series.length, "일"), table(["날짜", "요청", "중앙값", "최대", "출처"], series.map(function(p) {
       return [p.date, num(p.requests), num(p.p50), num(p.max), p.source === "archive" ? "근사(누적 요약)" : "원시 기록"];
     }))])]);
   }
@@ -2093,6 +2169,11 @@ function reportClient() {
     });
   }
   var aSec = section("축 상세", "axes");
+  if (eng.inventory.components.some(function(c) {
+    return c.kind === "hook";
+  })) {
+    aSec.appendChild(el("p", { class: "muted" }, "Hook 근거의 ‘차단 표지’는 Hook 명령·스크립트(상대 경로 import 1단계 포함)에서 exit 2·decision: block 같은 문자열 패턴을 찾은 결과입니다. 실행해 확인한 것이 아닙니다. ‘검증 명령 어휘’는 검증 게이트 판정에 쓰는 이벤트(PreToolUse·PostToolUse·Stop·SubagentStop)에서만 근거가 됩니다."));
+  }
   var notes = {};
   interp.axisNotes.forEach(function(x) {
     notes[x.axis] = x;
@@ -2116,7 +2197,7 @@ function reportClient() {
       note ? list("반례 가능성", note.counterexamples) : null,
       note ? list("추가 검증 방법", note.validation) : null,
       fs.length ? el("div", null, [el("b", null, "발견"), el("ul", { class: "tight" }, fs.map(findingItem))]) : null,
-      el("details", null, [el("summary", null, "엔진 근거 " + a.source.evidenceIds.length + "개 · 가능 범위 " + a.range.min + "–" + a.range.max + (a.range.reasonCodes.length ? " (" + a.range.reasonCodes.join(", ") + ")" : "")), evList(a.source.evidenceIds)])
+      el("details", null, [el("summary", null, "엔진 근거 " + a.source.evidenceIds.length + "개 · " + rangeText(a)), evList(a.source.evidenceIds)])
     ]));
   });
   function findingItem(f) {
@@ -2138,14 +2219,15 @@ function reportClient() {
     aSec.appendChild(el("ul", { class: "tight" }, general.map(findingItem)));
   }
   var dSec = section("상세 수치 표", "data");
-  dSec.appendChild(el("p", { class: "muted" }, "레이더 차트와 같은 데이터입니다."));
-  dSec.appendChild(table(["축", "수준", "상태", "가능 범위", "결정 규칙", "근거 수", "이전 수준", "비교"], eng.axes.map(function(a) {
+  dSec.appendChild(el("p", { class: "muted" }, "레이더 차트와 같은 데이터입니다. 구조 수준과 실측 대역은 다른 척도입니다."));
+  dSec.appendChild(table(["축", "구조 수준", "실측 대역", "상태", "가능 범위", "결정 규칙", "근거 수", "이전 구조 수준", "비교"], eng.axes.map(function(a) {
     var d = prevLevel[a.axis];
     return [
       AXIS[a.axis],
       a.level === null ? "판정 불가" : String(a.level),
+      a.measured ? String(a.measured.band) : "—",
       stateText(a) + (a.levelStatus === "unknown" ? " · 미확인" : ""),
-      a.range.min + "–" + a.range.max,
+      a.range.min + "–" + a.range.max + (a.maturity.state === "measured" ? " (실측 대역 기준)" : ""),
       a.source.ruleId ? code(a.source.ruleId) : "—",
       String(a.source.evidenceIds.length),
       d ? d.previousLevel === null ? "판정 불가" : String(d.previousLevel) : "—",
@@ -2177,7 +2259,7 @@ function reportClient() {
   if (!pa) sSec.appendChild(el("p", { class: "muted" }, "직전 분석 기록 없음. 다음 분석에서 이번 분석의 토큰·시간을 세션 기록으로 측정합니다."));
   else {
     sSec.appendChild(el("p", null, "직전 분석(" + pa.snapshotId + "): 걸린 시간 " + (pa.wallClockMs === null ? "미확인" : Math.round(pa.wallClockMs / 100) / 10 + "초") + " · LLM 토큰 " + (pa.llmTokens ? "새 입력 " + num(pa.llmTokens.freshInput) + " + 캐시 쓰기 " + num(pa.llmTokens.cacheWrite) + " + 출력 " + num(pa.llmTokens.output) + " (캐시 읽기 " + num(pa.llmTokens.cacheRead) + " 별도, 환산 " + num(pa.llmTokens.weighted) + ")" : "미측정(그 구간의 귀속 세션 기록 없음)")));
-    if (pa.llmTokens) sSec.appendChild(el("p", { class: "muted" }, "prepare 시작~finalize 끝 구간에 이 프로젝트에 귀속된 메인 스레드 응답을 모두 셉니다. 같은 시간에 다른 작업을 했다면 함께 들어갑니다."));
+    if (pa.llmTokens) sSec.appendChild(el("p", { class: "muted" }, "prepare 시작~finalize 끝 구간에 이 프로젝트에 귀속된 메인 스레드 응답을 모두 셉니다. 같은 시간에 다른 작업을 했다면 함께 들어갑니다. 프로젝트 세션과 워커 워크트리 응답을 합한 값이라 세션 기록 실측의 두 위치 합계와 겹칩니다(따로 빼지 않음). 봇에서 실행한 분석은 여기에 잡히지 않습니다."));
   }
   var lSec = section("한계와 미확인 영역", "limitations");
   var lims = eng.limitations.map(function(l) {
@@ -2192,7 +2274,7 @@ function reportClient() {
   if (notRead.length) {
     lSec.appendChild(el("h3", null, "읽지 않았거나 읽지 못한 출처"));
     lSec.appendChild(table(["경로", "출처", "상태", "사유"], notRead.map(function(x) {
-      return [x.path, ORIGIN[x.origin] || x.origin, SRC[x.status] || x.status, x.reason || "—"];
+      return [x.path, ORIGIN[x.origin] || x.origin, SRC[x.status] || x.status, x.reason ? reasonText(x.reason) : "—"];
     })));
   }
   if (eng.inventory.redactions.length) {
@@ -2211,7 +2293,7 @@ var REPORT_CSS = `
   --grid: #c9c9c2; --current: #1f5fbf; --previous: #7a7a72; --band: rgba(31, 95, 191, 0.16);
   --warn-bg: #fff4dc; --warn-line: #c98a00; --added: #1d7a3a; --removed: #b3261e; --modified: #8a5a00;
   --code-bg: #efefea;
-  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100; --was: #7a7a72;
+  --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #eda100;
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -2219,7 +2301,7 @@ var REPORT_CSS = `
     --grid: #4a4a45; --current: #7fb0ff; --previous: #9c9c94; --band: rgba(127, 176, 255, 0.20);
     --warn-bg: #3a2f14; --warn-line: #e0a830; --added: #6fcf8a; --removed: #ff8a80; --modified: #e6b450;
     --code-bg: #2a2a27;
-    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500; --was: #9c9c94;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70; --s4: #c98500;
   }
 }
 * { box-sizing: border-box; }
@@ -2229,6 +2311,8 @@ h1 { font-size: 24px; margin: 0 0 4px; }
 h2 { font-size: 19px; margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 h3 { font-size: 16px; margin: 18px 0 8px; }
 p { margin: 6px 0; }
+/* 긴 비분리 문자열(경로·식별자)이 페이지 폭을 넘기지 않게 한다. 표는 .tablewrap 가로 스크롤에 맡긴다. */
+p, li, summary, .meta div { overflow-wrap: anywhere; }
 .muted { color: var(--muted); }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin: 10px 0; }
 .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 6px 18px; margin: 12px 0; }
@@ -2242,11 +2326,8 @@ p { margin: 6px 0; }
 .bar span.seg.on { background: var(--current); border: 1px solid var(--current); }
 .mini { display: inline-block; vertical-align: middle; width: 80px; height: 8px; border: 1px solid var(--line); border-radius: 4px; overflow: hidden; margin-right: 6px; }
 .mini span { display: block; height: 100%; background: var(--current); }
-svg.radar .pt-was { fill: none; stroke: var(--was); stroke-width: 1.5; stroke-dasharray: 2 3; opacity: 0.8; }
 .sharewrap { margin: 6px 0 10px; }
 svg.share { width: 100%; height: auto; display: block; }
-svg.share .seglabel { fill: #fff; font-size: 12px; font-weight: 600; }
-svg.share .seglabel.ink { fill: #111; }
 svg .c1, .swatch.c1 { fill: var(--s1); background: var(--s1); }
 svg .c2, .swatch.c2 { fill: var(--s2); background: var(--s2); }
 svg .c3, .swatch.c3 { fill: var(--s3); background: var(--s3); }
@@ -2278,6 +2359,7 @@ svg.radar .cur { stroke: var(--current); stroke-width: 2.5; fill: none; }
 svg.radar .cur.predicted { stroke-dasharray: 7 5; }
 svg.radar .prev { stroke: var(--previous); stroke-width: 2; fill: none; stroke-dasharray: 2 4; opacity: 0.9; }
 svg.radar .pt-pred { fill: var(--panel); stroke: var(--current); stroke-width: 2.5; }
+svg.radar .pt-pred.faded { opacity: 0.45; }
 svg.radar .pt-meas { fill: var(--current); stroke: var(--current); }
 svg.radar .pt-prev { fill: var(--previous); }
 svg.radar .unknown { fill: none; stroke: var(--warn-line); stroke-width: 2; stroke-dasharray: 3 3; }
