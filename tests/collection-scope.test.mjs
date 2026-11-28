@@ -146,7 +146,7 @@ test('R5: Windows 실행 비트는 강제 근거로 추정하지 않고 한계�
 
 test('N3: 셸 조건문의 명세 경로를 SC 명령으로 오인하지 않고 실제 명령의 위치를 남긴다', (t) => {
   const p = setup(t);
-  for (const condition of ['if [[ -f task-spec.md ]]; then', 'if [ -f acceptance.md ]; then', 'elif [[ -f task-spec.md ]]; then', 'while [ -f task-spec.md ]; do', 'until [ -f task-spec.md ]; do']) {
+  for (const condition of ['if [[ -f task-spec.md ]]; then', 'if [ -f acceptance.md ]; then', 'elif [[ -f task-spec.md ]]; then', 'while [ -f task-spec.md ]; do', 'until [ -f task-spec.md ]; do', 'if test -f task-spec.md; then', 'if [[ -f file && -f task-spec.md ]]; then', 'echo "skip; node check-task-spec.mjs"']) {
     p.write('.git/hooks/pre-commit', `#!/bin/sh\nset -e\n${condition}\n  echo skip\nfi\n`);
     let col = p.collectNow();
     assert.ok(col.evidence.every((e) => !e.ruleIds.some((r) => r.startsWith('SC-'))), condition);
@@ -155,6 +155,32 @@ test('N3: 셸 조건문의 명세 경로를 SC 명령으로 오인하지 않고 
     const ev = col.evidence.find((e) => e.ruleIds.some((r) => r.startsWith('SC-')));
     assert.ok(ev, condition);
     assert.equal(ev.line, 6, condition);
+  }
+});
+
+test('검수 회귀: 조건식은 제외하되 조건 명령·부정 명령·then/do 뒤의 게이트를 수집한다', (t) => {
+  const p = setup(t);
+  const cases = [
+    ['.git/hooks/pre-commit', 'if ! npm test; then exit 1; fi', 'VG-L2-04'],
+    ['.git/hooks/pre-commit', 'while read f; do eslint "$f"; done', 'VG-L2-04'],
+    ['.github/workflows/ci.yml', 'steps:\n  - run: if [ -f package.json ]; then npm test; fi', 'VG-L2-04'],
+    ['.git/hooks/pre-commit', 'if ! node scripts/check-task-spec.mjs; then exit 1; fi', 'SC-L2-04'],
+    ['.git/hooks/pre-commit', 'elif ! npm test; then exit 1; fi', 'VG-L2-04'],
+    ['.git/hooks/pre-commit', 'until npm test; do echo retry; done', 'VG-L2-04'],
+    ['.git/hooks/pre-commit', 'if [ -f task-spec.md ]; then npm test; fi', 'VG-L2-04'],
+    ['.git/hooks/pre-commit', 'if [[ -f file && -f task-spec.md ]]; then npm test; fi', 'VG-L2-04'],
+    ['.git/hooks/pre-commit', 'if test -f task-spec.md; then npm test; fi', 'VG-L2-04'],
+    ['.git/hooks/pre-commit', 'if ! npm test', 'VG-L2-04'],
+  ];
+  for (const [file, text, rule] of cases) {
+    rmSync(path.join(p.project, '.git'), { recursive: true, force: true });
+    rmSync(path.join(p.project, '.github'), { recursive: true, force: true });
+    const hook = p.write(file, file.endsWith('.yml') ? text : `#!/bin/sh\nset -e\n${text}\n`);
+    chmodSync(hook, 0o755);
+    const col = p.collectNow();
+    const ev = col.evidence.filter((e) => e.ruleIds.length);
+    assert.deepEqual(ev.map((e) => e.ruleIds), [[rule]], text);
+    assert.equal(ev[0].line, file.endsWith('.yml') ? 2 : 3, text);
   }
 });
 

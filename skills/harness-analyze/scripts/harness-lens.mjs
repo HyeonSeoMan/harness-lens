@@ -535,6 +535,56 @@ function splitCommand(command) {
   for (const m of command.matchAll(/(?:"[^"]*"|'[^']*'|[^\s"']+)+/g)) out.push(m[0].replace(/["']/g, ""));
   return out;
 }
+function gateCommands(command) {
+  const parts = [];
+  let start = 0;
+  let quote = null;
+  let bracket = null;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (ch === "\\" && quote !== "'") {
+      i++;
+      continue;
+    }
+    if (quote) {
+      if (ch === quote) quote = null;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      continue;
+    }
+    if (bracket) {
+      if (command.startsWith(bracket, i)) {
+        i += bracket.length - 1;
+        bracket = null;
+      }
+      continue;
+    }
+    if (ch === "[" && (i === 0 || /\s/.test(command[i - 1]))) {
+      if (command[i + 1] === "[") {
+        bracket = "]]";
+        i++;
+        continue;
+      }
+      if (/\s/.test(command[i + 1] ?? "")) {
+        bracket = "]";
+        continue;
+      }
+    }
+    if (ch === "#" && (i === 0 || /\s/.test(command[i - 1]))) {
+      parts.push(command.slice(start, i));
+      start = command.length;
+      break;
+    }
+    if (/[;&|]/.test(ch)) {
+      parts.push(command.slice(start, i));
+      start = i + 1;
+    }
+  }
+  parts.push(command.slice(start));
+  return parts.map((part) => part.trim().replace(/^-\s+/, "").replace(/^(?:(?:if|elif|while|until|then|do|else)\s+|!\s*)+/, "").trim()).filter((part) => part && !/^(?:echo|printf|export|test|\[{1,2})(?:\s|$)|^[\w]+\s*=/.test(part));
+}
 function hookScriptPath(command) {
   const tokens = splitCommand(command).filter((t) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(t));
   let i = 0;
@@ -1389,14 +1439,12 @@ ${script ?? ""}`, REENTRY);
       ]) {
         const verification = (cmd) => /(?:^|[;&|]\s*|\s)(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|check)(?:\b|:)|node\s+--test\b|pytest\b|ruff\b|eslint\b|tsc\b|prettier\s+--check\b|cargo\s+(?:test|clippy)\b|go\s+(?:test|vet)\b|mvn\s+(?:test|verify)\b|gradle\s+(?:test|check)\b)/i.test(cmd) && !/^\s*(?:echo|printf|export|[\w]+\s*=)\b/.test(cmd);
         const hit = commands.find(([, cmd]) => {
-          const candidate = cmd.replace(/^\s*-\s+/, "").trim();
-          if (/^(?:echo|printf|export|test|\[|if|elif|while|until)(?:\s|$)|^[\w]+\s*=/.test(candidate)) return false;
-          return (axis === "spec_clarity" ? hasAny(candidate, words) : verification(candidate)) && (axis === "spec_clarity" || !hasAny(candidate, SPEC_CMD));
+          return gateCommands(cmd).some((candidate) => (axis === "spec_clarity" ? hasAny(candidate, words) : verification(candidate)) && (axis === "spec_clarity" || !hasAny(candidate, SPEC_CMD)));
         });
         if (!hit) continue;
         const before = commands.filter(([line]) => line < hit[0]).map(([, cmd]) => cmd).join("\n");
         const linkedFailure = /\|\|\s*exit\s+[1-9]\d*\s*$/.test(hit[1]);
-        const standaloneWithErrexit = /^\s*set\s+-[a-z]*e[a-z]*\s*$/m.test(before) && !/\bset\s+\+[a-z]*e/.test(before) && !/[;&|]/.test(hit[1]);
+        const standaloneWithErrexit = /^\s*set\s+-[a-z]*e[a-z]*\s*$/m.test(before) && !/\bset\s+\+[a-z]*e/.test(before) && !/[;&|]/.test(hit[1]) && !/^\s*(?:if|elif|while|until|then|do|else|!)(?:\s|$)/.test(hit[1]);
         const enforced = kind === "git_hook" && active && (linkedFailure || standaloneWithErrexit);
         const ruleId = enforced ? axis === "spec_clarity" ? "SC-L3-02" : "VG-L3-04" : rule;
         this.addEvidence({
@@ -5031,7 +5079,6 @@ function factRanks(evidence, axes) {
   return rank;
 }
 function compactInventory(draft, kbKeys) {
-  var _a, _b;
   const e = draft.engine;
   const sessions = { ...e.sessions, contextPerTurn: e.sessions.contextPerTurn && { ...e.sessions.contextPerTurn, series: void 0 } };
   if (sessions.tokens) sessions.tokens = { ...sessions.tokens, byModel: void 0 };
@@ -5058,33 +5105,54 @@ function compactInventory(draft, kbKeys) {
       compaction: { omitted: ["contentHash", "null_and_empty_array_keys"], factLimitPerAxis: factLimit, omittedFacts }
     });
   };
+  const lossless = (compact) => {
+    var _a, _b;
+    const components = compact.engine.inventory.components ?? [];
+    for (const c of components) if (c.name === ((_a = c.paths) == null ? void 0 : _a[0])) delete c.name;
+    for (const a of compact.engine.axes) delete a.source.evidenceIds;
+    const byId = new Map(components.map((c) => [c.id, c]));
+    for (const ev of compact.engine.evidence ?? []) {
+      const paths = (_b = byId.get(ev.componentId)) == null ? void 0 : _b.paths;
+      if ((paths == null ? void 0 : paths.length) && ev.path === paths[0]) delete ev.path;
+    }
+    const readSourceRefs = [];
+    const remainingSources = (compact.engine.inventory.sources ?? []).filter((src) => {
+      if (src.status !== "read") return true;
+      const ci = components.findIndex((c) => {
+        var _a2;
+        return c.origin === src.origin && ((_a2 = c.paths) == null ? void 0 : _a2.includes(src.path));
+      });
+      if (ci < 0) return true;
+      readSourceRefs.push([ci, components[ci].paths.indexOf(src.path)]);
+      return false;
+    });
+    if (remainingSources.length) compact.engine.inventory.sources = remainingSources;
+    else delete compact.engine.inventory.sources;
+    compact.compaction.omitted.push(
+      "name_equal_first_path",
+      "axis_source_evidenceIds",
+      "evidence_path_equal_first_component_path",
+      "read_sources_in_components"
+    );
+    if (readSourceRefs.length) compact.compaction.readSourceRefs = readSourceRefs;
+    return compact;
+  };
   const target = Math.floor(BUDGETS.llm_input_inventory_tokens.target * 0.9);
   let text = serializeCompact(build(null));
+  if (estimateTokens(text) <= target) return text;
+  text = serializeCompact(lossless(build(null)));
   if (estimateTokens(text) <= target) return text;
   const counts = /* @__PURE__ */ new Map();
   for (const ev of e.evidence) counts.set(ev.primaryAxis ?? "", (counts.get(ev.primaryAxis ?? "") ?? 0) + 1);
   for (let n = Math.max(1, ...counts.values()) - 1; n >= 1; n--) {
-    text = serializeCompact(build(n));
+    text = serializeCompact(lossless(build(n)));
     if (estimateTokens(text) <= target) return text;
   }
-  const lean = build(1);
-  for (const c of lean.engine.inventory.components) {
+  const lean = lossless(build(1));
+  for (const c of lean.engine.inventory.components ?? []) {
     for (const key of ["command", "description", "headings"]) delete c.attributes[key];
-    if (c.name === ((_a = c.paths) == null ? void 0 : _a[0])) delete c.name;
   }
-  for (const a of lean.engine.axes) delete a.source.evidenceIds;
-  lean.compaction.omitted.push("descriptive_component_attributes", "name_equal_first_path", "axis_source_evidenceIds");
-  if (estimateTokens(serializeCompact(lean)) <= target) return serializeCompact(lean);
-  const components = new Map(lean.engine.inventory.components.map((c) => [c.id, c]));
-  for (const ev of lean.engine.evidence) {
-    const paths = (_b = components.get(ev.componentId)) == null ? void 0 : _b.paths;
-    if ((paths == null ? void 0 : paths.length) && ev.path === paths[0]) delete ev.path;
-  }
-  lean.engine.inventory.sources = lean.engine.inventory.sources.filter((src) => src.status !== "read" || !lean.engine.inventory.components.some((c) => {
-    var _a2;
-    return c.origin === src.origin && ((_a2 = c.paths) == null ? void 0 : _a2.includes(src.path));
-  }));
-  lean.compaction.omitted.push("evidence_path_equal_first_component_path", "read_sources_in_components");
+  lean.compaction.omitted.push("descriptive_component_attributes");
   return serializeCompact(lean);
 }
 function interpretationTemplate(axes, comparison) {

@@ -101,6 +101,8 @@ PRD §7.1의 네 단계 위계(서술 < 절차 < Hook·권한 < 관리형·sandb
 | LEX-BLOCK | 차단 표지 | `exit 2`, `process.exit(2)`, `process.exitCode = 2`, `sys.exit(2)`, `os.Exit(2)`, `decision`↔`block`·`permissionDecision`↔`deny` 키 쌍(큰따옴표 키, 작은따옴표 키, 따옴표 없는 키 `decision: "block"`·`decision: 'block'`), `"continue": false`, `'continue': False`, `continue: false` (대소문자·공백 차이 무시, 0.3에서 종료 관례·따옴표 없는 키 추가) |
 | LEX-REENTRY | 재진입 방지 | `stop_hook_active` |
 
+CI·Git Hook 명령 영역(SC-L2-04·VG-L2-04, 2026-11-28 구현 정정): 따옴표 밖 `;`·`&`·`|`로 단순 명령을 구분하고 if·elif·while·until·then·do·else·`!` 접두어를 벗긴다. `test`·`[ ]`·`[[ ]]` 조건식, echo·printf·export·변수 대입은 제외하되, 조건 명령(`if ! npm test`)과 then/do 뒤 명령(`while read f; do eslint "$f"; done`)은 후보로 남긴다. 명세 파일 존재 조건은 SC 근거가 아니며 그 뒤의 실제 검증 명령은 VG 근거로 남는다. 따옴표 안 구분자는 데이터로 유지한다. 완전한 셸 파서는 아니며 실행하지 않는다. 기존 명령 영역 판정의 오탐·미탐 수정으로 루브릭 0.4·규칙 ID·어휘는 유지한다.
+
 Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`sh`·`node`·`python`·`python3` 뒤의 첫 경로 포함)을 `$CLAUDE_PROJECT_DIR`, `${CLAUDE_PLUGIN_ROOT}` 치환 후 찾는다. 자기 출처의 루트(프로젝트 또는 플러그인) 안에 있는 256KB 이하 파일만 읽는다. 스크립트를 실행하지 않는다.
 
 공용 헬퍼 스캔(0.3): 스크립트가 불러오는 파일을 **1단계까지만** 함께 본다. 같은 출처 루트 안이고 256KB 이하인 파일만 읽고, 실행하지 않는다. 대상은 스크립트 위치 기준 상대 경로(`./`, `../`)의 ESM `import … from`·`import "…"`·`import(…)`·`require(…)`, 셸 `source`·`.`(상대 경로 또는 `$CLAUDE_PROJECT_DIR/` 기준), Python 상대 import(`from .mod import`)다. 확장자가 없으면 `.mjs`, `.js`, `.cjs`, `.ts`, `.sh` 순으로 찾는다. 불러온 파일은 읽은 출처로 남고 구성 해시에 들어간다.
@@ -350,6 +352,7 @@ Hook 스크립트 해석: 명령의 첫 실행 파일(인터프리터 `bash`·`s
 
 | 버전 | 변경 |
 |---|---|
+| 0.4 (2026-11-28 정정) | SC-L2-04·VG-L2-04의 명령 후보 해석을 본문에 명시. 명세 경로가 든 셸 조건식만 제외하며 if·elif·while·until 줄 전체를 제외하던 구현은 철회. 조건 명령·부정 명령과 then/do 뒤 게이트를 유지하고, 따옴표 안 표시 문자열은 후보로 만들지 않는다. 기존 명령 영역 구현 결함 정정이며 어휘·규칙 ID·수준은 변경하지 않음 |
 | 0.4 | 수집 범위를 CI·Git Hook으로 확장. SC-L2-04·SC-L3-02·VG-L2-04·VG-L3-04 추가. 실행 결과와 필수 PR 검사 설정은 수집하지 않으므로 SC·VG 실측은 계속 예측 상태이며 사유는 needs_ci_pr_results |
 | 0.3 | 소유자 결정 반영(`docs/reviews/2026-11-27-diceforge-defects.md` #1·#2·#4·#5·#6·#9). LEX-BLOCK에 언어별 종료 관례(`process.exit(2)` 등)와 따옴표 없는·작은따옴표 키 추가, Hook 스크립트가 상대 경로로 불러오는 파일 1단계 스캔(§1.7). LEX-ROLE은 `name` 우선, `description`은 LEX-NEG 절 제외. 빈 영역: 실측 상태 축은 `unconfigured`에서 뺀다(프로토콜 emptyAreas 행). CE-M-01 폐기, CE는 실측 불가(`band_metric_undefined`), `cache_hit_ratio`는 참고 지표. CX-M-01 폐기, CX-M-02(모델 창 크기 대비 p90 비율). ES-M-01 폐기, ES-M-02(Bash 제외 오류율), 표본도 Bash 제외 도구 호출. 참고 지표 `bash_error_rate`, `context_p90_window_ratio`, `bot_weighted_share`, `worker_weighted_share`와 `sessions.toolUsage` 추가 |
 | 0.2 | 가능 범위: 수집하지 않은 사용자·관리형 설정 파일이 실제로 있을 때만 넓힌다(§1.8). ES-L3-03 폐기, ES-L3-04 추가: Subagent 2개 이상이 모두 `maxTurns`를 가질 때만 3. T1 트리거에 VG-L2-03(차단 표지가 있는 PostToolUse Hook) 추가. 자기 구성 요소(`harness_lens`)의 경로를 설치 위치 대신 고정 라벨 `harness-lens/SKILL.md`로 표시(COM-08) |
