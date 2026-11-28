@@ -143,6 +143,7 @@ function engineLimitations(col, ctx, sessions, info, extra = []) {
     if (info.estimatedShare > 0) out.push({ code: 'estimated_attribution_included', message: `합계에 추정 귀속(삭제된 워크트리 추정·봇 자동 귀속) 환산값 ${(info.estimatedShare * 100).toFixed(1)}%가 포함돼 있습니다.` });
     if (info.unreadableFiles) out.push({ code: 'session_files_unreadable', message: `세션 기록 파일 ${info.unreadableFiles}개를 읽지 못했습니다.` });
     if (info.stateCorrupted) out.push({ code: 'session_state_rebuilt', message: '세션 누적 집계 파일이 손상돼 처음부터 다시 만들었습니다. 원본 기록이 정리된 구간은 빠졌을 수 있습니다.' });
+    if (info.stateReset) out.push({ code: 'session_state_reset', message: '세션 파서 버전 또는 저장소가 바뀌어 누적 상태를 다시 만들었습니다. 구버전 archive는 재사용하지 않으며 원본 기록이 정리된 구간은 빠졌을 수 있습니다.' });
   }
   if (ctx.scope === 'project') {
     const unscoped = col.sources.filter((s) => s.reason === 'user_scope_not_collected' || s.reason === 'managed_settings_not_collected');

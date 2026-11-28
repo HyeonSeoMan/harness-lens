@@ -257,7 +257,7 @@ export class ResponseStore {
   }
 }
 
-// 해시 키(sha256 앞 8바이트 = 상위·하위 uint32 쌍)를 문자열 없이 담는 오픈 어드레싱 해시 집합.
+// 응답·이벤트의 64비트 비암호 해시 키(상위·하위 uint32 쌍)를 문자열 없이 담는 오픈 어드레싱 해시 집합.
 // 이벤트가 수십만 개여도 키당 약 12바이트(적재율 0.7 이하)만 쓴다.
 const LE = endianness() === 'LE';
 class PairTable {
@@ -414,7 +414,7 @@ export function loadState(dir, rootHash) {
   try {
     if (!existsSync(path.join(dir, 'cursor.json'))) return { state: emptyState(rootHash), had: false };
     const cursor = JSON.parse(readFileSync(path.join(dir, 'cursor.json'), 'utf8'));
-    if (cursor.parserVersion !== SESSION_PARSER_VERSION || cursor.rootPathHash !== rootHash) return { state: emptyState(rootHash), had: false };
+    if (cursor.parserVersion !== SESSION_PARSER_VERSION || cursor.rootPathHash !== rootHash) return { state: emptyState(rootHash), had: false, reset: true };
     const state = emptyState(rootHash);
     const rdir = path.join(dir, 'responses');
     if (existsSync(rdir)) {
@@ -817,7 +817,7 @@ function prefixIntact(abs, fs, size) {
 }
 
 // 상태에 새 바이트를 반영한다. 반환: { files, unreadable, rescanned }
-// 같은 경로의 앞부분이 바뀌었으면(회전·truncate·재작성) 새 세대로 처음부터 읽고, 이전 세대는 `<경로 해시>~g<n>`로
+// 같은 경로의 앞부분이 바뀌었으면(회전·truncate·재작성) 새 세대로 처음부터 읽고, 이전 세대는 `<경로 해시>~g<세션 해시>`로 합쳐
 // 남겨 그 세션의 귀속·카운터를 보존한다. 응답과 이벤트는 전역으로 한 번만 세므로 같은 내용을 다시 읽어도 늘지 않는다.
 export function scanTranscripts({ configDir, state, env, fullRescan, log }) {
   const list = listTranscripts(path.join(configDir, 'projects'));
@@ -850,7 +850,28 @@ export function scanTranscripts({ configDir, state, env, fullRescan, log }) {
       continue;
     }
     parser.commit();
-    if (retire) state.files[`${fh}~g${prev.gen}`] = { ...prev, present: false };
+    if (retire) {
+      // 같은 파일·세션의 회전 세대를 한 항목에 합친다. 반복 재작성마다 메타데이터가 늘지 않는다.
+      const retiredKey = `${fh}~g${h16(prev.session ?? 'unknown-session')}`;
+      const old = state.files[retiredKey];
+      const retired = { ...prev, present: false };
+      if (old) {
+        for (const k of COUNTERS) retired.c[k] += old.c[k];
+        retired.durations = [...old.durations, ...retired.durations];
+        retired.gaps = [...old.gaps, ...retired.gaps];
+        retired.firstTs = Math.min(old.firstTs ?? Infinity, retired.firstTs ?? Infinity);
+        retired.lastTs = Math.max(old.lastTs ?? 0, retired.lastTs ?? 0);
+        retired.cls ??= old.cls;
+        retired.botMention ||= old.botMention;
+        if (old.versions) retired.versions = retired.versions
+          ? [compareVersions(old.versions[0], retired.versions[0]) < 0 ? old.versions[0] : retired.versions[0], compareVersions(old.versions[1], retired.versions[1]) > 0 ? old.versions[1] : retired.versions[1]] : old.versions;
+        for (const [tool, counts] of Object.entries(old.tools)) {
+          retired.tools[tool] ??= [0, 0];
+          retired.tools[tool][0] += counts[0]; retired.tools[tool][1] += counts[1];
+        }
+      }
+      state.files[retiredKey] = retired;
+    }
     fs.inode = st.ino; fs.size = st.size; fs.mtimeMs = st.mtimeMs; fs.present = true;
     state.files[fh] = fs;
     done++;

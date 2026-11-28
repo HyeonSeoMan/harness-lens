@@ -74,7 +74,7 @@ test('#1 공용 헬퍼 경유 차단(DiceForge lib.mjs·emit 형태)을 스냅�
   // 불러온 파일은 읽은 출처로 남고 구성 해시에 들어간다.
   const read = draft.engine.inventory.sources.filter((s) => s.status === 'read').map((s) => s.path);
   assert.ok(read.includes('.claude/hooks/lib.mjs') && read.includes('.claude/hooks/common.sh'));
-  assert.equal(draft.rubricVersion, '0.3');
+  assert.equal(draft.rubricVersion, '0.4');
 });
 
 test('#2 LEX-ROLE: name을 먼저 보고 description의 부정 절 일치는 무시한다', (t) => {

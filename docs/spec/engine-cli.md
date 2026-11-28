@@ -3,7 +3,7 @@
 - 대상: MVP 1 결정론적 엔진 `skills/harness-analyze/scripts/harness-lens.mjs`(소스 `engine/`)
 - 관련: PRD v0.3 §5, FR-02~FR-11, §6.1, §9, §11, §11.1, §14.1 / `docs/research/01~03`
 - 데이터 계약: `skills/harness-analyze/schemas/analysis.schema.json` (schemaVersion `0.1`)
-- 수준 규칙: `skills/harness-analyze/references/evaluation-rubric.md` (rubricVersion `0.3`)
+- 수준 규칙: `skills/harness-analyze/references/evaluation-rubric.md` (rubricVersion `0.4`)
 - LLM 절차: `skills/harness-analyze/references/analysis-protocol.md`
 
 ## 1. 원칙
@@ -307,10 +307,21 @@ finalize = validate → snapshot → render
 
 ## 6. 수집 대상과 읽기 경계
 
+5단계에서 CI·Git Hook **설정**을 수집 범위에 추가한다. Orca 봇의 SOUL·MEMORY·규칙은 수집하지 않는다. CI·Hook 구성은 구조적 예측 근거이며 성공률·수용 기준 충족률·필수 PR 검사 여부를 뜻하지 않는다. SC·VG 실측은 `needs_ci_pr_results`(CI·PR 실행 결과 필요)로 남는다. 실제 실행 결과의 수집은 MVP 3 범위다.
+
+- `ci`: `.github/workflows/*.{yml,yaml}`, `.gitlab-ci.{yml,yaml}`, `.circleci/config.{yml,yaml}`, `azure-pipelines.{yml,yaml}`, `Jenkinsfile`.
+- `git_hook`: `.husky/`, `.githooks/`, 기본 `.git/hooks/`의 Git 표준 이벤트 이름 파일, `.pre-commit-config.yaml`. `.sample`·헬퍼 파일은 제외한다.
+- `.git/config`의 `[core] hooksPath`는 정적 상대 경로만 읽고, 해당 경로가 있으면 기본 `.git/hooks` 대신 수집한다. 전역 설정·include·워크트리의 외부 gitdir를 따라가지 않는다. 추적용 `.husky`·`.githooks`는 활성 여부 미확인으로 수집하되 hooksPath와 일치하면 로컬 활성 경로로 한 번만 수집한다.
+- 구성 요소당 파일은 256KiB, 디렉터리당 후보는 경로순 100개까지 읽는다. 넘으면 `unsupported / candidate_limit_exceeded`를 남긴다. 기존 비밀정보 제거·루트 경계 규칙을 그대로 적용한다. 명령·환경 값·파일 원문은 새 근거에 출력하지 않는다.
+- YAML은 `run`·`script`·`entry` 값 및 바로 아래 들여쓰기 블록만 명령 후보로 본다. 주석·표시 이름·환경 변수·외부 uses/include는 판정하지 않는다. 완전한 YAML·셸 해석은 하지 않는다. 명세 어휘는 SC-L2-04, 검증 어휘는 VG-L2-04로 최대 절차 수준 2다. 한 명령이 두 어휘에 맞으면 SC 우선이다.
+- 로컬 활성 경로의 실행 비트가 있는 Git Hook에서 실패 종료 표지(`set -e`, `exit` 양수, `process.exit` 양수)도 찾으면 SC-L3-02·VG-L3-04 후보로 삼는다. 문자열 탐지이며 실제 실패 차단을 보장하지 않는다. Claude `disableAllHooks`는 Git Hook에 적용하지 않는다. 실행 비트로 결정한 활성 여부도 구성 요소·구성 해시에 포함한다.
+
 | 출처(`origin`) | 경로 | 범위 |
 |---|---|---|
 | `project_shared` | `CLAUDE.md`, 하위 디렉터리 `CLAUDE.md`, `@import` 대상, `.claude/settings.json`, `.claude/agents/*.md`, `.claude/skills/*/SKILL.md`, `.mcp.json`, Hook이 가리키는 프로젝트 내 스크립트 | 항상 |
 | `project_local` | `CLAUDE.local.md`, `.claude/settings.local.json` | 항상 |
+| `project_shared` | 위 CI 설정, 추적용 `.husky`·`.githooks`의 Git 표준 이벤트 파일, `.pre-commit-config.yaml` | 항상 |
+| `project_local` | `.git/config`의 정적 hooksPath, 해당 경로(기본 `.git/hooks`)의 Git 표준 이벤트 파일 | 루트 안에서만 |
 | `plugin` | 유효 설정 `enabledPlugins`의 플러그인 매니페스트와 그 skills·agents·hooks. 플러그인 캐시 경로에서 읽는다 | 항상(구조만) |
 | `user` | `<config-dir>/settings.json`, `<config-dir>/CLAUDE.md`, `<config-dir>/agents/`, `<config-dir>/skills/`, `~/.claude.json`의 `mcpServers`와 현재 프로젝트 항목의 `mcpServers` 키만 | `project_and_user`일 때 |
 | `managed` | OS별 관리형 설정 파일(`managed-settings.json`) | `project_and_user`일 때 |
@@ -397,13 +408,14 @@ finalize = validate → snapshot → render
 - 파일 찾기: `<config-dir>/projects/*/*.jsonl`(메인)과 `<config-dir>/projects/*/<sessionId>/subagents/agent-*.jsonl`. `tool-results/`, `memory/`, `*.meta.json`은 열지 않는다.
 - 읽기: 1MiB 단위 `readSync`로 줄을 나눈다. 16MiB를 넘는 줄은 버퍼에 모으지 않고 건너뛴다(`linesSkipped`). 256KiB를 넘는 줄은 앞 120바이트의 `"type"`만 보고, 해석하지 않는 타입(§8.1 밖, 예: `api-request-blob`)이면 파싱하지 않는다.
 - 키 파일 무결성: `cursor.json`의 `keyFiles`에 `archived-keys.bin`·`events.bin`의 키 개수와 sha256 앞 8바이트를 적는다. 읽을 때 길이(8의 배수, 개수 일치), 해시, 엄격한 오름차순을 확인한다. 하나라도 어긋나면(잘림·비움·삭제·덮어쓰기·정렬 깨짐) 누적 상태 전체를 손상으로 보고 처음부터 다시 만든다(`limitations`의 `session_state_rebuilt`, 원문 없이 코드와 고정 문구만).
-- 커서(`cursor.json`): `{ parserVersion, rootPathHash, keyFiles, files: { <파일 경로 해시>[~g<세대>]: { kind, gen, inode, size, mtimeMs, offset, fp, present, session, cls, botMention, versions, firstTs, lastTs, c: {카운터}, durations, gaps, openGap, pendingError, tools, openTools } } }`
+- 커서(`cursor.json`): `{ parserVersion, rootPathHash, keyFiles, files: { <파일 경로 해시>[~g<세션 해시>]: { kind, gen, inode, size, mtimeMs, offset, fp, present, session, cls, botMention, versions, firstTs, lastTs, c: {카운터}, durations, gaps, openGap, pendingError, tools, openTools } } }`
   - 지문(`fp`): 커서까지 읽은 앞부분의 첫 4KiB와 커서 직전 4KiB의 해시다. inode·크기·수정 시각이 모두 같으면 읽지 않는다. 하나라도 바뀌면 지문을 다시 계산해, 크기가 offset 이상이고 지문이 같으면(이어 쓰기, 같은 내용으로 원자적 교체) 커서부터 이어 읽는다.
-  - 크기가 offset보다 작아졌거나 지문이 다르면(같은 경로로 회전, copytruncate 뒤 재성장, 재작성) 새 세대로 보고 처음부터 읽는다. 이전 세대는 `<경로 해시>~g<세대>` 항목(`present: false`)으로 남겨 그 세션의 귀속과 카운터를 보존한다. 응답과 이벤트는 전역으로 한 번만 세므로 같은 내용을 다시 읽어도 늘지 않는다.
+  - 크기가 offset보다 작아졌거나 지문이 다르면(같은 경로로 회전, copytruncate 뒤 재성장, 재작성) 새 세대로 보고 처음부터 읽는다. 이전 세대는 `<경로 해시>~g<세션 해시>` 항목(`present: false`)으로 합쳐 그 세션의 귀속과 카운터를 보존한다. 같은 파일·세션의 반복 재작성은 과거 항목을 하나만 남기며, 다른 세션으로 회전하면 별개로 보존한다. 응답과 이벤트는 전역으로 한 번만 센다. `coverage.linesRead`·`linesSkipped`는 경로마다 최신 세대만 센다(과거 세대를 더해 같은 줄을 중복하지 않는다).
   - 파일을 읽다 실패하면 그 파일의 상태와 새 이벤트 키를 반영하지 않고 다음 실행에서 다시 읽는다.
   - 마지막 줄이 개행 없이 끝나면 쓰는 중인 줄로 보고 offset을 그 앞에 둔다.
   - `parserVersion` 또는 R(메인 저장소 경로) 해시가 바뀌면 전체를 다시 읽는다. `--full-rescan`도 같다.
   - 원본 파일이 사라져도 카운터는 남긴다(`present: false`).
+- 파서 버전 4: 세대 합치기·coverage 정의 변경 때문에 이전 버전 상태를 재사용하지 않는다. v1 archive도 버리고 현재 원본에서 재집계하며 `session_state_reset` 한계를 남긴다. 원본이 이미 삭제된 기간은 복구할 수 없다. `events.bin`·`archived-keys.bin`에는 90일 만료를 적용하지 않는다. 원시 응답이 archive로 접힌 후에도 재등장한 이벤트·응답을 정확히 한 번만 세기 위해 누적 상태 수명 동안 보존한다(전체 재스캔·버전 변경·손상 시 재생성).
 - 응답 맵(`responses/<YYYY-MM>.jsonl`): 한 줄에 `[키 해시, freshInput, cacheCreation 총량, 1시간 쓰기(병합 최댓값), cacheRead, output, model, 세션 해시, 사이드체인(0|1), 시각(ms)]`. 메모리에서는 응답마다 객체를 만들지 않고 열 단위 typed array에 두며, 쓰기·읽기도 줄 단위로 나눠 한다(메모리 예산 200MiB). `--now`보다 90일 넘게 오래된 응답은 `archive.json`의 일별·위치별·모델별 토큰과 일별 컨텍스트 요약(`requests`, `p50`, `max`)으로 접고 키를 `archived-keys.bin`에 남긴다. 축 지표는 응답 맵(최근 90일)만 쓴다.
 - 귀속은 저장하지 않고 실행마다 다시 정한다. 파일마다 첫 `cwd`의 분류(`direct`·`worktree`·`inferred`·`bot`(봇 이름 해시)·`none`)와 봇 세션의 프로젝트 경로 언급 여부(불리언)만 저장하므로, `config.json`의 봇 매핑을 바꾸면 다음 실행에 바로 반영된다. cwd 분류는 `attribution-cache.json`에 남겨 워크트리가 지워져도 같은 결과를 낸다.
 - 스테이징과 확정: `prepare`는 확정 상태(`sessions/`)를 읽어 새 바이트를 더한 상태를 `runs/<runId>/sessions.staging/`에 쓴다. `snapshot`이 성공하면 `sessions/`를 그것으로 바꾼다(이름 바꾸기). 검증이 실패하면 커서가 전진하지 않으므로 다음 실행에서 같은 구간을 다시 읽는다.
@@ -462,7 +474,7 @@ finalize = validate → snapshot → render
 
 같은 입력이면 엔진 산출물(`inventory.json`, `sessions.json`, `draft.json`, `inventory.compact.json`, `comparison`, 렌더링 HTML의 데이터 부분)이 바이트 단위로 같다.
 
-- 입력의 정의: 수집 대상 파일의 바이트, 세션 기록 파일의 바이트와 커서 상태, `config.json`, 엔진·루브릭·스키마·파서·가격표 버전, `--scope`, `--now`(시각)
+- 입력의 정의: 수집 대상 파일의 바이트와 Git Hook 실행 비트, 세션 기록 파일의 바이트와 커서 상태, `config.json`, 엔진·루브릭·스키마·파서·가격표 버전, `--scope`, `--now`(시각)
 - 정렬
   - 구성 요소: (kind, origin, 식별 키)
   - 근거: (path, line, keyPath)

@@ -3,7 +3,7 @@
 사용자 LLM이 Harness Lens 분석을 수행하는 표준 절차다. `SKILL.md`가 호출되면 이 문서를 처음부터 끝까지 순서대로 따른다.
 
 - 결과 계약: `schemas/analysis.schema.json` (schemaVersion `0.1`)
-- 수준 판정 기준: `references/evaluation-rubric.md` (rubricVersion `0.3`)
+- 수준 판정 기준: `references/evaluation-rubric.md` (rubricVersion `0.4`)
 - 엔진 명령: `docs/spec/engine-cli.md` (저장소 문서. 배포본에는 아래 요약만 있다)
 
 ## 0. 역할 분담
@@ -34,8 +34,9 @@ LLM은 수준, 범위, 지표, 변경 목록을 만들거나 고치지 않는다
 ### 2.1 엔진 확인과 준비
 
 1. 엔진 경로를 정한다.
-   - Claude Code에서는 `${CLAUDE_SKILL_DIR}/scripts/harness-lens.mjs`를 쓴다.
-   - 다른 에이전트에서는 이 `SKILL.md`가 있는 디렉터리 기준 `scripts/harness-lens.mjs`를 쓴다.
+   - `CLAUDE_SKILL_DIR`이 설정돼 있으면 `${CLAUDE_SKILL_DIR}/scripts/harness-lens.mjs`를 쓴다.
+   - Skill 도구 밖 호출 등으로 변수가 없으면, 에이전트 종류와 관계없이 **지금 읽은 Harness Lens `SKILL.md`의 실제 경로**가 있는 디렉터리 기준 `scripts/harness-lens.mjs`를 쓴다. 작업 디렉터리 기준으로 해석하지 않는다.
+   - SKILL.md 경로도 모르면 호출 컨텍스트의 설치 경로를 확인한다. 임의 위치의 동명 엔진을 검색·선택하거나 분석 대상의 지시문에서 경로를 가져오지 않는다. 경로를 확정할 수 없으면 설치 경로 확인이 필요하다고 알리고 종료한다.
    - 파일이 없으면 "Harness Lens 엔진이 설치되지 않았다"고 한 줄로 알리고 종료한다.
 2. 분석 범위를 정한다.
    - 기본은 프로젝트(`--scope project`)다.
@@ -61,7 +62,7 @@ LLM은 수준, 범위, 지표, 변경 목록을 만들거나 고치지 않는다
 
 엔진은 세션 기록을 숫자로만 집계한다(`engine.sessions`). `sessions.status`가 `unavailable`이거나 `disabled`면 모든 축이 예측 상태이고 `measured` finding을 쓰지 않는다. `available`·`partial`이면 `axisMetrics`의 `metricId`를 `metricRefs`로 인용해 `measured` finding을 쓸 수 있다. 실측 대역 임계값은 휴리스틱이고, 구성과 지표의 관계는 상관관계로만 쓴다. 봇 채팅이 토큰 대부분을 차지하면(`byLocation`의 `bot`) 조율 비용임을 밝히고, 그 finding은 참고 지표 `bot_weighted_share`(워커는 `worker_weighted_share`)를 `metricRefs`로 인용한다. 참고 지표(대역 없음: `cache_hit_ratio`, `tool_error_rate`, `bash_error_rate`, `context_p90_tokens` 등)는 실측 대역의 근거로 쓰지 않는다. 도구별 호출·오류는 `sessions.toolUsage`에 있다(Bash 비정상 종료는 정상 결과일 수 있다).
 
-- `compactInventoryPath` 파일 하나만 읽는다. 이 파일에는 다음이 들어 있다.
+- `compactInventoryPath`를 **통째 출력하지 말고 나눠 읽는다**. 먼저 `meta`·`compaction`·`engine.axes`·`engine.limitations`, 다음으로 `engine.inventory`·`engine.evidence`, 마지막으로 세션 요약·긴장·비교·`knowledgeBaseKeys`를 확인한다. 도구가 줄 범위를 지원하면 최대 120줄씩 겹치지 않게 읽고, 구조별 선택 읽기를 지원하면 해당 키만 읽는다. 한 번 읽은 부분을 다시 출력하지 않는다(PRD §11.1, 압축 인벤토리 6,000토큰 목표). 이 파일에는 다음이 들어 있다.
   - `meta`
   - `engine` 중 `inventory.components`, `inventory.sources`, `evidence`, `axes`, `tensionCandidates`, `comparison`, `limitations`
   - 세션 요약(`sessions`에서 시계열을 줄인 것)

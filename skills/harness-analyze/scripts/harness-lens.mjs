@@ -57,8 +57,8 @@ var unitsToWeighted = (units) => units / REF_INPUT;
 var ENGINE_VERSION = "0.4.0";
 var VALIDATOR_VERSION = "0.4.0";
 var SCHEMA_VERSION = "0.1";
-var RUBRIC_VERSION = "0.3";
-var SESSION_PARSER_VERSION = "3";
+var RUBRIC_VERSION = "0.4";
+var SESSION_PARSER_VERSION = "4";
 var MIN_NODE_MAJOR = 20;
 var SUPPORTED_PLATFORMS = ["darwin", "linux", "win32"];
 var AXES = [
@@ -84,8 +84,8 @@ var AXIS_PREFIX = {
 var PREFIX_AXIS = Object.fromEntries(Object.entries(AXIS_PREFIX).map(([a, p]) => [p, a]));
 var AXIS_MAX = Object.fromEntries(AXES.map((a) => [a, a === "throughput" ? 2 : 3]));
 var MATURITY_RULES = {
-  spec_clarity: { measurable: false, blockedReason: "needs_ci_pr_data" },
-  verification_gate_strength: { measurable: false, blockedReason: "needs_ci_pr_data" },
+  spec_clarity: { measurable: false, blockedReason: "needs_ci_pr_results" },
+  verification_gate_strength: { measurable: false, blockedReason: "needs_ci_pr_results" },
   execution_stability: { measurable: true, unit: "tool_calls", required: 500 },
   throughput: { measurable: true, unit: "sessions", required: 20 },
   // 0.3: cache_hit_ratio를 참고 지표로 내렸다(클라이언트 동작 영향이 커서 하네스 축 실측으로 약하다). 대역 지표가 정해질 때까지 예측.
@@ -523,6 +523,7 @@ var SKIP_DIRS = /* @__PURE__ */ new Set(["node_modules", "vendor", "dist", "buil
 var CX_ENV = ["MAX_MCP_OUTPUT_TOKENS", "BASH_MAX_OUTPUT_LENGTH", "CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS"];
 var CE_ENV = ["MAX_THINKING_TOKENS", "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_SUBAGENT_MODEL"];
 var R8_PLACEHOLDER = "[분석 도구 겨냥 문구 제거]";
+var GIT_HOOK_NAME = /^(?:applypatch-msg|pre-applypatch|post-applypatch|pre-commit|pre-merge-commit|prepare-commit-msg|commit-msg|post-commit|pre-rebase|post-checkout|post-merge|pre-push|pre-receive|update|proc-receive|post-receive|post-update|reference-transaction|push-to-checkout|pre-auto-gc|post-rewrite|sendemail-validate|fsmonitor-watchman|p4-changelist|p4-prepare-changelist|p4-post-changelist|p4-pre-submit|post-index-change)$/;
 var pointer = (...parts) => parts.map((p) => `/${String(p).replace(/~/g, "~0").replace(/\//g, "~1")}`).join("");
 function managedSettingsPath(platform) {
   if (platform === "darwin") return "/Library/Application Support/ClaudeCode/managed-settings.json";
@@ -1302,6 +1303,112 @@ ${script ?? ""}`, REENTRY);
     if (present(managed)) this.addSource(displayPath(managed, this.projectRoot), "managed", "out_of_scope", "managed_settings_not_collected");
   }
   // ---------- 전체 ----------
+  // CI·Git Hook은 설정만 읽는다. CI 성공·필수 PR 검사 여부는 이 파일들로 알 수 없다.
+  collectRepositoryGates() {
+    const root = this.projectRoot;
+    let hooksDir = ".git/hooks";
+    const config = this.readFile(root, ".git/config", "project_local", TEXT_LIMIT_BYTES, true);
+    if (config.status === "ok") {
+      let core = false;
+      for (const line of config.text.split("\n")) {
+        if (/^\s*\[/.test(line)) core = /^\s*\[core\]\s*$/i.test(line);
+        const m = core && /^\s*hooksPath\s*=\s*([^#;]+?)\s*$/i.exec(line);
+        if (m) hooksDir = m[1].replace(/^"(.*)"$/, "$1");
+      }
+    }
+    const collectGate = (rel, kind, origin, active = false) => {
+      const f = this.readFile(root, rel, origin, SCRIPT_LIMIT_BYTES, true);
+      if (f.status !== "ok") return;
+      const commands = [];
+      let blockIndent = null;
+      f.text.split("\n").forEach((line, i) => {
+        if (!line.trim() || /^\s*#/.test(line)) return;
+        if (targetsAnalyzer(line)) {
+          this.r8Hits++;
+          return;
+        }
+        if (!/\.ya?ml$/i.test(rel)) {
+          commands.push([i + 1, line]);
+          return;
+        }
+        const indent = line.search(/\S/);
+        if (blockIndent !== null && indent > blockIndent) {
+          commands.push([i + 1, line]);
+          return;
+        }
+        blockIndent = null;
+        const m = /^(\s*)(?:-\s*)?(?:run|script|entry):\s*(.*)$/.exec(line);
+        if (!m) return;
+        if (/^[|>][-+]?\s*$/.test(m[2]) || !m[2]) blockIndent = indent;
+        else commands.push([i + 1, m[2]]);
+      });
+      const comp = this.addComponent({
+        kind,
+        origin,
+        key: f.disp,
+        name: f.disp,
+        paths: [f.disp],
+        contentHash: kind === "git_hook" ? hashJson({ content: sha256tag(f.raw), active }) : sha256tag(f.raw),
+        attributes: { active, executionResultsCollected: false }
+      });
+      if (kind === "git_hook") this.hashEntries.set(f.disp, comp.contentHash);
+      this.addEvidence({
+        comp,
+        path: f.disp,
+        family: "repository-gate",
+        mechanism: "procedure",
+        fact: `${kind === "ci" ? "CI" : "Git Hook"} 설정 확인(실행 결과·PR 필수 검사 여부는 미수집)`,
+        tags: { repositoryGate: true }
+      });
+      for (const [axis, words, rule] of [
+        ["spec_clarity", SPEC_CMD, "SC-L2-04"],
+        ["verification_gate_strength", VERIFY_CMD, "VG-L2-04"]
+      ]) {
+        const hit = commands.find(([, cmd]) => hasAny(cmd, words) && (axis === "spec_clarity" || !hasAny(cmd, SPEC_CMD)));
+        if (!hit) continue;
+        const enforced = kind === "git_hook" && active && /(?:set\s+-[a-z]*e|\bexit\s+[1-9]|process\.exit\([1-9])/.test(commands.map(([, c]) => c).join("\n"));
+        const ruleId = enforced ? axis === "spec_clarity" ? "SC-L3-02" : "VG-L3-04" : rule;
+        this.addEvidence({
+          comp,
+          path: f.disp,
+          line: hit[0],
+          family: `repository:${axis}`,
+          primaryAxis: axis,
+          mechanism: enforced ? "harness_enforced" : "procedure",
+          ruleIds: [ruleId],
+          fact: `${kind === "ci" ? "CI" : "Git Hook"}에 ${AXIS_LABEL[axis]} 명령 어휘 확인${enforced ? "(활성 실행 파일·실패 종료 표지)" : "(실행·강제 여부 미확인)"}`,
+          tags: { repositoryGate: true }
+        });
+      }
+    };
+    const visited = /* @__PURE__ */ new Set();
+    for (const [dir, filter, kind, declaredOrigin] of [
+      [".github/workflows", /\.ya?ml$/i, "ci", "project_shared"],
+      [".circleci", /^config\.ya?ml$/i, "ci", "project_shared"],
+      [".husky", GIT_HOOK_NAME, "git_hook", "project_shared"],
+      [".githooks", GIT_HOOK_NAME, "git_hook", "project_shared"],
+      [hooksDir, GIT_HOOK_NAME, "git_hook", "project_local"]
+    ]) {
+      if (visited.has(dir)) continue;
+      visited.add(dir);
+      const active = kind === "git_hook" && dir === hooksDir;
+      const origin = active ? "project_local" : declaredOrigin;
+      const listed = listDirInside(root, dir);
+      if (listed.status === "escape") this.addSource(displayPath(path2.resolve(root, dir), root), origin, "out_of_scope", "outside_root_or_symlink_escape");
+      if (listed.status === "unreadable") this.addSource(displayPath(path2.resolve(root, dir), root), origin, "unreadable", "read_error");
+      const candidates = listed.entries.filter((n) => filter.test(n));
+      if (candidates.length > 100) this.addSource(dir, origin, "unsupported", "candidate_limit_exceeded");
+      for (const name of candidates.slice(0, 100)) {
+        const rel = `${dir}/${name}`;
+        const r = resolveInside(root, rel);
+        if (r.isDir) continue;
+        const executable = active && r.status === "ok" && !!(statSync2(r.real).mode & 73);
+        collectGate(rel, kind, dir === hooksDir ? "project_local" : origin, executable);
+      }
+    }
+    for (const rel of [".gitlab-ci.yml", ".gitlab-ci.yaml", "azure-pipelines.yml", "azure-pipelines.yaml", "Jenkinsfile"]) collectGate(rel, "ci", "project_shared");
+    collectGate(".pre-commit-config.yaml", "git_hook", "project_shared");
+  }
   run() {
     var _a, _b;
     this.disableAllHooks = [];
@@ -1315,6 +1422,7 @@ ${script ?? ""}`, REENTRY);
     this.collectAgents(p, ".claude/agents", "project_shared");
     this.collectSkills(p, ".claude/skills", "project_shared");
     this.collectMcp(p, ".mcp.json", "project_shared");
+    this.collectRepositoryGates();
     const origins = ["project_shared", "project_local"];
     if (this.scope === "project_and_user") {
       const c = this.configDir;
@@ -2970,7 +3078,7 @@ function loadState(dir, rootHash) {
   try {
     if (!existsSync4(path5.join(dir, "cursor.json"))) return { state: emptyState(rootHash), had: false };
     const cursor = JSON.parse(readFileSync4(path5.join(dir, "cursor.json"), "utf8"));
-    if (cursor.parserVersion !== SESSION_PARSER_VERSION || cursor.rootPathHash !== rootHash) return { state: emptyState(rootHash), had: false };
+    if (cursor.parserVersion !== SESSION_PARSER_VERSION || cursor.rootPathHash !== rootHash) return { state: emptyState(rootHash), had: false, reset: true };
     const state = emptyState(rootHash);
     const rdir = path5.join(dir, "responses");
     if (existsSync4(rdir)) {
@@ -3431,6 +3539,7 @@ function prefixIntact(abs, fs, size) {
   }
 }
 function scanTranscripts({ configDir, state, env, fullRescan, log }) {
+  var _a;
   const list = listTranscripts(path5.join(configDir, "projects"));
   if (list === null) return { projectsDir: false, present: 0, unreadable: 0 };
   const parser = new Parser(state, env);
@@ -3476,7 +3585,27 @@ function scanTranscripts({ configDir, state, env, fullRescan, log }) {
       continue;
     }
     parser.commit();
-    if (retire) state.files[`${fh}~g${prev.gen}`] = { ...prev, present: false };
+    if (retire) {
+      const retiredKey = `${fh}~g${h16(prev.session ?? "unknown-session")}`;
+      const old = state.files[retiredKey];
+      const retired = { ...prev, present: false };
+      if (old) {
+        for (const k of COUNTERS) retired.c[k] += old.c[k];
+        retired.durations = [...old.durations, ...retired.durations];
+        retired.gaps = [...old.gaps, ...retired.gaps];
+        retired.firstTs = Math.min(old.firstTs ?? Infinity, retired.firstTs ?? Infinity);
+        retired.lastTs = Math.max(old.lastTs ?? 0, retired.lastTs ?? 0);
+        retired.cls ?? (retired.cls = old.cls);
+        retired.botMention || (retired.botMention = old.botMention);
+        if (old.versions) retired.versions = retired.versions ? [compareVersions(old.versions[0], retired.versions[0]) < 0 ? old.versions[0] : retired.versions[0], compareVersions(old.versions[1], retired.versions[1]) > 0 ? old.versions[1] : retired.versions[1]] : old.versions;
+        for (const [tool, counts] of Object.entries(old.tools)) {
+          (_a = retired.tools)[tool] ?? (_a[tool] = [0, 0]);
+          retired.tools[tool][0] += counts[0];
+          retired.tools[tool][1] += counts[1];
+        }
+      }
+      state.files[retiredKey] = retired;
+    }
     fs.inode = st.ino;
     fs.size = st.size;
     fs.mtimeMs = st.mtimeMs;
@@ -3621,8 +3750,9 @@ var BAND_RULES = {
 function summarize(state, env, { configSinceMs: configSinceMs2, incremental, scan }) {
   const files = Object.entries(state.files).sort((a, b) => compareCodeUnits(a[0], b[0]));
   const sum = (k) => files.reduce((s, [, f]) => s + f.c[k], 0);
-  const linesRead = sum("lines");
-  const linesSkipped = sum("skipped");
+  const latest = files.filter(([key]) => !key.includes("~g"));
+  const linesRead = latest.reduce((s, [, f]) => s + f.c.lines, 0);
+  const linesSkipped = latest.reduce((s, [, f]) => s + f.c.skipped, 0);
   const skippedRatio = linesRead ? r4(linesSkipped / linesRead) : 0;
   let vmin = null;
   let vmax = null;
@@ -4190,6 +4320,7 @@ function aggregateSessions({ disabled = false, configDir, projectRoot, out, conf
     pruneResponses(state, env, nowMs);
     const { sessions, info } = summarize(state, env, { configSinceMs: configSinceMs2, incremental: loaded.had && !fullRescan, scan });
     if (loaded.corrupted) info.stateCorrupted = true;
+    if (loaded.reset) info.stateReset = true;
     if (scan.unreadable) info.unreadableFiles = scan.unreadable;
     if (stagingDir) writeState(stagingDir, state);
     const previousTokens = previousWindow && sessions.status !== "unavailable" ? analysisWindowTokens(state, env, previousWindow.startMs, previousWindow.endMs) : null;
@@ -4695,6 +4826,7 @@ function engineLimitations(col, ctx, sessions, info, extra = []) {
     if (info.estimatedShare > 0) out.push({ code: "estimated_attribution_included", message: `합계에 추정 귀속(삭제된 워크트리 추정·봇 자동 귀속) 환산값 ${(info.estimatedShare * 100).toFixed(1)}%가 포함돼 있습니다.` });
     if (info.unreadableFiles) out.push({ code: "session_files_unreadable", message: `세션 기록 파일 ${info.unreadableFiles}개를 읽지 못했습니다.` });
     if (info.stateCorrupted) out.push({ code: "session_state_rebuilt", message: "세션 누적 집계 파일이 손상돼 처음부터 다시 만들었습니다. 원본 기록이 정리된 구간은 빠졌을 수 있습니다." });
+    if (info.stateReset) out.push({ code: "session_state_reset", message: "세션 파서 버전 또는 저장소가 바뀌어 누적 상태를 다시 만들었습니다. 구버전 archive는 재사용하지 않으며 원본 기록이 정리된 구간은 빠졌을 수 있습니다." });
   }
   if (ctx.scope === "project") {
     const unscoped = col.sources.filter((s) => s.reason === "user_scope_not_collected" || s.reason === "managed_settings_not_collected");

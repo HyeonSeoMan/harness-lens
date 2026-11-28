@@ -30,6 +30,7 @@ export function aggregateSessions({ disabled = false, configDir, projectRoot, ou
     pruneResponses(state, env, nowMs);
     const { sessions, info } = summarize(state, env, { configSinceMs, incremental: loaded.had && !fullRescan, scan });
     if (loaded.corrupted) info.stateCorrupted = true;
+    if (loaded.reset) info.stateReset = true;
     if (scan.unreadable) info.unreadableFiles = scan.unreadable;
     if (stagingDir) writeState(stagingDir, state);
     const previousTokens = previousWindow && sessions.status !== 'unavailable'

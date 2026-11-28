@@ -4,7 +4,7 @@ import { existsSync, readdirSync, realpathSync, statSync } from 'node:fs';
 import { homedir } from 'node:os';
 import path from 'node:path';
 import { MAX_IMPORT_DEPTH, SCRIPT_LIMIT_BYTES, TEXT_LIMIT_BYTES } from './constants.mjs';
-import { displayPath, listDirInside, readTextInside, toPosix } from './fsguard.mjs';
+import { displayPath, listDirInside, readTextInside, resolveInside, toPosix } from './fsguard.mjs';
 import { parseFrontmatter } from './frontmatter.mjs';
 import {
   AXIS_LABEL, REENTRY, SPEC_CMD, VERIFY_CMD, detectRole, hasAny, hasBlockMarker, narrativeAxes,
@@ -24,6 +24,7 @@ const SKIP_DIRS = new Set(['node_modules', 'vendor', 'dist', 'build', 'target', 
 const CX_ENV = ['MAX_MCP_OUTPUT_TOKENS', 'BASH_MAX_OUTPUT_LENGTH', 'CLAUDE_CODE_FILE_READ_MAX_OUTPUT_TOKENS'];
 const CE_ENV = ['MAX_THINKING_TOKENS', 'CLAUDE_CODE_MAX_OUTPUT_TOKENS', 'CLAUDE_CODE_SUBAGENT_MODEL'];
 const R8_PLACEHOLDER = '[분석 도구 겨냥 문구 제거]';
+const GIT_HOOK_NAME = /^(?:applypatch-msg|pre-applypatch|post-applypatch|pre-commit|pre-merge-commit|prepare-commit-msg|commit-msg|post-commit|pre-rebase|post-checkout|post-merge|pre-push|pre-receive|update|proc-receive|post-receive|post-update|reference-transaction|push-to-checkout|pre-auto-gc|post-rewrite|sendemail-validate|fsmonitor-watchman|p4-changelist|p4-prepare-changelist|p4-post-changelist|p4-pre-submit|post-index-change)$/;
 
 const pointer = (...parts) => parts.map((p) => `/${String(p).replace(/~/g, '~0').replace(/\//g, '~1')}`).join('');
 
@@ -689,6 +690,90 @@ export class Collector {
   }
 
   // ---------- 전체 ----------
+  // CI·Git Hook은 설정만 읽는다. CI 성공·필수 PR 검사 여부는 이 파일들로 알 수 없다.
+  collectRepositoryGates() {
+    const root = this.projectRoot;
+    // core.hooksPath는 저장소 로컬 config의 정적 상대 경로만 지원한다. gitdir·include·전역 설정은 따라가지 않는다.
+    let hooksDir = '.git/hooks';
+    const config = this.readFile(root, '.git/config', 'project_local', TEXT_LIMIT_BYTES, true);
+    if (config.status === 'ok') {
+      let core = false;
+      for (const line of config.text.split('\n')) {
+        if (/^\s*\[/.test(line)) core = /^\s*\[core\]\s*$/i.test(line);
+        const m = core && /^\s*hooksPath\s*=\s*([^#;]+?)\s*$/i.exec(line);
+        if (m) hooksDir = m[1].replace(/^"(.*)"$/, '$1');
+      }
+    }
+    const collectGate = (rel, kind, origin, active = false) => {
+      const f = this.readFile(root, rel, origin, SCRIPT_LIMIT_BYTES, true);
+      if (f.status !== 'ok') return;
+      // 주석·표시 이름·환경 변수 값으로 수준을 올리지 않는다. YAML은 run/script/entry와
+      // 그 블록 안의 명령만 살핀다(완전한 YAML 해석이나 include/uses 확장은 하지 않는다).
+      const commands = [];
+      let blockIndent = null;
+      f.text.split('\n').forEach((line, i) => {
+        if (!line.trim() || /^\s*#/.test(line)) return;
+        if (targetsAnalyzer(line)) { this.r8Hits++; return; }
+        if (!/\.ya?ml$/i.test(rel)) { commands.push([i + 1, line]); return; }
+        const indent = line.search(/\S/);
+        if (blockIndent !== null && indent > blockIndent) { commands.push([i + 1, line]); return; }
+        blockIndent = null;
+        const m = /^(\s*)(?:-\s*)?(?:run|script|entry):\s*(.*)$/.exec(line);
+        if (!m) return;
+        if (/^[|>][-+]?\s*$/.test(m[2]) || !m[2]) blockIndent = indent;
+        else commands.push([i + 1, m[2]]);
+      });
+      const comp = this.addComponent({ kind, origin, key: f.disp, name: f.disp, paths: [f.disp],
+        contentHash: kind === 'git_hook' ? hashJson({ content: sha256tag(f.raw), active }) : sha256tag(f.raw), attributes: { active, executionResultsCollected: false } });
+      if (kind === 'git_hook') this.hashEntries.set(f.disp, comp.contentHash);
+      this.addEvidence({ comp, path: f.disp, family: 'repository-gate', mechanism: 'procedure',
+        fact: `${kind === 'ci' ? 'CI' : 'Git Hook'} 설정 확인(실행 결과·PR 필수 검사 여부는 미수집)`,
+        tags: { repositoryGate: true } });
+      for (const [axis, words, rule] of [
+        ['spec_clarity', SPEC_CMD, 'SC-L2-04'],
+        ['verification_gate_strength', VERIFY_CMD, 'VG-L2-04'],
+      ]) {
+        // 한 명령을 두 축에 중복 귀속하지 않는다. 명세 어휘가 있으면 SC 우선이다.
+        const hit = commands.find(([, cmd]) => hasAny(cmd, words) && (axis === 'spec_clarity' || !hasAny(cmd, SPEC_CMD)));
+        if (!hit) continue;
+        const enforced = kind === 'git_hook' && active && /(?:set\s+-[a-z]*e|\bexit\s+[1-9]|process\.exit\([1-9])/.test(commands.map(([, c]) => c).join('\n'));
+        const ruleId = enforced ? (axis === 'spec_clarity' ? 'SC-L3-02' : 'VG-L3-04') : rule;
+        this.addEvidence({ comp, path: f.disp, line: hit[0], family: `repository:${axis}`, primaryAxis: axis,
+          mechanism: enforced ? 'harness_enforced' : 'procedure', ruleIds: [ruleId],
+          fact: `${kind === 'ci' ? 'CI' : 'Git Hook'}에 ${AXIS_LABEL[axis]} 명령 어휘 확인${enforced ? '(활성 실행 파일·실패 종료 표지)' : '(실행·강제 여부 미확인)'}`,
+          tags: { repositoryGate: true } });
+      }
+    };
+    const visited = new Set();
+    for (const [dir, filter, kind, declaredOrigin] of [
+      ['.github/workflows', /\.ya?ml$/i, 'ci', 'project_shared'],
+      ['.circleci', /^config\.ya?ml$/i, 'ci', 'project_shared'],
+      ['.husky', GIT_HOOK_NAME, 'git_hook', 'project_shared'],
+      ['.githooks', GIT_HOOK_NAME, 'git_hook', 'project_shared'],
+      [hooksDir, GIT_HOOK_NAME, 'git_hook', 'project_local'],
+    ]) {
+      if (visited.has(dir)) continue;
+      visited.add(dir);
+      const active = kind === 'git_hook' && dir === hooksDir;
+      const origin = active ? 'project_local' : declaredOrigin;
+      const listed = listDirInside(root, dir);
+      if (listed.status === 'escape') this.addSource(displayPath(path.resolve(root, dir), root), origin, 'out_of_scope', 'outside_root_or_symlink_escape');
+      if (listed.status === 'unreadable') this.addSource(displayPath(path.resolve(root, dir), root), origin, 'unreadable', 'read_error');
+      const candidates = listed.entries.filter((n) => filter.test(n));
+      if (candidates.length > 100) this.addSource(dir, origin, 'unsupported', 'candidate_limit_exceeded');
+      for (const name of candidates.slice(0, 100)) {
+        const rel = `${dir}/${name}`;
+        const r = resolveInside(root, rel);
+        if (r.isDir) continue;
+        const executable = active && r.status === 'ok' && !!(statSync(r.real).mode & 0o111);
+        // 같은 경로가 추적용 디렉터리와 hooksPath에 겹치면 활성 설정을 우선한다.
+        collectGate(rel, kind, dir === hooksDir ? 'project_local' : origin, executable);
+      }
+    }
+    for (const rel of ['.gitlab-ci.yml', '.gitlab-ci.yaml', 'azure-pipelines.yml', 'azure-pipelines.yaml', 'Jenkinsfile']) collectGate(rel, 'ci', 'project_shared');
+    collectGate('.pre-commit-config.yaml', 'git_hook', 'project_shared');
+  }
+
   run() {
     this.disableAllHooks = [];
     const p = this.projectRoot;
@@ -701,6 +786,7 @@ export class Collector {
     this.collectAgents(p, '.claude/agents', 'project_shared');
     this.collectSkills(p, '.claude/skills', 'project_shared');
     this.collectMcp(p, '.mcp.json', 'project_shared');
+    this.collectRepositoryGates();
     const origins = ['project_shared', 'project_local'];
     if (this.scope === 'project_and_user') {
       const c = this.configDir;

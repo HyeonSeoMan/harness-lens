@@ -145,8 +145,10 @@ export const BAND_RULES = {
 export function summarize(state, env, { configSinceMs, incremental, scan }) {
   const files = Object.entries(state.files).sort((a, b) => compareCodeUnits(a[0], b[0]));
   const sum = (k) => files.reduce((s, [, f]) => s + f.c[k], 0);
-  const linesRead = sum('lines');
-  const linesSkipped = sum('skipped');
+  // coverage는 각 경로의 최신 세대만 센다. 보존한 과거 세대는 이벤트 누적용이며 재읽은 줄을 중복하지 않는다.
+  const latest = files.filter(([key]) => !key.includes('~g'));
+  const linesRead = latest.reduce((s, [, f]) => s + f.c.lines, 0);
+  const linesSkipped = latest.reduce((s, [, f]) => s + f.c.skipped, 0);
   const skippedRatio = linesRead ? r4(linesSkipped / linesRead) : 0;
   let vmin = null;
   let vmax = null;

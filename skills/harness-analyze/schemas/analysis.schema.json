@@ -236,7 +236,7 @@
       "properties": {
         "id": { "$ref": "#/$defs/componentId" },
         "kind": {
-          "enum": ["instructions", "settings", "hook", "skill", "agent", "mcp_server", "plugin", "harness_lens"]
+          "enum": ["instructions", "settings", "hook", "skill", "agent", "mcp_server", "plugin", "harness_lens", "ci", "git_hook"]
         },
         "name": { "$ref": "#/$defs/shortText" },
         "origin": { "enum": ["project_shared", "project_local", "user", "managed", "plugin"] },
@@ -406,7 +406,7 @@
         "current": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/count" }] },
         "progress": { "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/ratio" }] },
         "blockedReason": {
-          "description": "실측 전환이 막힌 이유 코드(예: needs_ci_pr_data, session_format_unsupported, no_session_logs).",
+          "description": "실측 전환이 막힌 이유 코드(예: needs_ci_pr_results, session_format_unsupported, no_session_logs).",
           "type": ["string", "null"],
           "pattern": "^[a-z][a-z0-9_]*$"
         }
@@ -806,7 +806,7 @@
                 "description": "현재 구성 요소 ID. removed면 이전 스냅샷의 ID.",
                 "$ref": "#/$defs/componentId"
               },
-              "kind": { "enum": ["instructions", "settings", "hook", "skill", "agent", "mcp_server", "plugin", "harness_lens"] },
+              "kind": { "enum": ["instructions", "settings", "hook", "skill", "agent", "mcp_server", "plugin", "harness_lens", "ci", "git_hook"] },
               "name": { "$ref": "#/$defs/shortText" },
               "change": {
                 "description": "unknown: 한쪽 스냅샷에서 출처를 읽지 못해 판정할 수 없음.",
