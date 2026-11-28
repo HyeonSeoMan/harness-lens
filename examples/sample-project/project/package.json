@@ -1,0 +1,12 @@
+{
+  "name": "todo-api",
+  "version": "0.3.0",
+  "private": true,
+  "description": "합성 샘플 프로젝트",
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src test",
+    "test": "node --test test/"
+  }
+}
