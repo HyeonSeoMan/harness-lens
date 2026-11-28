@@ -14,6 +14,7 @@ const gitGuard = `if (input.tool_input.command.includes('git push --force')) pro
 test('0.5 보호 대상·matcher·차단 분기가 일치해야 SB 후보를 만든다', () => {
   const scan = (script, matcher = 'Write', event = 'PreToolUse') => safetyHookTargets({ event, matcher, script });
   assert.deepEqual(scan(pathGuard), ['protected_path']);
+  assert.deepEqual(scan(pathGuard.replace('process.exit(2)', 'process.exit ( 2 )')), ['protected_path']);
   assert.deepEqual(scan(gitGuard, 'Bash'), ['risky_git']);
   assert.deepEqual(scan(pathGuard, null), ['protected_path']);
   for (const script of [

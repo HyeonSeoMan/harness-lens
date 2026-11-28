@@ -34,7 +34,7 @@ export function safetyHookTargets({ event, matcher, script, blockingCalls = [] }
   const calls = blockingCalls.filter((n) => /^[\w$]+$/.test(n));
   const blocks = (body) => {
     const executable = withoutStrings(body);
-    if (hasSafetyBlock(executable) || calls.some((n) => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, '\\$')}\\s*\\(`).test(executable))) return true;
+    if (hasBlockMarker(executable) || calls.some((n) => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, '\\$')}\\s*\\(`).test(executable))) return true;
     // JSON 차단 응답은 문자열 출력 예시가 아니라 코드의 객체 리터럴일 때만 인정한다.
     return [...body.matchAll(/\{[^{}]*\}/g)].some((m) => executable[m.index] === '{'
       && /["']?(?:decision|permissionDecision|continue)["']?\s*:/.test(m[0]) && hasBlockMarker(m[0]));
@@ -67,10 +67,5 @@ export function safetyHookTargets({ event, matcher, script, blockingCalls = [] }
     }
   }
   return [...targets].sort(compareCodeUnits);
-}
-
-// 동적 호출은 수집기가 실제 차단 export 호출을 확인한 이름만 전달한다.
-function hasSafetyBlock(body) {
-  return /(?:process\.exit\(\s*2\s*\)|process\.exitCode\s*=\s*2\b|sys\.exit\(\s*2\s*\)|os\.Exit\(\s*2\s*\)|\bexit\s+2\b|["']?(?:decision|permissionDecision)["']?\s*:\s*["'](?:block|deny)["'])/.test(body);
 }
 

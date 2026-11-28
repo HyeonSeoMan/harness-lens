@@ -413,7 +413,7 @@ function safetyHookTargets({ event, matcher, script, blockingCalls = [] }) {
   const calls = blockingCalls.filter((n) => /^[\w$]+$/.test(n));
   const blocks = (body) => {
     const executable = withoutStrings(body);
-    if (hasSafetyBlock(executable) || calls.some((n) => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, "\\$")}\\s*\\(`).test(executable))) return true;
+    if (hasBlockMarker(executable) || calls.some((n) => new RegExp(`(?<![\\w$.])${n.replace(/\$/g, "\\$")}\\s*\\(`).test(executable))) return true;
     return [...body.matchAll(/\{[^{}]*\}/g)].some((m) => executable[m.index] === "{" && /["']?(?:decision|permissionDecision|continue)["']?\s*:/.test(m[0]) && hasBlockMarker(m[0]));
   };
   const pathNames = [...code.matchAll(/\b(?:const|let|var)\s+(\w+)\s*=\s*[^;\n]*\b(?:file_path|notebook_path)\b/g)].map((m) => m[1]);
@@ -439,9 +439,6 @@ function safetyHookTargets({ event, matcher, script, blockingCalls = [] }) {
     }
   }
   return [...targets].sort(compareCodeUnits);
-}
-function hasSafetyBlock(body) {
-  return /(?:process\.exit\(\s*2\s*\)|process\.exitCode\s*=\s*2\b|sys\.exit\(\s*2\s*\)|os\.Exit\(\s*2\s*\)|\bexit\s+2\b|["']?(?:decision|permissionDecision)["']?\s*:\s*["'](?:block|deny)["'])/.test(body);
 }
 
 // src/redact.mjs
