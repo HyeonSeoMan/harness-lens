@@ -134,11 +134,11 @@ node $E finalize --project <프로젝트> --run <runId> --agent claude-code --js
 
 시나리오: 권한 규칙·Bash 차단 Hook·릴리스 점검 Skill이 있던 구성에 **종료 전 검증 Stop Hook**을 더한 뒤 재분석했다. 리포트는 검증 게이트·실행 안정성이 2→3으로 오른 대신, 같은 기간 합성 세션의 턴 시간 중앙값이 약 40초→90초로 늘어 처리 속도 실측 대역이 2→1로 내려간 트레이드오프를 보여준다(상관관계, 시연용 설계 값).
 
-| 라이트 (1200px) | 다크 (1200px) | 휴대폰 폭 (390px) |
+| 라이트 (1200px) | 다크 (1200px) | 휴대폰 폭 (390px, 위쪽 1/3) |
 |---|---|---|
-| [![재분석 리포트, 라이트 모드](./docs/images/sample-report-light.png)](./docs/images/sample-report-light.png) | [![재분석 리포트, 다크 모드](./docs/images/sample-report-dark.png)](./docs/images/sample-report-dark.png) | [![재분석 리포트, 390px 폭](./docs/images/sample-report-mobile.png)](./docs/images/sample-report-mobile.png) |
+| [![재분석 리포트, 라이트 모드](./docs/images/sample-report-light.webp)](./docs/images/sample-report-light.webp) | [![재분석 리포트, 다크 모드](./docs/images/sample-report-dark.webp)](./docs/images/sample-report-dark.webp) | [![재분석 리포트, 390px 폭 1/3](./docs/images/sample-report-mobile-1.webp)](./docs/images/sample-report-mobile-1.webp) |
 
-이미지는 전체 페이지라 길다. 눌러서 원본 크기로 본다. 다시 만드는 방법은 [샘플 프로젝트 README](./examples/sample-project/README.md)에 있다. 테스트 픽스처로 만든 이전 화면(세션 기록이 없을 때 등)은 [`docs/screenshots/`](./docs/screenshots/)에 있다.
+이미지는 전체 페이지라 길다. 눌러서 원본 크기로 본다. 휴대폰 폭은 길어서 세 장으로 나눴다: [1/3](./docs/images/sample-report-mobile-1.webp) · [2/3](./docs/images/sample-report-mobile-2.webp) · [3/3](./docs/images/sample-report-mobile-3.webp). 다시 만드는 방법은 [샘플 프로젝트 README](./examples/sample-project/README.md)에 있다. 테스트 픽스처(`sample-app`)로 이전 엔진 버전(0.2~0.3)에서 만든 화면(세션 기록이 없을 때 등)은 [`docs/screenshots/`](./docs/screenshots/)에 있다.
 
 ## 근거 성숙도: 예측과 실측
 

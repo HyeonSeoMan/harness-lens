@@ -2,7 +2,7 @@
 
 > **이 폴더의 모든 내용은 합성 데이터다.** 가상의 프로젝트와 고정 시드로 만든 가짜 세션 기록이며, 실제 사용자의 설정·대화·코드·경로·사람 이름이 들어 있지 않다.
 
-README의 리포트 스크린샷(`docs/images/sample-report-*.png`)을 만드는 데 쓴다. 엔진을 실제로 돌려 나온 리포트를 찍은 것이다.
+README의 리포트 스크린샷(`docs/images/sample-report-*.webp`)을 만드는 데 쓴다. 엔진을 실제로 돌려 나온 리포트를 찍은 것이다.
 
 ## 구성
 
@@ -11,7 +11,7 @@ README의 리포트 스크린샷(`docs/images/sample-report-*.png`)을 만드는
 | `project/` | 분석 대상 가상 하네스(현재 구성). `CLAUDE.md`, `.claude/settings.json`(권한 규칙 + Hook 2개), `.claude/hooks/guard-bash.sh`(PreToolUse 차단), `.claude/hooks/verify-on-stop.sh`(Stop 검증, 재진입 방지), `.claude/skills/release-check/`(Skill 1개), `scripts/verify.sh`(검증 명령 모음) |
 | `interpretations/` | 해석 두 개. `first.json`(첫 분석), `second.json`(재분석). LLM 대신 직접 쓴 예시 해석이다 |
 | `build-report.mjs` | 합성 세션 기록을 만들고 엔진을 두 번 돌려 `report.html`을 만든다 |
-| `screenshot.mjs` | 헤드리스 Chrome으로 리포트를 찍어 `docs/images/`에 저장한다(라이트·다크 1200px, 390px) |
+| `screenshot.mjs` | 헤드리스 Chrome으로 리포트를 찍어 `docs/images/`에 WebP로 저장한다(라이트·다크 1200px, 390px 2배 해상도는 세 구간으로 나눔) |
 
 ## 시나리오
 
@@ -26,7 +26,7 @@ README의 리포트 스크린샷(`docs/images/sample-report-*.png`)을 만드는
 
 ```sh
 node examples/sample-project/build-report.mjs --work <빈 작업 디렉터리>   # → <작업 디렉터리>/out/report.html
-node examples/sample-project/screenshot.mjs <작업 디렉터리>/out/report.html # → docs/images/sample-report-*.png
+node examples/sample-project/screenshot.mjs <작업 디렉터리>/out/report.html # → docs/images/sample-report-*.webp
 ```
 
 - `--work`를 빼면 OS 임시 디렉터리에 만든다. 세션 기록은 그 안의 `claude-config/`에만 쓰고 `CLAUDE_CONFIG_DIR`로 엔진에 넘기므로 실행하는 컴퓨터의 `~/.claude`를 읽지 않는다.
