@@ -31,6 +31,7 @@ function render(analysis) {
 function example() { return JSON.parse(readFileSync(path.join(repoRoot, 'examples/analysis.example.json'), 'utf8')); }
 // 루트(#app)는 textContent = ''로 비운 뒤 자식을 붙이므로 자식에서 글자를 모은다.
 const allText = (n) => (n.children.length ? n.children.map(allText).join('') : n.text ?? '');
+const AXIS_KO = { execution_stability: '실행 안정성', autonomy: '자율성' };
 const byClass = (cls) => (n) => (n.attrs.class || '').split(' ').includes(cls);
 
 function findAll(node, pred, out = []) {
@@ -94,6 +95,24 @@ test('B10 레이더: 구조 수준 점선 다각형은 실측 대역을 지나�
   assert.equal(findAll(svg, byClass('pt-was')).length, 0);
   // 실측 축의 구조 수준(직전 예측)은 흐리게 겹친다.
   assert.equal(findAll(svg, byClass('faded')).length, measured.length);
+  // 좌표: 구조 점선 변의 끝점은 구조 수준 점이고, 구조 수준과 실측 대역이 다른 축에서 실측 대역 점을 지나지 않는다.
+  const n = a.engine.axes.length;
+  const pt = (i, lv) => { const ang = (-90 + i * 360 / n) * Math.PI / 180; return [280 + 170 * lv / 3 * Math.cos(ang), 280 + 170 * lv / 3 * Math.sin(ang)]; };
+  const near = (x, y, p) => Math.abs(Number(x) - p[0]) < 1e-6 && Math.abs(Number(y) - p[1]) < 1e-6;
+  const structural = findAll(svg, (n) => n.tag === 'line' && n.attrs.class === 'cur predicted');
+  assert.equal(structural.length, n);
+  a.engine.axes.forEach((x, i) => {
+    const j = (i + 1) % n;
+    assert.ok(structural.some((l) => near(l.attrs.x1, l.attrs.y1, pt(i, x.level)) && near(l.attrs.x2, l.attrs.y2, pt(j, a.engine.axes[j].level))), `${x.axis} 구조 변`);
+  });
+  const differ = a.engine.axes.map((x, i) => [x, i]).filter(([x]) => x.measured && x.measured.band !== x.level);
+  assert.ok(differ.length >= 1);
+  for (const [x, i] of differ) {
+    const band = pt(i, x.measured.band);
+    assert.ok(!structural.some((l) => near(l.attrs.x1, l.attrs.y1, band) || near(l.attrs.x2, l.attrs.y2, band)), `${x.axis} 구조 변이 실측 대역을 지남`);
+    const dot = meas.find((m) => m.textContent.startsWith(AXIS_KO[x.axis]));
+    assert.ok(near(dot.attrs.cx, dot.attrs.cy, band));
+  }
 });
 
 test('B10 레이더: 이웃한 두 축이 모두 실측이면 그 사이만 실선으로 잇는다', () => {
@@ -111,7 +130,8 @@ test('B10 실측과 구조 수준의 차이는 점수 하락처럼 쓰지 않고
   const root = render(a);
   const text = allText(root);
   assert.doesNotMatch(text, /차이 [−+±]\d/);
-  assert.match(text, /구조 수준 3 대비 실측 대역이 2단계 낮음\(척도가 달라 점수 하락·상승이 아님\)/);
+  assert.match(text, /구조 수준 3 \/ 실측 대역 1\(다른 척도라 차이를 계산하지 않음\)/);
+  assert.doesNotMatch(text, /단계 (낮음|높음)|대비 실측 대역이/);
   const rows = findAll(findAll(root, (n) => n.tag === 'section' && n.attrs.id === 'data')[0], (n) => n.tag === 'tr').map((tr) => tr.children.map((c) => c.textContent));
   const h = rows[0];
   assert.ok(h.includes('구조 수준') && h.includes('실측 대역') && !h.includes('수준'));
@@ -138,8 +158,9 @@ test('B14·E 세션 실측은 집계 창 둘(토큰 표·축 실측)과 창 길�
   const root = render(a);
   const notice = findAll(root, byClass('windows'))[0];
   assert.ok(notice && byClass('notice')(notice));
-  assert.match(notice.textContent, /① 토큰·위치 표: 2026-10-29 ~ 2026-11-27 \(약 30일, 귀속 세션 31개\)/);
-  assert.match(notice.textContent, /② 축별 실측 지표.*2026-11-20T09:00:00Z 이후 \(약 8일, 프로젝트·워커 세션 12개\)/);
+  assert.match(notice.textContent, /① 토큰·위치 표: 2026-10-29 ~ 2026-11-27 \(30일\(날짜 기준\), 귀속 세션 31개\)/);
+  assert.match(notice.textContent, /② 축별 실측 지표.*2026-11-20T09:00:00Z 이후 \(분석 시각까지 7일 0시간, 프로젝트·워커 세션 12개\)/);
+  assert.doesNotMatch(notice.textContent, /축 실측 창이 짧아/);
   const attrib = findAll(root, (n) => n.tag === 'div' && n.children[0]?.tag === 'b' && n.children[0].textContent === '귀속')[0];
   assert.doesNotMatch(attrib.textContent, /현재 구성 이후/);
   const rows = tableAfterHeading(root, '축별 실측 지표');
@@ -147,12 +168,28 @@ test('B14·E 세션 실측은 집계 창 둘(토큰 표·축 실측)과 창 길�
   assert.ok(rows.slice(1).every((r) => r[4] === '② 현재 구성 이후' || r[4] === '① 누적'));
 });
 
-test('B14 축 실측 창이 하루 미만이면 시간으로 적고 흔들릴 수 있다고 알린다', () => {
-  const a = example();
-  a.engine.sessions.coverage.configSince = '2026-11-27T03:22:00Z';
-  const notice = findAll(render(a), byClass('windows'))[0];
-  assert.match(notice.textContent, /하루 미만\(21시간\)/);
-  assert.match(notice.textContent, /축 실측 창이 짧아/);
+test('B14 축 실측 창은 분석 시각까지의 실제 경과로 적고, 7일 미만이면 경계값에서도 흔들릴 수 있다고 알린다', () => {
+  // 분석 시각 2026-11-27T09:15:00Z. 마지막 기록 날짜의 다음 자정까지 늘리지 않는다.
+  const cases = [
+    ['2026-11-27T03:22:00Z', '5시간 53분', true],
+    ['2026-11-20T10:00:00Z', '6일 23시간', true],
+    ['2026-11-20T09:15:00Z', '7일 0시간', false],
+    ['2026-11-27T09:10:00Z', '5분', true],
+  ];
+  for (const [since, span, warn] of cases) {
+    const a = example();
+    a.engine.sessions.coverage.configSince = since;
+    const notice = findAll(render(a), byClass('windows'))[0];
+    assert.match(notice.textContent, new RegExp(`${since} 이후 \\(분석 시각까지 ${span},`), since);
+    assert.equal(/축 실측 창이 짧아/.test(notice.textContent), warn, since);
+  }
+});
+
+test('B13 분석 세션의 집계 위치는 실행 위치에 따라 달라지고, 자기 비용은 프로젝트·워커 합계와 겹친다고 적는다', () => {
+  const text = allText(render(example()));
+  assert.doesNotMatch(text, /이번 분석을 실행한 세션도 여기에 들어갑니다|프로젝트 세션.에도 들어 있습니다/);
+  assert.match(text, /이번 분석 세션은 실행한 곳에 따라 프로젝트 세션·워커 워크트리·오케스트레이터 봇 중 하나로 집계/);
+  assert.match(text, /프로젝트 세션과 워커 워크트리 응답을 합한 값이라 세션 기록 실측의 두 위치 합계와 겹칩니다/);
 });
 
 test('E 턴별 p90과 축 지표 p90이 다르면 어느 창의 값인지 구분해 적는다', () => {
@@ -198,10 +235,12 @@ test('F 일별 추이가 3일 미만이면 그래프 대신 문장으로, 그 �
   assert.match(findAll(short, byClass('trend-text'))[0].textContent, /^일별 추이는 2일치뿐이라 그래프 대신 값을 적습니다: 2026-11-25 요청 260개 · 중앙값 41,000 · 최대 161,000 토큰/);
 });
 
-test('G 접힌 모델별·도구별 표는 항목 수와 접힘을 요약 줄에 적는다', () => {
+test('G 접힌 모델별·도구별 표는 요약 줄에 항목 수를 적는다', () => {
   const summaries = findAll(render(example()), (n) => n.tag === 'summary').map((n) => n.textContent);
-  assert.ok(summaries.includes('모델별 3개 모델 — 접혀 있음, 눌러서 펼치기'));
-  assert.ok(summaries.some((t) => /^도구별 호출·오류 \d+개 도구 — 접혀 있음/.test(t)));
+  // 열림 상태는 details가 보이므로 요약 줄은 펼쳐도 틀리지 않는 항목 수만 적는다.
+  assert.ok(summaries.includes('모델별 (3개 모델)'));
+  assert.ok(summaries.some((t) => /^도구별 호출·오류 \(\d+개 도구\)$/.test(t)));
+  assert.ok(summaries.every((t) => !/접혀 있음|펼치기/.test(t)));
 });
 
 test('B12 축 상세는 차단 표지가 문자열 패턴 탐지임을 적고, Hook fact는 검증 판정에 쓰지 않는 이벤트의 검증 어휘를 구분한다', (t) => {

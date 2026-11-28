@@ -120,13 +120,13 @@ export function reportClient() {
     var reasons = a.range.reasonCodes.filter(function (c) { return c !== 'measured_band'; }).map(reasonText);
     return (a.maturity.state === 'measured' ? '실측 대역 범위 ' : '가능 범위 ') + a.range.min + '–' + a.range.max + (reasons.length ? ' (' + reasons.join(', ') + ')' : '');
   }
-  // 구조 수준과 실측 대역은 다른 척도라 차이를 점수 변화처럼 쓰지 않는다.
+  // 구조 수준과 실측 대역은 다른 척도라 빼서 비교하지 않고 두 값을 나란히 적는다(deltaFromPredicted는 쓰지 않음).
   function deltaText(me) {
     if (me.predictedLevel === null) return '';
-    var d = me.deltaFromPredicted;
-    return ' · 구조 수준 ' + me.predictedLevel + ' 대비 실측 대역이 ' + (d === 0 ? '같음' : Math.abs(d) + '단계 ' + (d < 0 ? '낮음' : '높음')) + '(척도가 달라 점수 하락·상승이 아님)';
+    return ' · 구조 수준 ' + me.predictedLevel + ' / 실측 대역 ' + me.band + '(다른 척도라 차이를 계산하지 않음)';
   }
-  function fold(title, count, unit) { return el('summary', null, title + ' ' + count + unit + ' — 접혀 있음, 눌러서 펼치기'); }
+  // 열림·닫힘은 details가 스스로 보이므로 요약 줄에는 바뀌지 않는 항목 수만 적는다.
+  function fold(title, count, unit) { return el('summary', null, title + ' (' + count + unit + ')'); }
   function evList(ids) {
     if (!ids || !ids.length) return el('p', { class: 'muted' }, '근거 없음');
     return el('ul', { class: 'tight' }, ids.map(function (id) {
@@ -309,7 +309,10 @@ export function reportClient() {
     return el('div', { class: 'sharewrap' }, [g, legend2]);
   }
   function day(iso) { return Date.parse(iso.length === 10 ? iso + 'T00:00:00Z' : iso); }
-  function spanText(ms) { return ms < 86400000 ? '하루 미만(' + Math.max(1, Math.round(ms / 3600000)) + '시간)' : '약 ' + Math.round(ms / 86400000) + '일'; }
+  function spanText(ms) {
+    var d = Math.floor(ms / 86400000), h = Math.floor(ms % 86400000 / 3600000), m = Math.floor(ms % 3600000 / 60000);
+    return d ? d + '일 ' + h + '시간' : h ? h + '시간 ' + m + '분' : m + '분';
+  }
   function bucketRow(name, b) { return [name, num(b.freshInput), num(b.cacheWrite), num(b.cacheRead), num(b.output), num(b.weighted)]; }
   var TOKH = ['구분', '새 입력', '캐시 쓰기', '캐시 읽기', '출력', '환산값'];
   if (usable) {
@@ -317,15 +320,15 @@ export function reportClient() {
     var cov = sess.coverage;
     // 창이 둘이다(E): 토큰·위치 표는 누적 집계 창, 축 실측 지표(sinceConfig)는 현재 구성 기준 시각 이후.
     var win = sess.window;
-    var tokSpan = win ? spanText(day(win.to) - day(win.from) + 86400000) : null;
-    var axisEnd = win ? day(win.to) + 86400000 : null;
-    var axisSpanMs = cov.configSince && axisEnd ? Math.max(0, axisEnd - Date.parse(cov.configSince)) : null;
+    // ①은 날짜 단위만 알므로 날짜 수로, ②는 구성 기준 시각부터 분석 시각(관측 상한)까지 실제 경과로 적는다.
+    var tokSpan = win ? Math.round((day(win.to) - day(win.from)) / 86400000 + 1) + '일(날짜 기준)' : null;
+    var axisSpanMs = cov.configSince ? Math.max(0, Date.parse(meta.analyzedAt) - Date.parse(cov.configSince)) : null;
     var sessAxis = eng.axes.filter(function (a) { return a.maturity.requirement && a.maturity.requirement.unit === 'sessions' && a.maturity.current !== null; })[0];
     var axisSessions = sessAxis ? sessAxis.maturity.current : null;
     var winLines = [
       '① 토큰·위치 표: ' + (win ? win.from + ' ~ ' + win.to + ' (' + tokSpan + ', 귀속 세션 ' + num(cov.sessionsAttributed) + '개)' : '—'),
       cov.configSince
-        ? '② 축별 실측 지표(집계 창 ‘현재 구성 이후’): ' + cov.configSince + ' 이후' + (axisSpanMs === null ? '' : ' (' + spanText(axisSpanMs) + (axisSessions === null ? '' : ', 프로젝트·워커 세션 ' + num(axisSessions) + '개') + ')')
+        ? '② 축별 실측 지표(집계 창 ‘현재 구성 이후’): ' + cov.configSince + ' 이후' + (axisSpanMs === null ? '' : ' (분석 시각까지 ' + spanText(axisSpanMs) + (axisSessions === null ? '' : ', 프로젝트·워커 세션 ' + num(axisSessions) + '개') + ')')
         : '② 축별 실측 지표: 구성 기준 시각이 없어 ①과 같은 누적 창을 씁니다.',
     ];
     var shortWin = axisSpanMs !== null && axisSpanMs < 7 * 86400000;
@@ -333,7 +336,7 @@ export function reportClient() {
       el('span', null, '두 창의 값은 서로 비교하지 마세요.' + (shortWin ? ' 축 실측 창이 짧아 실측 대역이 흔들릴 수 있습니다.' : ''))]));
     sSec2.appendChild(el('div', { class: 'meta panel' }, [
       ['토큰 집계 창(①)', win ? win.from + ' ~ ' + win.to + ' · ' + tokSpan : '—'],
-      ['축 실측 창(②)', cov.configSince ? cov.configSince + ' 이후' + (axisSpanMs === null ? '' : ' · ' + spanText(axisSpanMs)) : '①과 같음'],
+      ['축 실측 창(②)', cov.configSince ? cov.configSince + ' 이후' + (axisSpanMs === null ? '' : ' · 분석 시각까지 ' + spanText(axisSpanMs)) : '①과 같음'],
       ['원본 기록 범위', sess.window && sess.window.rawLogsFrom ? sess.window.rawLogsFrom + ' 이후(오래된 기록은 Claude Code가 정리)' : '원본 기록 없음(누적값만)'],
       ['Claude Code 버전', sess.clientVersions ? sess.clientVersions.min + ' ~ ' + sess.clientVersions.max : '미확인'],
       ['읽은 기록', '파일 ' + num(cov.filesScanned) + '개 · 줄 ' + num(cov.linesRead) + ' (건너뜀 ' + num(cov.linesSkipped) + ')' + (cov.incremental ? ' · 증분' : ' · 전체')],
@@ -346,7 +349,7 @@ export function reportClient() {
       sSec2.appendChild(el('h3', null, '토큰 종류별'));
       sSec2.appendChild(shareBar(TOKTYPE.map(function (t, i) { return { name: t[1], value: tk.total[t[0]], cls: 'c' + (i + 1) }; }), '토큰 종류별 비중(토큰 수)'));
       sSec2.appendChild(el('h3', null, '위치별 (환산값 비중)'));
-      sSec2.appendChild(el('p', { class: 'muted' }, '환산값: 공개 가격표(' + tk.weighting.pricingTableVersion + ') 기준 ' + tk.weighting.referenceModel + ' 새 입력 토큰으로 환산한 상대값이며 청구액이 아닙니다. 아래 막대와 표의 ‘환산값’·‘비중’ 칸이 이 단위입니다. 프로젝트 세션은 작업 경로가 이 프로젝트 안인 메인 세션(엔진 값 direct)이며, 이번 분석을 실행한 세션도 여기에 들어갑니다.'));
+      sSec2.appendChild(el('p', { class: 'muted' }, '환산값: 공개 가격표(' + tk.weighting.pricingTableVersion + ') 기준 ' + tk.weighting.referenceModel + ' 새 입력 토큰으로 환산한 상대값이며 청구액이 아닙니다. 아래 막대와 표의 ‘환산값’·‘비중’ 칸이 이 단위입니다. 프로젝트 세션은 작업 경로가 이 프로젝트 안인 메인 세션(엔진 값 direct)입니다. 이번 분석 세션은 실행한 곳에 따라 프로젝트 세션·워커 워크트리·오케스트레이터 봇 중 하나로 집계되고, 집계 시점에 기록이 없으면 빠집니다.'));
       var locs = tk.byLocation.filter(function (l) { return l.sessions > 0 || l.tokens.weighted > 0; });
       sSec2.appendChild(shareBar(tk.byLocation.map(function (l, i) { return { name: LOC[l.location], value: l.tokens.weighted, cls: 'c' + (i + 1) }; }), '위치별 환산값 비중'));
       var bot = tk.byLocation.filter(function (l) { return l.location === 'bot'; })[0];
@@ -578,7 +581,7 @@ export function reportClient() {
     sSec.appendChild(el('p', null, '직전 분석(' + pa.snapshotId + '): 걸린 시간 ' + (pa.wallClockMs === null ? '미확인' : (Math.round(pa.wallClockMs / 100) / 10) + '초') + ' · LLM 토큰 ' + (pa.llmTokens
       ? '새 입력 ' + num(pa.llmTokens.freshInput) + ' + 캐시 쓰기 ' + num(pa.llmTokens.cacheWrite) + ' + 출력 ' + num(pa.llmTokens.output) + ' (캐시 읽기 ' + num(pa.llmTokens.cacheRead) + ' 별도, 환산 ' + num(pa.llmTokens.weighted) + ')'
       : '미측정(그 구간의 귀속 세션 기록 없음)')));
-    if (pa.llmTokens) sSec.appendChild(el('p', { class: 'muted' }, 'prepare 시작~finalize 끝 구간에 이 프로젝트에 귀속된 메인 스레드 응답을 모두 셉니다. 같은 시간에 다른 작업을 했다면 함께 들어갑니다. 이 토큰은 세션 기록 실측의 ‘프로젝트 세션’에도 들어 있습니다(따로 빼지 않음).'));
+    if (pa.llmTokens) sSec.appendChild(el('p', { class: 'muted' }, 'prepare 시작~finalize 끝 구간에 이 프로젝트에 귀속된 메인 스레드 응답을 모두 셉니다. 같은 시간에 다른 작업을 했다면 함께 들어갑니다. 프로젝트 세션과 워커 워크트리 응답을 합한 값이라 세션 기록 실측의 두 위치 합계와 겹칩니다(따로 빼지 않음). 봇에서 실행한 분석은 여기에 잡히지 않습니다.'));
   }
 
   // ---------- 한계 ----------

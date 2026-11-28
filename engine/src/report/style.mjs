@@ -24,6 +24,8 @@ h1 { font-size: 24px; margin: 0 0 4px; }
 h2 { font-size: 19px; margin: 32px 0 12px; padding-bottom: 6px; border-bottom: 1px solid var(--line); }
 h3 { font-size: 16px; margin: 18px 0 8px; }
 p { margin: 6px 0; }
+/* 긴 비분리 문자열(경로·식별자)이 페이지 폭을 넘기지 않게 한다. 표는 .tablewrap 가로 스크롤에 맡긴다. */
+p, li, summary, .meta div { overflow-wrap: anywhere; }
 .muted { color: var(--muted); }
 .panel { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin: 10px 0; }
 .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 6px 18px; margin: 12px 0; }
