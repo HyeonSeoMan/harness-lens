@@ -271,25 +271,50 @@ export function compactInventory(draft, kbKeys) {
       compaction: { omitted: ['contentHash', 'null_and_empty_array_keys'], factLimitPerAxis: factLimit, omittedFacts },
     });
   };
-  const target = BUDGETS.llm_input_inventory_tokens.target;
+  // 무손실 생략은 fact 축소 전에 적용한다. 출처는 실제 생략한 항목만
+  // [구성 요소 인덱스, 경로 인덱스]로 기록해 가상 구성 요소 경로를 복원하지 않는다.
+  const lossless = (compact) => {
+    const components = compact.engine.inventory.components ?? [];
+    for (const c of components) if (c.name === c.paths?.[0]) delete c.name;
+    for (const a of compact.engine.axes) delete a.source.evidenceIds;
+    const byId = new Map(components.map((c) => [c.id, c]));
+    for (const ev of compact.engine.evidence ?? []) {
+      const paths = byId.get(ev.componentId)?.paths;
+      if (paths?.length && ev.path === paths[0]) delete ev.path;
+    }
+    const readSourceRefs = [];
+    const remainingSources = (compact.engine.inventory.sources ?? []).filter((src) => {
+      if (src.status !== 'read') return true;
+      const ci = components.findIndex((c) => c.origin === src.origin && c.paths?.includes(src.path));
+      if (ci < 0) return true;
+      readSourceRefs.push([ci, components[ci].paths.indexOf(src.path)]);
+      return false;
+    });
+    if (remainingSources.length) compact.engine.inventory.sources = remainingSources;
+    else delete compact.engine.inventory.sources;
+    compact.compaction.omitted.push('name_equal_first_path', 'axis_source_evidenceIds',
+      'evidence_path_equal_first_component_path', 'read_sources_in_components');
+    if (readSourceRefs.length) compact.compaction.readSourceRefs = readSourceRefs;
+    return compact;
+  };
+  // 6,000은 실패 상한이다. 수집량 증가에 대비해 압축은 10% 여유를 목표로 한다.
+  const target = Math.floor(BUDGETS.llm_input_inventory_tokens.target * 0.9);
   let text = serializeCompact(build(null));
   if (estimateTokens(text) <= target) return text;
-  // 축별 근거 수의 최댓값부터 줄여 예산 안에 드는 가장 큰 N을 쓴다. 1로도 넘으면 마지막 압축 단계로 간다.
+  text = serializeCompact(lossless(build(null)));
+  if (estimateTokens(text) <= target) return text;
   const counts = new Map();
   for (const ev of e.evidence) counts.set(ev.primaryAxis ?? '', (counts.get(ev.primaryAxis ?? '') ?? 0) + 1);
   for (let n = Math.max(1, ...counts.values()) - 1; n >= 1; n--) {
-    text = serializeCompact(build(n));
+    text = serializeCompact(lossless(build(n)));
     if (estimateTokens(text) <= target) return text;
   }
-  // 실측 지표가 복원되면 fact 최소 1개로도 넘을 수 있다. 마지막 단계에서만
-  // 비판정 설명과 재구성 가능한 중복을 생략한다. 근거 ID·규칙·실측 수치는 보존한다.
-  const lean = build(1);
-  for (const c of lean.engine.inventory.components) {
+  // fact 축당 1개로도 목표를 넘으면 비판정 설명을 마지막에 생략한다.
+  const lean = lossless(build(1));
+  for (const c of lean.engine.inventory.components ?? []) {
     for (const key of ['command', 'description', 'headings']) delete c.attributes[key];
-    if (c.name === c.paths?.[0]) delete c.name;
   }
-  for (const a of lean.engine.axes) delete a.source.evidenceIds;
-  lean.compaction.omitted.push('descriptive_component_attributes', 'name_equal_first_path', 'axis_source_evidenceIds');
+  lean.compaction.omitted.push('descriptive_component_attributes');
   return serializeCompact(lean);
 }
 

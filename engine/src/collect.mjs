@@ -41,6 +41,35 @@ function splitCommand(command) {
   return out;
 }
 
+// 게이트의 단순 셸 명령 영역만 분리한다. 따옴표 안 구분자는 데이터로 두고,
+// 조건식 자체는 제외하되 if/!의 조건 명령과 then/do 뒤 실행 명령은 남긴다.
+function gateCommands(command) {
+  const parts = [];
+  let start = 0;
+  let quote = null;
+  let bracket = null;
+  for (let i = 0; i < command.length; i++) {
+    const ch = command[i];
+    if (ch === '\\' && quote !== "'") { i++; continue; }
+    if (quote) { if (ch === quote) quote = null; continue; }
+    if (ch === '"' || ch === "'") { quote = ch; continue; }
+    if (bracket) {
+      if (command.startsWith(bracket, i)) { i += bracket.length - 1; bracket = null; }
+      continue;
+    }
+    if (ch === '[' && (i === 0 || /\s/.test(command[i - 1]))) {
+      if (command[i + 1] === '[') { bracket = ']]'; i++; continue; }
+      if (/\s/.test(command[i + 1] ?? '')) { bracket = ']'; continue; }
+    }
+    if (ch === '#' && (i === 0 || /\s/.test(command[i - 1]))) { parts.push(command.slice(start, i)); start = command.length; break; }
+    if (/[;&|]/.test(ch)) { parts.push(command.slice(start, i)); start = i + 1; }
+  }
+  parts.push(command.slice(start));
+  return parts.map((part) => part.trim().replace(/^-\s+/, '')
+    .replace(/^(?:(?:if|elif|while|until|then|do|else)\s+|!\s*)+/, '').trim())
+    .filter((part) => part && !/^(?:echo|printf|export|test|\[{1,2})(?:\s|$)|^[\w]+\s*=/.test(part));
+}
+
 // Hook 명령에서 스크립트 경로를 찾는다. 인라인 명령이면 null(루브릭 §1.7 Hook 스크립트 해석).
 export function hookScriptPath(command) {
   const tokens = splitCommand(command).filter((t) => !/^[A-Za-z_][A-Za-z0-9_]*=/.test(t));
@@ -761,14 +790,13 @@ export class Collector {
         // 한 명령을 두 축에 중복 귀속하지 않는다. 명세 어휘가 있으면 SC 우선이다.
         const verification = (cmd) => /(?:^|[;&|]\s*|\s)(?:(?:npm|pnpm|yarn|bun)\s+(?:run\s+)?(?:test|lint|typecheck|check)(?:\b|:)|node\s+--test\b|pytest\b|ruff\b|eslint\b|tsc\b|prettier\s+--check\b|cargo\s+(?:test|clippy)\b|go\s+(?:test|vet)\b|mvn\s+(?:test|verify)\b|gradle\s+(?:test|check)\b)/i.test(cmd) && !/^\s*(?:echo|printf|export|[\w]+\s*=)\b/.test(cmd);
         const hit = commands.find(([, cmd]) => {
-          const candidate = cmd.replace(/^\s*-\s+/, '').trim();
-          if (/^(?:echo|printf|export|test|\[)(?:\s|$)|^[\w]+\s*=/.test(candidate)) return false;
-          return (axis === 'spec_clarity' ? hasAny(candidate, words) : verification(candidate)) && (axis === 'spec_clarity' || !hasAny(candidate, SPEC_CMD));
+          return gateCommands(cmd).some((candidate) =>
+            (axis === 'spec_clarity' ? hasAny(candidate, words) : verification(candidate)) && (axis === 'spec_clarity' || !hasAny(candidate, SPEC_CMD)));
         });
         if (!hit) continue;
         const before = commands.filter(([line]) => line < hit[0]).map(([, cmd]) => cmd).join('\n');
         const linkedFailure = /\|\|\s*exit\s+[1-9]\d*\s*$/.test(hit[1]);
-        const standaloneWithErrexit = /^\s*set\s+-[a-z]*e[a-z]*\s*$/m.test(before) && !/\bset\s+\+[a-z]*e/.test(before) && !/[;&|]/.test(hit[1]);
+        const standaloneWithErrexit = /^\s*set\s+-[a-z]*e[a-z]*\s*$/m.test(before) && !/\bset\s+\+[a-z]*e/.test(before) && !/[;&|]/.test(hit[1]) && !/^\s*(?:if|elif|while|until|then|do|else|!)(?:\s|$)/.test(hit[1]);
         const enforced = kind === 'git_hook' && active && (linkedFailure || standaloneWithErrexit);
         const ruleId = enforced ? (axis === 'spec_clarity' ? 'SC-L3-02' : 'VG-L3-04') : rule;
         this.addEvidence({ comp, path: f.disp, line: hit[0], family: `repository:${axis}`, primaryAxis: axis,

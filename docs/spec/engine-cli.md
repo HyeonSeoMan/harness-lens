@@ -137,8 +137,8 @@ finalize = validate → snapshot → render
     - `inventory.sources` 중 `status: "absent"`인 항목
     - `inventory.components[].contentHash`(변경 탐지용이라 해석에 쓰지 않는다)
     - 값이 `null`이거나 빈 배열인 키 전부(생략 규칙). 없는 키는 스키마상 그 필드의 `null` 또는 빈 배열로 읽는다
-    - 대신 `knowledgeBaseKeys`(§4.4.1)와 `compaction`(`omitted`, `factLimitPerAxis`, `omittedFacts`)을 더한다.
-    - 목표 크기는 6,000토큰 이하다(§12). 위 생략 뒤에도 넘으면 근거 `fact`를 축(`primaryAxis`, 없으면 미귀속 묶음)별 상위 N개만 남기고 나머지 근거는 `fact` 없이 ID·구성 요소·경로·규칙만 남긴다. 순위는 그 축 수준을 정한 규칙(`axes[].source.ruleId`)의 근거 → 규칙 수준 높은 순 → 근거 ID 순이고, N은 예산 안에 드는 가장 큰 값이다(1로도 넘으면 §12 마지막 압축 단계 적용 후 여전히 초과한 경우에만 보고). `draft.json`·스냅샷에는 모든 `fact`가 그대로 남는다.
+    - 대신 `knowledgeBaseKeys`(§4.4.1)와 `compaction`(`omitted`, `factLimitPerAxis`, `omittedFacts`, 실제 생략 출처가 있으면 `readSourceRefs`)을 더한다.
+    - 목표 크기는 6,000토큰 이하다(§12). 5,400토큰 여유 목표를 넘으면 먼저 §12의 무손실 생략을 적용한다. 그래도 넘으면 근거 `fact`를 축(`primaryAxis`, 없으면 미귀속 묶음)별 상위 N개만 남기고 나머지 근거는 `fact` 없이 ID·구성 요소·경로·규칙만 남긴다. 순위는 그 축 수준을 정한 규칙(`axes[].source.ruleId`)의 근거 → 규칙 수준 높은 순 → 근거 ID 순이고, N은 여유 목표 안에 드는 가장 큰 값이다(1로도 넘으면 설명 속성을 생략하고, 최종 6,000토큰 초과만 예산 초과로 보고). `draft.json`·스냅샷에는 모든 `fact`가 그대로 남는다.
   - `interpretation.template.json`: 빈 해석 골격. 미리 채우는 것은 다음 두 가지다.
     - `axisNotes`: 8개 축의 `axis`
     - `emptyAreas`: 엔진이 정한 `axis`·`kind`
@@ -314,7 +314,7 @@ finalize = validate → snapshot → render
 - `.git/config`는 hooksPath 판독 보조로만 읽으며 일반 sources·configurationHash·configSince에 포함하지 않는다. `[core] hooksPath`는 정적 상대 경로만 읽고, 해당 경로가 있으면 기본 `.git/hooks` 대신 수집한다. 전역 설정·include·워크트리의 외부 gitdir를 따라가지 않는다. hooksPath의 ./·후행 슬래시·역슬래시는 정규화해 이중 수집하지 않는다. 워크트리의 .git 파일이면 외부 gitdir를 따라가지 않고 git_hook_activation_unresolved 한계를 남긴다. 추적용 `.husky`·`.githooks`는 활성 여부 미확인으로 수집하되 hooksPath와 일치하면 로컬 활성 경로로 한 번만 수집한다.
 - 구성 요소당 파일은 256KiB, 디렉터리당 후보는 경로순 100개까지 읽는다. 넘으면 `unsupported / candidate_limit_exceeded`를 남긴다. 기존 비밀정보 제거·루트 경계 규칙을 그대로 적용한다. 명령·환경 값·파일 원문은 새 근거에 출력하지 않는다.
 - YAML은 `run`·`script`·`entry` 값 및 키 열보다 깊은 스칼라 블록, CircleCI run 객체의 바로 아래 command 값만 명령 후보로 본다. 주석·표시 이름·환경 변수·외부 uses/include는 판정하지 않는다. Jenkinsfile은 sh·bat·powershell의 한 줄 리터럴 명령만 보며 stage 이름은 제외한다. 완전한 YAML·셸 해석은 하지 않는다. 명세 어휘는 SC-L2-04, 검증 어휘는 VG-L2-04로 최대 절차 수준 2다. 한 명령이 두 어휘에 맞으면 SC 우선이다.
-- 검증 명령은 npm/pnpm/yarn/bun의 test·lint·typecheck·check, node --test, pytest·ruff·eslint·tsc·prettier --check, cargo test/clippy·go test/vet·mvn test/verify·gradle test/check로 제한하고 셸 test·표시 문자열은 제외한다. 로컬 활성 경로의 실행 비트가 있는 Git Hook에서 해당 명령에 연결된 || exit 양수 또는 앞선 set -e(이후 해제되지 않고 명령이 조건식·복합문이 아닌 경우)를 찾으면 SC-L3-02·VG-L3-04 후보로 삼는다. 문자열 탐지이며 실제 실패 차단을 보장하지 않는다. Claude `disableAllHooks`는 Git Hook에 적용하지 않는다. 실행 비트로 결정한 활성 여부도 구성 요소·구성 해시에 포함한다. Windows에서는 실행 비트를 추정하지 않고 git_hook_executable_unconfirmed 한계를 남긴다(플랫폼별 해시 차이 가능).
+- 검증 명령은 npm/pnpm/yarn/bun의 test·lint·typecheck·check, node --test, pytest·ruff·eslint·tsc·prettier --check, cargo test/clippy·go test/vet·mvn test/verify·gradle test/check로 제한한다. 셸 `test`·`[ ]`·`[[ ]]` 조건식과 echo·printf·export·변수 대입은 후보에서 제외한다. 따옴표 밖 구분자(`;`·`&`·`|`)로 명령 영역을 나누고 if·elif·while·until·then·do·else 및 부정 `!` 접두어를 벗겨 실제 조건 명령·본문 명령은 남긴다. 예: `if ! npm test; then exit 1; fi`, `while read f; do eslint "$f"; done`, `if [ -f task-spec.md ]; then npm test; fi`는 VG 근거이고, 명세 파일의 존재 조건만으로 SC 근거를 만들지 않는다. 따옴표 안 구분자는 문자열로 유지한다. 로컬 활성 경로의 실행 비트가 있는 Git Hook에서 해당 명령에 연결된 || exit 양수 또는 앞선 set -e(이후 해제되지 않고 명령이 조건식·복합문·부정문이 아닌 경우)를 찾으면 SC-L3-02·VG-L3-04 후보로 삼는다. 문자열 탐지이며 실제 실패 차단을 보장하지 않는다. Claude `disableAllHooks`는 Git Hook에 적용하지 않는다. 실행 비트로 결정한 활성 여부도 구성 요소·구성 해시에 포함한다. Windows에서는 실행 비트를 추정하지 않고 git_hook_executable_unconfirmed 한계를 남긴다(플랫폼별 해시 차이 가능).
 
 | 출처(`origin`) | 경로 | 범위 |
 |---|---|---|
@@ -502,7 +502,16 @@ finalize = validate → snapshot → render
 
 ## 12. 성능 예산 훅 (PRD §11.1)
 
-압축 인벤토리가 fact 축당 1개로도 6,000토큰을 넘을 때만 마지막 압축 단계를 적용한다. 구성 요소 attributes의 command·description·headings(판정용 수치·플래그가 아닌 설명), paths[0]과 같은 name, evidence에서 재구성할 수 있는 axes.source.evidenceIds를 생략하고 `compaction.omitted`에 각각 `descriptive_component_attributes`·`name_equal_first_path`·`axis_source_evidenceIds`를 기록한다. source.evidenceIds는 primaryAxis가 같은 무력화되지 않은 근거 ID들이다. 근거 ID·규칙·실측 수치와 정식 인벤토리·스냅샷은 보존한다. 이 단계로도 넘으면 기존처럼 예산 초과를 보고한다.
+압축은 상한 6,000토큰 아래 10% 여유(5,400토큰)를 목표로 수행한다. 기본 생략 후에도 목표를 넘으면 **fact를 줄이기 전에** 다음 무손실 생략을 적용한다. 근거 ID·규칙·실측 수치와 정식 인벤토리·스냅샷은 보존한다.
+
+- `name_equal_first_path`: paths[0]과 같은 구성 요소 name을 생략한다. 이름은 paths[0]으로 복원한다.
+- `axis_source_evidenceIds`: axes.source.evidenceIds를 생략한다. primaryAxis가 같고 void가 없는 근거 ID를 정렬해 복원한다.
+- `evidence_path_equal_first_component_path`: 근거 path가 해당 componentId 구성 요소의 paths[0]과 같으면 생략한다. path가 없는 근거는 componentId로 찾은 구성 요소의 paths[0]으로 복원한다. 다른 경로는 보존한다.
+- `read_sources_in_components`: status가 read이고 동일 origin의 구성 요소 paths에 있는 출처만 생략한다. **실제 생략한 출처만** `compaction.readSourceRefs`에 `[구성 요소 인덱스, 경로 인덱스]`(0부터 시작)로 기록한다. 각 참조 `[ci, pi]`를 `{origin: components[ci].origin, path: components[ci].paths[pi], status: "read"}`로 복원한다. 목록에 없는 구성 요소 경로(예: 가상 `plugin|harness-lens/SKILL.md`)는 복원하거나 읽지 않는다. 다른 origin·미등록 경로·실패 출처는 보존한다.
+
+무손실 생략 후에도 목표를 넘으면 fact를 축별 상위 N개로 줄인다. 축당 1개로도 넘을 때만 구성 요소 attributes의 command·description·headings(비판정 설명)를 생략하고 `descriptive_component_attributes`를 기록한다.
+
+추가 데이터가 늘어도 여유 목표를 항상 달성할 수 있는 것은 아니다. 최종 6,000토큰을 넘을 때만 기존처럼 예산 초과를 보고한다.
 
 엔진은 서브커맨드마다 `durationMs`(단조 시계)와 `maxRssBytes`(`process.resourceUsage().maxRSS × 1024`)를 `run.json`과 `selfCost.currentRun`에 기록한다. 예산 대비 결과는 `selfCost.budgets`에 넣는다.
 

@@ -63,7 +63,7 @@ test('압축 인벤토리: 예산을 넘으면 근거 fact를 축별 상위 N개
   const { draft } = bigDraft(20, 120);
   const text = compactInventory(draft, []);
   assert.equal(text, compactInventory(draft, []), '같은 입력이면 같은 결과');
-  assert.ok(tokens(text) <= 6000, `${tokens(text)}`);
+  assert.ok(tokens(text) <= 5400, `${tokens(text)}: 10% 여유 목표`);
   const c = JSON.parse(text);
   const N = c.compaction.factLimitPerAxis;
   assert.ok(N >= 1 && N < 20);
@@ -83,6 +83,65 @@ test('압축 인벤토리: 예산을 넘으면 근거 fact를 축별 상위 N개
   const facts = new Map(draft.engine.evidence.map((e) => [e.id, e.fact]));
   full.engine.evidence.forEach((e) => { e.fact = facts.get(e.id); });
   assert.ok(tokens(`${JSON.stringify(full)}\n`) > 6000);
+});
+
+test('N1: 커진 인벤토리의 중복 경로·read 출처를 복원 가능하게 압축해 추가 데이터 여유를 확보한다', () => {
+  const { draft } = bigDraft(20, 120);
+  const comp = draft.engine.inventory.components[0];
+  comp.origin = 'project_shared';
+  comp.paths = ['.claude/skills/project-with-long-name/requirements/SKILL.md', '.claude/helpers/other.mjs'];
+  comp.name = comp.paths[0];
+  draft.engine.inventory.components.push({ id: 'c_plugin', kind: 'harness_lens', origin: 'plugin', paths: ['harness-lens/SKILL.md'], attributes: {} });
+  draft.engine.inventory.sources = [
+    { path: comp.paths[0], origin: comp.origin, status: 'read' },
+    { path: comp.paths[0], origin: 'user', status: 'out_of_scope', reason: 'user_scope_not_collected' },
+    { path: '.claude/helpers/unlisted.mjs', origin: comp.origin, status: 'read' },
+  ];
+  draft.engine.evidence.forEach((e) => { e.path = comp.paths[0]; });
+  draft.engine.evidence[0].path = comp.paths[1];
+  draft.engine.evidence[1].path = '.claude/helpers/unlisted.mjs';
+  draft.engine.sessions.axisMetrics = [{ metricId: 'test_metric', value: 0.4, sampleSize: 24, models: 'm'.repeat(7500) }];
+  const original = structuredClone(draft);
+  const text = compactInventory(draft, []);
+  const compact = JSON.parse(text);
+  assert.ok(compact.compaction.omitted.includes('evidence_path_equal_first_component_path'));
+  assert.equal(text, compactInventory(draft, []), '추가 압축도 결정론적');
+  assert.ok(compact.compaction.omitted.includes('read_sources_in_components'));
+  assert.ok(tokens(text) <= 5400, `${tokens(text)}`);
+  const restored = compact.engine.evidence.map((e) => ({ ...e, path: e.path ?? compact.engine.inventory.components.find((c) => c.id === e.componentId).paths[0] }));
+  assert.deepEqual(restored.map((e) => [e.id, e.path, e.ruleIds]), original.engine.evidence.map((e) => [e.id, e.path, e.ruleIds]));
+  assert.deepEqual(compact.engine.inventory.sources, original.engine.inventory.sources.slice(1), '다른 출처·미등록 경로는 유지');
+  const restoredSources = compact.compaction.readSourceRefs.map(([ci, pi]) => {
+    const c = compact.engine.inventory.components[ci];
+    return { path: c.paths[pi], origin: c.origin, status: 'read' };
+  });
+  assert.deepEqual(restoredSources, original.engine.inventory.sources.slice(0, 1), '실제 생략한 출처만 복원하며 가상 plugin 경로는 포함하지 않는다');
+  assert.deepEqual(compact.engine.sessions.axisMetrics, original.engine.sessions.axisMetrics);
+  assert.deepEqual(draft, original, '추가 압축은 원본 전체를 보존');
+  // 최종 단계에 이미 도달한 뒤에도 300토큰의 데이터 증가를 상한 안에서 수용한다.
+  draft.engine.sessions.axisMetrics.push({ metricId: 'growth', value: 'x'.repeat(1200), sampleSize: 30 });
+  assert.ok(tokens(compactInventory(draft, [])) <= 6000);
+  assert.deepEqual(original.engine.evidence, draft.engine.evidence, '원본 근거 보존');
+});
+
+test('검수 권고: 5,400~6,000토큰 구간은 무손실 중복 제거를 먼저 하여 fact 전부를 유지한다', () => {
+  const { draft } = bigDraft(10, 30);
+  const comp = draft.engine.inventory.components[0];
+  comp.paths = ['.claude/skills/long-project-name/requirements-and-acceptance-checks/SKILL.md'];
+  comp.name = comp.paths[0];
+  draft.engine.evidence.forEach((e) => { e.path = comp.paths[0]; });
+  const base = compactInventory(draft, []);
+  assert.equal(JSON.parse(base).compaction.omittedFacts, 0);
+  draft.meta.padding = 'x'.repeat((5700 - tokens(base)) * 4);
+  const uncompressedSize = tokens(JSON.stringify({ ...JSON.parse(base), meta: draft.meta }));
+  assert.ok(uncompressedSize > 5400 && uncompressedSize < 6000, `${uncompressedSize}`);
+  const text = compactInventory(draft, []);
+  const c = JSON.parse(text);
+  assert.ok(tokens(text) <= 5400, `${tokens(text)}`);
+  assert.equal(c.compaction.omittedFacts, 0);
+  assert.deepEqual(c.engine.evidence.map((e) => e.fact), draft.engine.evidence.map((e) => e.fact));
+  assert.ok(c.compaction.omitted.includes('evidence_path_equal_first_component_path'));
+  assert.ok(!c.compaction.omitted.includes('descriptive_component_attributes'));
 });
 
 test('실측 요약이 커 fact 최소치로도 넘으면 설명 속성·재구성 가능한 중복만 생략한다', () => {
