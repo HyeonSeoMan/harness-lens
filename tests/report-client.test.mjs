@@ -154,19 +154,19 @@ test('B11·F 가능 범위는 어느 값의 범위인지 밝히고, 원시 사�
   assert.doesNotMatch(text, /CI·PR 데이터 필요\(MVP 3\)/);
 });
 
-test('B14·E 세션 실측은 집계 창 둘(토큰 표·축 실측)과 창 길이를 눈에 띄게 적고, 귀속 칸에 구성 기준 시각을 섞지 않는다', () => {
+test('B14·E 전체 스캔 범위와 축 표본을 구분하고, 귀속 칸에 구성 기준 시각을 섞지 않는다', () => {
   const a = example();
   const root = render(a);
   const notice = findAll(root, byClass('windows'))[0];
   assert.ok(notice && byClass('notice')(notice));
-  assert.match(notice.textContent, /① 토큰·위치 표: 2026-10-29 ~ 2026-11-27 \(30일\(날짜 기준\), 귀속 세션 31개\)/);
+  assert.match(notice.textContent, /① 스캔한 세션 기록 범위\(무관·미귀속 포함\): 2026-10-29 ~ 2026-11-27 \(30일\(날짜 기준\)\)/);
   assert.match(notice.textContent, /② 축별 실측 지표.*2026-11-20T09:00:00Z 이후 \(분석 시각까지 7일 0시간, 프로젝트·워커 세션 12개\)/);
   assert.doesNotMatch(notice.textContent, /축 실측 창이 짧아/);
   const attrib = findAll(root, (n) => n.tag === 'div' && n.children[0]?.tag === 'b' && n.children[0].textContent === '귀속')[0];
   assert.doesNotMatch(attrib.textContent, /현재 구성 이후/);
   const rows = tableAfterHeading(root, '축별 실측 지표');
   assert.equal(rows[0][4], '집계 창');
-  assert.ok(rows.slice(1).every((r) => r[4] === '② 현재 구성 이후' || r[4] === '① 누적'));
+  assert.ok(rows.slice(1).every((r) => r[4] === '② 현재 구성 이후' || r[4] === '구성 시각 제한 없음(지표별 표본)'));
 });
 
 test('B14 축 실측 창은 분석 시각까지의 실제 경과로 적고, 7일 미만이면 경계값에서도 흔들릴 수 있다고 알린다', () => {
@@ -200,6 +200,25 @@ test('E 턴별 p90과 축 지표 p90이 다르면 어느 창의 값인지 구분
   const text = allText(render(a));
   assert.match(text, /p90 92,000\(이 창 기준\)/);
   assert.match(text, /요청 입력 크기 p90 168,315은 현재 구성 이후\(② 창\) 요청만 센 값이라 위 p90 92,000과 다릅니다/);
+});
+
+test('전체 스캔 11-02와 귀속 컨텍스트 11-26~27을 토큰 집계 창으로 혼동하지 않는다', () => {
+  for (const configSince of [null, '2026-11-27T00:00:00Z']) {
+    const a = example();
+    const s = a.engine.sessions;
+    s.window = { from: '2026-11-02', to: '2026-11-28', rawLogsFrom: '2026-11-02' };
+    s.coverage.configSince = configSince;
+    s.contextPerTurn.distribution = { from: '2026-11-26', to: '2026-11-27', retentionDays: 90 };
+    s.contextPerTurn.series = ['2026-11-26', '2026-11-27'].map((date) => ({ date, requests: 1, p50: 123, max: 123, source: 'raw' }));
+    const text = allText(render(a));
+    assert.match(text, /스캔한 세션 기록 범위\(무관·미귀속 포함\): 2026-11-02 ~ 2026-11-28/);
+    assert.doesNotMatch(text, /① 토큰·위치 표|토큰 집계 창|①과 같|① 누적/);
+    assert.match(text, /2026-11-26 ~ 2026-11-27, 최근 90일/);
+    assert.match(text, /귀속된 프로젝트·워커 메인 스레드 요청의 기록이 시작된 날부터 관측일만/);
+    assert.match(text, /봇·서브에이전트·미귀속·무관한 프로젝트 기록은 제외/);
+    assert.match(text, /일별 추이는 2일치뿐/);
+    if (!configSince) assert.match(text, /구성 기준 시각 제한 없이 귀속된 프로젝트·워커 표본/);
+  }
 });
 
 test('B13·G 환산 설명은 위치별 표 바로 위에 두고, direct는 \u2018프로젝트 세션\u2019 하나로 부른다', () => {

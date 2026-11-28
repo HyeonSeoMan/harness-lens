@@ -322,7 +322,7 @@ finalize = validate → snapshot → render
 | `project_local` | `CLAUDE.local.md`, `.claude/settings.local.json` | 항상 |
 | `project_shared` | 위 CI 설정, 추적용 `.husky`·`.githooks`의 Git 표준 이벤트 파일, `.pre-commit-config.yaml` | 항상 |
 | `project_local` | `.git/config`의 정적 hooksPath, 해당 경로(기본 `.git/hooks`)의 Git 표준 이벤트 파일 | 루트 안에서만 |
-| `plugin` | 유효 설정 `enabledPlugins`의 플러그인 매니페스트와 그 skills·agents·hooks. 플러그인 캐시 경로에서 읽는다 | 항상(구조만) |
+| `plugin` | 유효 설정 `enabledPlugins`에서 값이 `true`인 이름만 식별한다. 플러그인 캐시·매니페스트·내부 skills·agents·hooks는 읽지 않으며 `contentsCollected: false`로 표시한다 | 항상(이름·활성 여부만) |
 | `user` | `<config-dir>/settings.json`, `<config-dir>/CLAUDE.md`, `<config-dir>/agents/`, `<config-dir>/skills/`, `~/.claude.json`의 `mcpServers`와 현재 프로젝트 항목의 `mcpServers` 키만 | `project_and_user`일 때 |
 | `managed` | OS별 관리형 설정 파일(`managed-settings.json`) | `project_and_user`일 때 |
 | 세션 기록 | `<config-dir>/projects/**/*.jsonl`, `subagents/agent-*.meta.json`의 `agentType` | `--no-sessions`가 아니면(§8) |
@@ -352,7 +352,7 @@ finalize = validate → snapshot → render
 
 ## 8. 세션 기록 집계
 
-근거: `docs/research/02-session-logs.md`. 형식이 공식 계약이 아니므로 파서 규칙에 `sessionParserVersion`(정수 문자열)을 붙인다. `"1"`은 PR #8 초안, `"2"`는 캐시 분할 병합·이벤트 중복 제거·세대 보존·archive 키 보존을 반영한 현재 규칙이다. 버전이 바뀌면 누적 상태를 처음부터 다시 만든다.
+근거: `docs/research/02-session-logs.md`. 형식이 공식 계약이 아니므로 파서 규칙에 `sessionParserVersion`(정수 문자열)을 붙인다. `"1"`은 PR #8 초안이며 현재 `SESSION_PARSER_VERSION`은 `"5"`다. 현재 규칙은 캐시 분할 병합·이벤트 중복 제거·세대 보존·archive 키 보존 등을 반영한다. 버전이 바뀌면 누적 상태를 처음부터 다시 만든다.
 
 ### 8.1 읽는 필드(허용 목록)
 

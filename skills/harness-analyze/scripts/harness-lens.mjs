@@ -2116,20 +2116,20 @@ function reportClient() {
     })[0];
     var axisSessions = sessAxis ? sessAxis.maturity.current : null;
     var winLines = [
-      "① 토큰·위치 표: " + (win ? win.from + " ~ " + win.to + " (" + tokSpan + ", 귀속 세션 " + num(cov.sessionsAttributed) + "개)" : "—"),
-      cov.configSince ? "② 축별 실측 지표(집계 창 ‘현재 구성 이후’): " + cov.configSince + " 이후" + (axisSpanMs === null ? "" : " (분석 시각까지 " + spanText(axisSpanMs) + (axisSessions === null ? "" : ", 프로젝트·워커 세션 " + num(axisSessions) + "개") + ")") : "② 축별 실측 지표: 구성 기준 시각이 없어 ①과 같은 누적 창을 씁니다."
+      "① 스캔한 세션 기록 범위(무관·미귀속 포함): " + (win ? win.from + " ~ " + win.to + " (" + tokSpan + ")" : "—"),
+      cov.configSince ? "② 축별 실측 지표(집계 창 ‘현재 구성 이후’): " + cov.configSince + " 이후" + (axisSpanMs === null ? "" : " (분석 시각까지 " + spanText(axisSpanMs) + (axisSessions === null ? "" : ", 프로젝트·워커 세션 " + num(axisSessions) + "개") + ")") : "② 축별 실측 지표: 구성 기준 시각 제한 없이 귀속된 프로젝트·워커 표본을 씁니다."
     ];
     var shortWin = axisSpanMs !== null && axisSpanMs < 7 * 864e5;
     sSec2.appendChild(el("div", { class: "notice windows" }, [
-      el("b", null, "집계 창이 둘입니다"),
+      el("b", null, "기록 범위와 집계 표본을 구분합니다"),
       el("ul", { class: "tight" }, winLines.map(function(t) {
         return el("li", null, t);
       })),
-      el("span", null, "두 창의 값은 서로 비교하지 마세요." + (shortWin ? " 축 실측 창이 짧아 실측 대역이 흔들릴 수 있습니다." : ""))
+      el("span", null, "①은 토큰 집계 기간이 아닙니다. 토큰 합계는 귀속분만, 미귀속은 별도 행으로 표시하며 컨텍스트 관측 기간은 아래 분포·추이에 따릅니다. 축 지표도 구성 시각과 지표별 표본에 따라 달라 직접 비교할 수 없습니다." + (shortWin ? " 축 실측 창이 짧아 실측 대역이 흔들릴 수 있습니다." : ""))
     ]));
     sSec2.appendChild(el("div", { class: "meta panel" }, [
-      ["토큰 집계 창(①)", win ? win.from + " ~ " + win.to + " · " + tokSpan : "—"],
-      ["축 실측 창(②)", cov.configSince ? cov.configSince + " 이후" + (axisSpanMs === null ? "" : " · 분석 시각까지 " + spanText(axisSpanMs)) : "①과 같음"],
+      ["스캔한 세션 기록 범위(①, 무관·미귀속 포함)", win ? win.from + " ~ " + win.to + " · " + tokSpan : "—"],
+      ["축 실측 창(②)", cov.configSince ? cov.configSince + " 이후" + (axisSpanMs === null ? "" : " · 분석 시각까지 " + spanText(axisSpanMs)) : "구성 시각 제한 없이 귀속된 프로젝트·워커 표본"],
       ["원본 기록 범위", sess.window && sess.window.rawLogsFrom ? sess.window.rawLogsFrom + " 이후(오래된 기록은 Claude Code가 정리)" : "원본 기록 없음(누적값만)"],
       ["Claude Code 버전", sess.clientVersions ? sess.clientVersions.min + " ~ " + sess.clientVersions.max : "미확인"],
       ["읽은 기록", "파일 " + num(cov.filesScanned) + "개 · 줄 " + num(cov.linesRead) + " (건너뜀 " + num(cov.linesSkipped) + ")" + (cov.incremental ? " · 증분" : " · 전체")],
@@ -2185,6 +2185,7 @@ function reportClient() {
     if (cpt) {
       var dist = cpt.distribution;
       sSec2.appendChild(el("h3", null, "턴별 컨텍스트 크기 (최근 " + dist.retentionDays + "일 원시 기록)"));
+      sSec2.appendChild(el("p", { class: "muted" }, "일별 컨텍스트 추이는 이 프로젝트에 귀속된 프로젝트·워커 메인 스레드 요청의 기록이 시작된 날부터 관측일만 표시합니다. 봇·서브에이전트·미귀속·무관한 프로젝트 기록은 제외하므로 전체 스캔 범위보다 짧을 수 있습니다."));
       if (cpt.p50 === null) sSec2.appendChild(el("p", { class: "notice" }, "최근 " + dist.retentionDays + "일 안의 원시 요청이 없어 분포(중앙값·p90·최대)는 미확인입니다. 아래 일별 추이는 접어 둔 누적 요약입니다. 컨텍스트 압축 " + cpt.compactions + "회."));
       else sSec2.appendChild(el("p", null, "메인 스레드 요청 " + num(cpt.requests) + "개(" + dist.from + " ~ " + dist.to + ", 최근 " + dist.retentionDays + "일 원시 기록)의 입력 크기(새 입력+캐시 쓰기+캐시 읽기): 중앙값 " + num(cpt.p50) + " · p90 " + num(cpt.p90) + "(이 창 기준) · 최대 " + num(cpt.max) + " 토큰. 세션 첫 요청 중앙값 " + num(cpt.firstRequestP50) + " · 컨텍스트 압축 " + cpt.compactions + "회."));
       if (cpt.series.some(function(p) {
@@ -2199,7 +2200,7 @@ function reportClient() {
     if (sess.axisMetrics.length) {
       sSec2.appendChild(el("h3", null, "축별 실측 지표"));
       sSec2.appendChild(table(["축", "지표", "값", "표본", "집계 창"], sess.axisMetrics.map(function(m) {
-        return [AXIS[m.axis], METRIC[m.metricId] || m.metricId, metricValue(m), num(m.sampleSize), m.sinceConfig ? "② 현재 구성 이후" : "① 누적"];
+        return [AXIS[m.axis], METRIC[m.metricId] || m.metricId, metricValue(m), num(m.sampleSize), m.sinceConfig ? "② 현재 구성 이후" : "구성 시각 제한 없음(지표별 표본)"];
       })));
     }
     if (sess.toolUsage && sess.toolUsage.length) {
