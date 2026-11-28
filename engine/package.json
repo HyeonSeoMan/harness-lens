@@ -1,6 +1,6 @@
 {
   "name": "harness-lens-engine",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "description": "Harness Lens 결정론적 엔진 소스 (수집·비밀정보 제거·해시·검증·비교·렌더링)",
   "type": "module",

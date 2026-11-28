@@ -54,8 +54,8 @@ function weightedUnits(model, bucket) {
 var unitsToWeighted = (units) => units / REF_INPUT;
 
 // src/constants.mjs
-var ENGINE_VERSION = "0.4.0";
-var VALIDATOR_VERSION = "0.4.0";
+var ENGINE_VERSION = "0.4.1";
+var VALIDATOR_VERSION = "0.4.1";
 var SCHEMA_VERSION = "0.1";
 var RUBRIC_VERSION = "0.4";
 var SESSION_PARSER_VERSION = "5";
@@ -1604,6 +1604,7 @@ function diffAnalyses(prev, cur) {
   const limitations = [];
   let comparability = "full";
   const reasonAll = [];
+  const collectorChanged = prev.meta.engineInfo.version !== cur.meta.engineInfo.version;
   const limit = (code, message) => {
     if (comparability === "full") comparability = "limited";
     limitations.push({ code, message });
@@ -1624,6 +1625,7 @@ function diffAnalyses(prev, cur) {
     }
   }
   const prevComps = new Map(prev.engine.inventory.components.map((c) => [c.id, c]));
+  if (collectorChanged) limit("collector_version_changed", "엔진 버전이 달라 수집 종류·해시 방식의 변경과 대상 파일 변경을 구분할 수 없다. 구성 변경 후보는 미확인으로 표시한다.");
   const curComps = new Map(cur.engine.inventory.components.map((c) => [c.id, c]));
   const prevBlind = blindPaths(prev);
   const curBlind = blindPaths(cur);
@@ -1631,11 +1633,11 @@ function diffAnalyses(prev, cur) {
   const outOfProject = (c) => c.origin === "user" || c.origin === "managed";
   const changes = [];
   const push = (c, change) => changes.push({
-    changeId: changeId(from, to, c.id, change),
+    changeId: changeId(from, to, c.id, collectorChanged ? "unknown" : change),
     componentId: c.id,
     kind: c.kind,
     name: c.name,
-    change,
+    change: collectorChanged ? "unknown" : change,
     paths: c.paths
   });
   for (const c of curComps.values()) {
@@ -1818,7 +1820,9 @@ function reportClient() {
     axisById[a.axis] = a;
   });
   var prevLevel = {};
-  var showPrev = !!(cmp && cmp.comparability !== "none");
+  var showPrev = !!(cmp && cmp.comparability !== "none" && cmp.axisDeltas.some(function(d) {
+    return d.comparable;
+  }));
   if (cmp) cmp.axisDeltas.forEach(function(d) {
     prevLevel[d.axis] = d;
   });
@@ -1983,13 +1987,13 @@ function reportClient() {
   if (showPrev) {
     drawProfile(function(a) {
       var d = prevLevel[a.axis];
-      return d ? d.previousLevel : null;
+      return d && d.comparable ? d.previousLevel : null;
     }, "prev", function() {
       return true;
     });
     eng.axes.forEach(function(a, i) {
       var d = prevLevel[a.axis];
-      if (!d || d.previousLevel === null) return;
+      if (!d || !d.comparable || d.previousLevel === null) return;
       var p = pt(i, d.previousLevel);
       svg.appendChild(s("rect", { class: "pt-prev", x: p[0] - 4, y: p[1] - 4, width: 8, height: 8 }, s("title", null, "이전 " + AXIS[a.axis] + " 수준 " + d.previousLevel)));
     });
@@ -2063,13 +2067,14 @@ function reportClient() {
         return (METRIC[x.metricId] || x.metricId) + " " + metricValue(x);
       }).join(", ") + " · 표본 " + unitName + num(me.sampleSize) + "회" + deltaText(me);
     } else if (m.current === null) mt = "실측까지: " + unitName + m.requirement.required + "회 · " + (BLOCKED[m.blockedReason] || m.blockedReason);
-    else mt = "실측까지: " + unitName + num(m.current) + " / " + num(m.requirement.required) + "회 · " + Math.round(m.progress * 100) + "% (기준은 휴리스틱)";
+    else mt = "실측 표본: " + unitName + num(m.current) + " / " + num(m.requirement.required) + "회 · " + Math.round(m.progress * 100) + "% (기준은 휴리스틱) · " + (BLOCKED[m.blockedReason] || m.blockedReason);
     var d = prevLevel[a.axis];
     var delta = d && d.comparable && d.previousLevel !== d.currentLevel ? " · 이전 " + (d.previousLevel === null ? "?" : d.previousLevel) + " → 현재 " + (d.currentLevel === null ? "?" : d.currentLevel) : "";
     var prog = m.measurable && m.progress !== null ? el("span", { class: "mini", role: "img", "aria-label": "진행도 " + Math.round(m.progress * 100) + "%" }, el("span", { style: "width:" + Math.round(m.progress * 100) + "%" })) : null;
     var shownText = m.state === "measured" ? "실측 대역 " + a.measured.band + " (실측) · " + levelText(a).replace("수준", "구조 수준") : levelText(a) + " (예측)";
     return el("li", null, [el("b", null, AXIS[a.axis]), " ", shownText, " · " + rangeText(a) + delta, el("br"), prog, el("span", { class: "muted" }, mt)]);
   }));
+  radarSec.appendChild(el("p", { class: "muted" }, "처리 속도·자율성의 세션 표본은 메인 스레드 도구 호출이 관측된 프로젝트·워커 세션만 셉니다. 도구 작업 없는 대화도 전체 사용량에는 포함됩니다."));
   radarSec.appendChild(el("div", { class: "radar-wrap" }, [
     el("div", { class: "panel" }, svg),
     el("div", null, [legend, el("p", { class: "notice" }, "레이더의 면적은 종합 점수가 아닙니다. 구조 수준(0~3)은 구성이 주는 지원 수준이며 실제 성능이 아닙니다. 실측 대역(0~3)은 세션 지표를 휴리스틱 구간으로 나눈 값이라, 같은 눈금에 올렸지만 다른 척도입니다. 둘의 차이는 점수 하락·상승이 아닙니다. 축끼리 더하거나 하네스 간 순위를 매기지 마세요."), axisList])
@@ -2146,7 +2151,7 @@ function reportClient() {
         return { name: t[1], value: tk.total[t[0]], cls: "c" + (i + 1) };
       }), "토큰 종류별 비중(토큰 수)"));
       sSec2.appendChild(el("h3", null, "위치별 (환산값 비중)"));
-      sSec2.appendChild(el("p", { class: "muted" }, "환산값: 공개 가격표(" + tk.weighting.pricingTableVersion + ") 기준 " + tk.weighting.referenceModel + " 새 입력 토큰으로 환산한 상대값이며 청구액이 아닙니다. 아래 막대와 표의 ‘환산값’·‘비중’ 칸이 이 단위입니다. 프로젝트 세션은 작업 경로가 이 프로젝트 안인 메인 세션(엔진 값 direct)입니다. 이번 분석 세션은 실행한 곳에 따라 프로젝트 세션·워커 워크트리·오케스트레이터 봇 중 하나로 집계되고, 집계 시점에 기록이 없으면 빠집니다."));
+      sSec2.appendChild(el("p", { class: "muted" }, "환산값: 공개 가격표(" + tk.weighting.pricingTableVersion + ") 기준 " + tk.weighting.referenceModel + " 새 입력 토큰으로 환산한 상대값이며 청구액이 아닙니다. 아래 막대와 표의 ‘환산값’·‘비중’ 칸이 이 단위입니다. 프로젝트 세션은 작업 경로가 이 프로젝트 안인 메인 세션(엔진 값 direct)입니다. 분석 세션도 프로젝트·워커·귀속된 봇에서 실행하고 기록이 있을 때만 포함됩니다. 대상 밖 작업 경로에서 실행한 분석은 이 프로젝트 사용량에 포함되지 않습니다."));
       var locs = tk.byLocation.filter(function(l) {
         return l.sessions > 0 || l.tokens.weighted > 0;
       });
@@ -2441,10 +2446,10 @@ function reportClient() {
     return r.subcommand + " " + r.durationMs + "ms";
   }).join(" · ")));
   var pa = sc.previousAnalysis;
-  if (!pa) sSec.appendChild(el("p", { class: "muted" }, "직전 분석 기록 없음. 다음 분석에서 이번 분석의 토큰·시간을 세션 기록으로 측정합니다."));
+  if (!pa) sSec.appendChild(el("p", { class: "muted" }, "직전 분석 기록 없음. 다음 분석에서 기록이 수집되고 이 프로젝트에 귀속될 때 이번 분석의 토큰·시간을 측정합니다."));
   else {
-    sSec.appendChild(el("p", null, "직전 분석(" + pa.snapshotId + "): 걸린 시간 " + (pa.wallClockMs === null ? "미확인" : Math.round(pa.wallClockMs / 100) / 10 + "초") + " · LLM 토큰 " + (pa.llmTokens ? "새 입력 " + num(pa.llmTokens.freshInput) + " + 캐시 쓰기 " + num(pa.llmTokens.cacheWrite) + " + 출력 " + num(pa.llmTokens.output) + " (캐시 읽기 " + num(pa.llmTokens.cacheRead) + " 별도, 환산 " + num(pa.llmTokens.weighted) + ")" : "미측정(그 구간의 귀속 세션 기록 없음)")));
-    if (pa.llmTokens) sSec.appendChild(el("p", { class: "muted" }, "prepare 시작~finalize 끝 구간에 이 프로젝트에 귀속된 메인 스레드 응답을 모두 셉니다. 같은 시간에 다른 작업을 했다면 함께 들어갑니다. 프로젝트 세션과 워커 워크트리 응답을 합한 값이라 세션 기록 실측의 두 위치 합계와 겹칩니다(따로 빼지 않음). 봇에서 실행한 분석은 여기에 잡히지 않습니다."));
+    sSec.appendChild(el("p", null, "직전 분석(" + pa.snapshotId + "): 걸린 시간 " + (pa.wallClockMs === null ? "미확인" : Math.round(pa.wallClockMs / 100) / 10 + "초") + " · LLM 토큰 " + (pa.llmTokens ? "새 입력 " + num(pa.llmTokens.freshInput) + " + 캐시 쓰기 " + num(pa.llmTokens.cacheWrite) + " + 출력 " + num(pa.llmTokens.output) + " (캐시 읽기 " + num(pa.llmTokens.cacheRead) + " 별도, 환산 " + num(pa.llmTokens.weighted) + ")" : "미측정: 분석 구간에 프로젝트·워커·귀속된 봇의 응답 기록이 없습니다. 대상 밖 작업 경로의 분석은 실행 세션을 식별할 수 없어 측정하지 않습니다. 기록 미수집·보존 기간 경과도 원인일 수 있습니다.")));
+    if (pa.llmTokens) sSec.appendChild(el("p", { class: "muted" }, "prepare 시작~finalize 끝 구간에 이 프로젝트에 귀속된 메인 스레드 응답을 모두 셉니다. 같은 시간에 다른 작업을 했다면 함께 들어갑니다. 프로젝트·워커·귀속된 봇의 응답을 합한 값으로 사용량 집계와 겹칩니다(따로 빼지 않음). 대상 밖 작업 경로의 분석은 실행 세션을 식별할 수 없어 제외합니다."));
   }
   var lSec = section("한계와 미확인 영역", "limitations");
   var lims = eng.limitations.map(function(l) {
@@ -2592,7 +2597,7 @@ function renderReport(analysis) {
 <style>${REPORT_CSS}</style>
 </head>
 <body>
-<main id="app"><p>이 리포트는 JavaScript로 그립니다. 브라우저에서 스크립트를 허용하면 내용을 볼 수 있습니다. 원본 데이터는 같은 폴더의 analysis.json에 있습니다.</p></main>
+<main id="app"><p>이 리포트는 JavaScript로 그립니다. 브라우저에서 스크립트를 허용하면 내용을 볼 수 있습니다. 결과 루트에서 열었다면 원본 데이터는 snapshots/${escapeHtml(safe.meta.snapshotId)}/analysis.json에 있습니다. 스냅샷 폴더에서 열었다면 같은 폴더의 analysis.json을 확인하세요.</p></main>
 <script type="application/json" id="hl-data">${serializeForScript({ analysis: safe })}</script>
 <script>${script}</script>
 </body>
@@ -4105,6 +4110,8 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
     return f.kind === "subagent" && sinceSessions.has((_a = attr.subs.get(fh)) == null ? void 0 : _a.key);
   });
   const n = sinceSessions.size;
+  const activeSessions = new Map([...sinceSessions].filter(([, list]) => list.some((f) => f.c.toolUse > 0)));
+  const activeFiles = [...activeSessions.values()].flat();
   const fsum = (list, k) => list.reduce((s, f) => s + f.c[k], 0);
   const mainTool = fsum(sinceFiles, "toolUse");
   const subTool = fsum(sinceFiles, "subToolUse") + sinceSubs.reduce((s, [, f]) => s + f.c.subToolUse, 0);
@@ -4137,9 +4144,9 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
   push("execution_stability", "tool_error_recovery_rate", mainErr ? r4(fsum(sinceFiles, "recovered") / mainErr) : NaN, "ratio", mainErr);
   push("execution_stability", "hook_errors_per_session", r4(fsum(sinceFiles, "hookErrors") / n), "per_session", n);
   push("execution_stability", "api_retries_per_session", r4(fsum(sinceFiles, "apiRetries") / n), "per_session", n);
-  const durations = sortNum(sinceFiles.flatMap((f) => f.durations));
+  const durations = sortNum(activeFiles.flatMap((f) => f.durations));
   push("throughput", "turn_duration_p50_ms", quantile(durations, 0.5), "ms", durations.length);
-  const sessionDur = sortNum([...sinceSessions.values()].map((list) => {
+  const sessionDur = sortNum([...activeSessions.values()].map((list) => {
     const a = list.map((f) => f.firstTs).filter((x) => x !== null);
     const b = list.map((f) => f.lastTs).filter((x) => x !== null);
     return a.length ? b.reduce((x, y) => Math.max(x, y)) - a.reduce((x, y) => Math.min(x, y)) : null;
@@ -4172,9 +4179,9 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
   push("context_efficiency", "context_p90_window_ratio", sr.length ? r4(quantile(sr, 0.9)) : NaN, "ratio", sr.length);
   push("context_efficiency", "context_p90_tokens", quantile(sc, 0.9), "tokens", sc.length);
   push("context_efficiency", "compactions_per_session", r4(fsum(sinceFiles, "compactions") / n), "per_session", n);
-  const gaps = sortNum(sinceFiles.flatMap((f) => f.openGap !== null ? [...f.gaps, f.openGap] : f.gaps));
+  const gaps = sortNum(activeFiles.flatMap((f) => f.openGap !== null ? [...f.gaps, f.openGap] : f.gaps));
   push("autonomy", "tool_calls_between_prompts_p50", quantile(gaps, 0.5), "count", gaps.length);
-  push("autonomy", "human_prompts_per_session", r4(fsum(sinceFiles, "humanPrompts") / n), "per_session", n);
+  push("autonomy", "human_prompts_per_session", r4(fsum(activeFiles, "humanPrompts") / activeSessions.size), "per_session", activeSessions.size);
   push("verification_gate_strength", "hook_blocks_per_session", r4(fsum(sinceFiles, "hookBlocks") / n), "per_session", n);
   for (const l of ["bot", "worker"]) {
     const x = base.tokens.byLocation.find((b) => b.location === l);
@@ -4182,7 +4189,7 @@ function summarize(state, env, { configSinceMs: configSinceMs2, incremental, sca
   }
   base.axisMetrics = metrics;
   base.toolUsage = [...toolCats.keys()].sort(compareCodeUnits).map((tool) => ({ tool, calls: toolCats.get(tool)[0], errors: toolCats.get(tool)[1] }));
-  info.samples = { sessions: n, tool_calls_all: allTool, tool_calls_non_bash: nbCalls, tool_calls_main: mainTool };
+  info.samples = { sessions: n, active_sessions: activeSessions.size, tool_calls_all: allTool, tool_calls_non_bash: nbCalls, tool_calls_main: mainTool };
   info.sinceSessions = n;
   if (skippedRatio > 0.05) {
     base.status = "partial";
@@ -4200,7 +4207,7 @@ function analysisWindowTokens(state, env, startMs, endMs) {
     const t = rs.t(i);
     if (rs.side(i) || t < startMs || t > endMs) continue;
     const loc = responseLocation(rs, i, attr);
-    if (loc !== "direct" && loc !== "worker") continue;
+    if (loc !== "direct" && loc !== "worker" && loc !== "bot") continue;
     const p = parts.get(rs.model(i)) ?? zero5();
     add5(p, rs.vec(i));
     parts.set(rs.model(i), p);
@@ -4301,11 +4308,11 @@ function computeAxes(col, { scope }) {
     const axisMax = AXIS_MAX[axis];
     const reasons = [];
     let max = level ?? 0;
-    if (scope === "project" && unscopedUser) {
+    if (scope === "project" && unscopedUser && max < axisMax) {
       max = axisMax;
       reasons.push("user_scope_not_collected");
     }
-    if (scope === "project" && unscopedManaged && axis === "safety_boundary") {
+    if (scope === "project" && unscopedManaged && axis === "safety_boundary" && (level ?? 0) < axisMax) {
       max = axisMax;
       reasons.push("managed_settings_not_collected");
     }
@@ -4350,7 +4357,7 @@ function computeMaturity(axes, sessions, info = {}) {
       a.maturity = { state: "predicted", measurable: true, requirement, current: null, progress: null, blockedReason: blocked };
       continue;
     }
-    const current = m.unit === "sessions" ? samples.sessions ?? 0 : a.axis === "execution_stability" ? samples.tool_calls_non_bash ?? 0 : samples.tool_calls_main ?? 0;
+    const current = m.unit === "sessions" ? a.axis === "throughput" ? samples.active_sessions ?? samples.sessions ?? 0 : samples.sessions ?? 0 : a.axis === "execution_stability" ? samples.tool_calls_non_bash ?? 0 : samples.tool_calls_main ?? 0;
     const progress = roundHalfEven(Math.min(1, current / m.required), 4);
     const rule = BAND_RULES[a.axis];
     const main2 = rule && metric(rule.metric);
@@ -5113,7 +5120,7 @@ function compactInventory(draft, kbKeys) {
     });
   };
   const lossless = (compact) => {
-    var _a, _b;
+    var _a, _b, _c, _d;
     const components = compact.engine.inventory.components ?? [];
     for (const c of components) if (c.name === ((_a = c.paths) == null ? void 0 : _a[0])) delete c.name;
     for (const a of compact.engine.axes) delete a.source.evidenceIds;
@@ -5142,6 +5149,12 @@ function compactInventory(draft, kbKeys) {
       "read_sources_in_components"
     );
     if (readSourceRefs.length) compact.compaction.readSourceRefs = readSourceRefs;
+    for (const change of ((_c = compact.engine.comparison) == null ? void 0 : _c.componentChanges) ?? []) {
+      const c = byId.get(change.componentId);
+      if (c && change.name === (c.name ?? ((_d = c.paths) == null ? void 0 : _d[0]))) delete change.name;
+      if (c && JSON.stringify(change.paths) === JSON.stringify(c.paths)) delete change.paths;
+    }
+    compact.compaction.omitted.push("comparison_component_duplicates");
     return compact;
   };
   const target = Math.floor(BUDGETS.llm_input_inventory_tokens.target * 0.9);
@@ -5160,7 +5173,17 @@ function compactInventory(draft, kbKeys) {
     for (const key of ["command", "description", "headings"]) delete c.attributes[key];
   }
   lean.compaction.omitted.push("descriptive_component_attributes");
-  return serializeCompact(lean);
+  text = serializeCompact(lean);
+  if (estimateTokens(text) <= target) return text;
+  for (const key of ["tokens", "contextPerTurn", "toolUsage", "clientVersions", "dedup"]) {
+    if (!(key in lean.engine.sessions)) continue;
+    delete lean.engine.sessions[key];
+    lean.compaction.omitted.push(`sessions.${key}`);
+    text = serializeCompact(lean);
+    if (estimateTokens(text) <= target) return text;
+  }
+  if (estimateTokens(text) <= BUDGETS.llm_input_inventory_tokens.target) return text;
+  throw new EngineError(EXIT.BUDGET, "압축 인벤토리가 6,000토큰 상한을 초과했습니다. 범위를 줄여 다시 준비하세요.");
 }
 function interpretationTemplate(axes, comparison) {
   return {
@@ -5240,6 +5263,10 @@ function cmdPrepare(ctx) {
       ctx.log(`Harness Lens: 이전 스냅샷 ${prevId}과 비교 중…`);
       draft.engine.comparison = ctx.time("diff", () => diffAnalyses(prevSnap, draft));
     }
+    if (prevSnap && !agg.previousTokens) draft.engine.limitations.push({
+      code: "analysis_tokens_unmeasured",
+      message: `직전 분석 토큰 미측정: ${sessions.status === "disabled" ? "세션 집계가 꺼져 있다." : sessions.status === "unavailable" ? "세션 기록을 수집하지 못했다." : "분석 구간에 프로젝트·워커·귀속된 봇의 응답 기록이 없다."} 대상 밖 작업 경로의 분석은 실행 세션을 식별할 수 없어 측정하지 않는다. 기록 미수집·보존 기간 경과도 원인일 수 있다.`
+    });
     const finishSelfCost = (inventoryTokens2) => {
       const prepareMs = Math.round(performance.now() - t0);
       const currentRun = [...ctx.timings, { subcommand: "prepare", durationMs: prepareMs, maxRssBytes: process.resourceUsage().maxRSS * 1024 }];

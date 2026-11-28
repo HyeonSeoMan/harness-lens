@@ -32,6 +32,22 @@ function example() { return JSON.parse(readFileSync(path.join(repoRoot, 'example
 // 루트(#app)는 textContent = ''로 비운 뒤 자식을 붙이므로 자식에서 글자를 모은다.
 const allText = (n) => (n.children.length ? n.children.map(allText).join('') : n.text ?? '');
 const AXIS_KO = { execution_stability: '실행 안정성', autonomy: '자율성' };
+
+test('N4·N5: 충분한 표본이어도 지표 없음 사유를 보이고 비교 불가 이전 축은 레이더에서 뺀다', () => {
+  const a = example();
+  const tp = a.engine.axes.find((x) => x.axis === 'throughput');
+  tp.maturity = { state: 'predicted', measurable: true, requirement: { unit: 'sessions', required: 20 }, current: 28, progress: 1, blockedReason: 'metric_unavailable' };
+  a.engine.comparison = { previousSnapshotId: 'old', comparability: 'limited', limitations: [], componentChanges: [], axisDeltas: a.engine.axes.map((x) => ({ axis: x.axis, previousLevel: 2, currentLevel: x.level, comparable: false, reason: 'rubric_version_changed' })) };
+  let root = render(a);
+  assert.match(allText(root), /세션 28 \/ 20회 · 100%.*대역 지표 없음/);
+  assert.equal(findAll(root, byClass('pt-prev')).length, 0);
+  assert.equal(findAll(root, (n) => n.tag === 'line' && byClass('prev')(n)).length, 0);
+  a.engine.comparison.axisDeltas[0].comparable = true;
+  root = render(a);
+  const radar = findAll(root, (n) => n.tag === 'svg' && byClass('main')(n))[0];
+  assert.equal(findAll(radar, (n) => n.tag === 'rect' && byClass('pt-prev')(n)).length, 1, '부분 비교는 비교 가능한 점만 표시');
+  assert.equal(findAll(radar, (n) => n.tag === 'line' && byClass('prev')(n)).length, 0, '비교 불가 축으로 선을 잇지 않음');
+});
 const byClass = (cls) => (n) => (n.attrs.class || '').split(' ').includes(cls);
 
 function findAll(node, pred, out = []) {
@@ -189,8 +205,9 @@ test('B14 축 실측 창은 분석 시각까지의 실제 경과로 적고, 7일
 test('B13 분석 세션의 집계 위치는 실행 위치에 따라 달라지고, 자기 비용은 프로젝트·워커 합계와 겹친다고 적는다', () => {
   const text = allText(render(example()));
   assert.doesNotMatch(text, /이번 분석을 실행한 세션도 여기에 들어갑니다|프로젝트 세션.에도 들어 있습니다/);
-  assert.match(text, /이번 분석 세션은 실행한 곳에 따라 프로젝트 세션·워커 워크트리·오케스트레이터 봇 중 하나로 집계/);
-  assert.match(text, /프로젝트 세션과 워커 워크트리 응답을 합한 값이라 세션 기록 실측의 두 위치 합계와 겹칩니다/);
+  assert.match(text, /분석 세션도 프로젝트·워커·귀속된 봇에서 실행하고 기록이 있을 때만 포함/);
+  assert.match(text, /프로젝트·워커·귀속된 봇의 응답을 합한 값으로 사용량 집계와 겹칩니다/);
+  assert.match(text, /대상 밖 작업 경로의 분석은 실행 세션을 식별할 수 없어 제외/);
 });
 
 test('E 턴별 p90과 축 지표 p90이 다르면 어느 창의 값인지 구분해 적는다', () => {

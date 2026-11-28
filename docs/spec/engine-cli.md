@@ -502,16 +502,17 @@ finalize = validate → snapshot → render
 
 ## 12. 성능 예산 훅 (PRD §11.1)
 
-압축은 상한 6,000토큰 아래 10% 여유(5,400토큰)를 목표로 수행한다. 기본 생략 후에도 목표를 넘으면 **fact를 줄이기 전에** 다음 무손실 생략을 적용한다. 근거 ID·규칙·실측 수치와 정식 인벤토리·스냅샷은 보존한다.
+압축은 상한 6,000토큰 아래 10% 여유(5,400토큰)를 목표로 수행한다. 기본 생략 후에도 목표를 넘으면 **fact를 줄이기 전에** 다음 무손실 생략을 적용한다. 근거 ID·규칙·축 지표의 실측 수치와 정식 인벤토리·스냅샷은 보존한다.
 
 - `name_equal_first_path`: paths[0]과 같은 구성 요소 name을 생략한다. 이름은 paths[0]으로 복원한다.
 - `axis_source_evidenceIds`: axes.source.evidenceIds를 생략한다. primaryAxis가 같고 void가 없는 근거 ID를 정렬해 복원한다.
 - `evidence_path_equal_first_component_path`: 근거 path가 해당 componentId 구성 요소의 paths[0]과 같으면 생략한다. path가 없는 근거는 componentId로 찾은 구성 요소의 paths[0]으로 복원한다. 다른 경로는 보존한다.
 - `read_sources_in_components`: status가 read이고 동일 origin의 구성 요소 paths에 있는 출처만 생략한다. **실제 생략한 출처만** `compaction.readSourceRefs`에 `[구성 요소 인덱스, 경로 인덱스]`(0부터 시작)로 기록한다. 각 참조 `[ci, pi]`를 `{origin: components[ci].origin, path: components[ci].paths[pi], status: "read"}`로 복원한다. 목록에 없는 구성 요소 경로(예: 가상 `plugin|harness-lens/SKILL.md`)는 복원하거나 읽지 않는다. 다른 origin·미등록 경로·실패 출처는 보존한다.
+- `comparison_component_duplicates`: 변경 항목 name·paths가 현재 componentId의 구성 요소와 같으면 생략한다. 같은 구성 요소에서 복원하며 name이 없으면 paths[0]이다. 삭제된 구성 요소는 값이 남는다.
 
 무손실 생략 후에도 목표를 넘으면 fact를 축별 상위 N개로 줄인다. 축당 1개로도 넘을 때만 구성 요소 attributes의 command·description·headings(비판정 설명)를 생략하고 `descriptive_component_attributes`를 기록한다.
 
-추가 데이터가 늘어도 여유 목표를 항상 달성할 수 있는 것은 아니다. 최종 6,000토큰을 넘을 때만 기존처럼 예산 초과를 보고한다.
+그래도 목표를 넘으면 세션의 참고용 세부 집계 `tokens`·`contextPerTurn`·`toolUsage`·`clientVersions`·`dedup`을 이 순서로 하나씩 생략하고 매 단계 크기를 확인한다. 각 생략은 `compaction.omitted`의 `sessions.<키>`로 알린다. 축 지표는 유지한다. 추가 데이터가 늘어도 여유 목표를 항상 달성할 수 있는 것은 아니다. 마지막에도 상한 6,000토큰을 넘으면 prepare는 종료 코드 60으로 실패하며 초과 인벤토리를 정상 결과로 반환하지 않는다.
 
 엔진은 서브커맨드마다 `durationMs`(단조 시계)와 `maxRssBytes`(`process.resourceUsage().maxRSS × 1024`)를 `run.json`과 `selfCost.currentRun`에 기록한다. 예산 대비 결과는 `selfCost.budgets`에 넣는다.
 
@@ -524,9 +525,11 @@ finalize = validate → snapshot → render
 | `llm_input_inventory_tokens` | 6,000 토큰 | `inventory.compact.json` UTF-8 바이트 ÷ 4(올림, 추정) |
 | `llm_tokens_per_analysis` | 120,000 토큰 | 직전 분석 run의 `prepare` 시작 ~ `finalize` 종료 사이, 귀속된 메인 스레드 응답의 freshInput + cacheWrite + output(캐시 읽기 제외). 다음 분석에서 `previousAnalysis`로 측정한다 |
 
-- 기본 동작은 예산을 넘어도 실패하지 않고 `status: "exceeded"`와 stderr 경고만 남긴다.
+- 압축 인벤토리 상한 외의 예산은 기본 동작에서 실패하지 않고 `status: "exceeded"`와 stderr 경고만 남긴다.
 - `--strict-budget`이면 종료 코드 60이다. CI 성능 테스트가 이 옵션을 쓴다(PRD §11.1 "예산 초과는 테스트에서 실패").
 - 수치는 초기 목표다. 구현 후 실측으로 보정하고, 보정하면 이 표와 PRD를 함께 고친다.
+
+직전 분석 토큰의 귀속 위치는 프로젝트·워커·봇이다. 대상 밖 cwd에서 실행한 분석은 실행 세션을 시간만으로 식별할 수 없어 제외한다. 측정할 응답이 없으면 `previousAnalysis.llmTokens: null`·`method: unknown`과 `analysis_tokens_unmeasured` 한계에 사유를 남긴다. 구간 내 다른 작업이 섞일 수 있어 분석 1회 전용 토큰과 정확히 같다는 보장은 없다.
 
 ## 13. 구현 시 확인할 것
 

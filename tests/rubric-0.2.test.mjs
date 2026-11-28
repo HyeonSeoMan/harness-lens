@@ -34,7 +34,7 @@ test('수집하지 않은 사용자 설정 파일이 실제로 있으면 범위�
   const d = draftOf(p, { configDir });
   for (const a of d.engine.axes) {
     assert.equal(a.range.max, a.axis === 'throughput' ? 2 : 3, a.axis);
-    assert.ok(a.range.reasonCodes.includes('user_scope_not_collected'), a.axis);
+    assert.equal(a.range.reasonCodes.includes('user_scope_not_collected'), a.level < a.range.max, a.axis);
   }
   const src = d.engine.inventory.sources.find((s) => s.origin === 'user');
   assert.deepEqual([src.status, src.reason], ['out_of_scope', 'user_scope_not_collected']);

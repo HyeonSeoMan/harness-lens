@@ -163,3 +163,22 @@ test('실측 요약이 커 fact 최소치로도 넘으면 설명 속성·재구�
   assert.deepEqual(compact.engine.evidence.map((e) => e.id), original.engine.evidence.map((e) => e.id));
   assert.deepEqual(draft, original, '정식 인벤토리·스냅샷은 바꾸지 않는다');
 });
+
+test('N1: 비교 중복·세션 참고 집계를 줄인 마지막 단계도 예산 검사, 필수 데이터는 보존', () => {
+  const { draft } = bigDraft(4, 40);
+  const c = draft.engine.inventory.components[0];
+  c.paths = ['CLAUDE.md']; c.name = 'CLAUDE.md';
+  draft.engine.comparison = { componentChanges: [{ componentId: c.id, changeId: 'ch_1', change: 'modified', name: c.name, paths: c.paths }] };
+  draft.engine.sessions.tokens = { total: { freshInput: 7 }, byLocation: 'x'.repeat(30000) };
+  draft.engine.sessions.contextPerTurn = { description: 'x'.repeat(30000) };
+  draft.engine.sessions.axisMetrics = [{ metricId: 'real_metric', value: 0.4, sampleSize: 24 }];
+  const text = compactInventory(draft, []);
+  const compact = JSON.parse(text);
+  assert.ok(tokens(text) <= 6000);
+  assert.ok(compact.compaction.omitted.includes('sessions.tokens'));
+  assert.ok(compact.compaction.omitted.includes('sessions.contextPerTurn'));
+  assert.deepEqual(compact.engine.sessions.axisMetrics, draft.engine.sessions.axisMetrics);
+  assert.deepEqual(compact.engine.comparison.componentChanges[0], { componentId: c.id, changeId: 'ch_1', change: 'modified' });
+  draft.meta.irreducible = 'x'.repeat(30000);
+  assert.throws(() => compactInventory(draft, []), /6,000토큰 상한/);
+});

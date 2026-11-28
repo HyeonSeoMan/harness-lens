@@ -85,7 +85,7 @@ export function reportClient() {
   var axisById = {};
   eng.axes.forEach(function (a) { axisById[a.axis] = a; });
   var prevLevel = {};
-  var showPrev = !!(cmp && cmp.comparability !== 'none');
+  var showPrev = !!(cmp && cmp.comparability !== 'none' && cmp.axisDeltas.some(function (d) { return d.comparable; }));
   if (cmp) cmp.axisDeltas.forEach(function (d) { prevLevel[d.axis] = d; });
 
   function el(tag, attrs, children) {
@@ -224,10 +224,10 @@ export function reportClient() {
     });
   }
   if (showPrev) {
-    drawProfile(function (a) { var d = prevLevel[a.axis]; return d ? d.previousLevel : null; }, 'prev', function () { return true; });
+    drawProfile(function (a) { var d = prevLevel[a.axis]; return d && d.comparable ? d.previousLevel : null; }, 'prev', function () { return true; });
     eng.axes.forEach(function (a, i) {
       var d = prevLevel[a.axis];
-      if (!d || d.previousLevel === null) return;
+      if (!d || !d.comparable || d.previousLevel === null) return;
       var p = pt(i, d.previousLevel);
       svg.appendChild(s('rect', { class: 'pt-prev', x: p[0] - 4, y: p[1] - 4, width: 8, height: 8 }, s('title', null, '이전 ' + AXIS[a.axis] + ' 수준 ' + d.previousLevel)));
     });
@@ -280,13 +280,14 @@ export function reportClient() {
       mt = '실측 대역 ' + me.band + ' (' + me.bandRuleId + ', 휴리스틱) · ' + me.metrics.map(function (x) { return (METRIC[x.metricId] || x.metricId) + ' ' + metricValue(x); }).join(', ')
         + ' · 표본 ' + unitName + num(me.sampleSize) + '회' + deltaText(me);
     } else if (m.current === null) mt = '실측까지: ' + unitName + m.requirement.required + '회 · ' + (BLOCKED[m.blockedReason] || m.blockedReason);
-    else mt = '실측까지: ' + unitName + num(m.current) + ' / ' + num(m.requirement.required) + '회 · ' + Math.round(m.progress * 100) + '% (기준은 휴리스틱)';
+    else mt = '실측 표본: ' + unitName + num(m.current) + ' / ' + num(m.requirement.required) + '회 · ' + Math.round(m.progress * 100) + '% (기준은 휴리스틱) · ' + (BLOCKED[m.blockedReason] || m.blockedReason);
     var d = prevLevel[a.axis];
     var delta = d && d.comparable && d.previousLevel !== d.currentLevel ? ' · 이전 ' + (d.previousLevel === null ? '?' : d.previousLevel) + ' → 현재 ' + (d.currentLevel === null ? '?' : d.currentLevel) : '';
     var prog = m.measurable && m.progress !== null ? el('span', { class: 'mini', role: 'img', 'aria-label': '진행도 ' + Math.round(m.progress * 100) + '%' }, el('span', { style: 'width:' + Math.round(m.progress * 100) + '%' })) : null;
     var shownText = m.state === 'measured' ? '실측 대역 ' + a.measured.band + ' (실측) · ' + levelText(a).replace('수준', '구조 수준') : levelText(a) + ' (예측)';
     return el('li', null, [el('b', null, AXIS[a.axis]), ' ', shownText, ' · ' + rangeText(a) + delta, el('br'), prog, el('span', { class: 'muted' }, mt)]);
   }));
+  radarSec.appendChild(el('p', { class: 'muted' }, '처리 속도·자율성의 세션 표본은 메인 스레드 도구 호출이 관측된 프로젝트·워커 세션만 셉니다. 도구 작업 없는 대화도 전체 사용량에는 포함됩니다.'));
   radarSec.appendChild(el('div', { class: 'radar-wrap' }, [
     el('div', { class: 'panel' }, svg),
     el('div', null, [legend, el('p', { class: 'notice' }, '레이더의 면적은 종합 점수가 아닙니다. 구조 수준(0~3)은 구성이 주는 지원 수준이며 실제 성능이 아닙니다. 실측 대역(0~3)은 세션 지표를 휴리스틱 구간으로 나눈 값이라, 같은 눈금에 올렸지만 다른 척도입니다. 둘의 차이는 점수 하락·상승이 아닙니다. 축끼리 더하거나 하네스 간 순위를 매기지 마세요.'), axisList]),
@@ -351,7 +352,7 @@ export function reportClient() {
       sSec2.appendChild(el('h3', null, '토큰 종류별'));
       sSec2.appendChild(shareBar(TOKTYPE.map(function (t, i) { return { name: t[1], value: tk.total[t[0]], cls: 'c' + (i + 1) }; }), '토큰 종류별 비중(토큰 수)'));
       sSec2.appendChild(el('h3', null, '위치별 (환산값 비중)'));
-      sSec2.appendChild(el('p', { class: 'muted' }, '환산값: 공개 가격표(' + tk.weighting.pricingTableVersion + ') 기준 ' + tk.weighting.referenceModel + ' 새 입력 토큰으로 환산한 상대값이며 청구액이 아닙니다. 아래 막대와 표의 ‘환산값’·‘비중’ 칸이 이 단위입니다. 프로젝트 세션은 작업 경로가 이 프로젝트 안인 메인 세션(엔진 값 direct)입니다. 이번 분석 세션은 실행한 곳에 따라 프로젝트 세션·워커 워크트리·오케스트레이터 봇 중 하나로 집계되고, 집계 시점에 기록이 없으면 빠집니다.'));
+      sSec2.appendChild(el('p', { class: 'muted' }, '환산값: 공개 가격표(' + tk.weighting.pricingTableVersion + ') 기준 ' + tk.weighting.referenceModel + ' 새 입력 토큰으로 환산한 상대값이며 청구액이 아닙니다. 아래 막대와 표의 ‘환산값’·‘비중’ 칸이 이 단위입니다. 프로젝트 세션은 작업 경로가 이 프로젝트 안인 메인 세션(엔진 값 direct)입니다. 분석 세션도 프로젝트·워커·귀속된 봇에서 실행하고 기록이 있을 때만 포함됩니다. 대상 밖 작업 경로에서 실행한 분석은 이 프로젝트 사용량에 포함되지 않습니다.'));
       var locs = tk.byLocation.filter(function (l) { return l.sessions > 0 || l.tokens.weighted > 0; });
       sSec2.appendChild(shareBar(tk.byLocation.map(function (l, i) { return { name: LOC[l.location], value: l.tokens.weighted, cls: 'c' + (i + 1) }; }), '위치별 환산값 비중'));
       var bot = tk.byLocation.filter(function (l) { return l.location === 'bot'; })[0];
@@ -579,12 +580,12 @@ export function reportClient() {
   })));
   if (sc.currentRun.length) sSec.appendChild(el('p', { class: 'muted' }, '이번 분석 엔진 실행: ' + sc.currentRun.map(function (r) { return r.subcommand + ' ' + r.durationMs + 'ms'; }).join(' · ')));
   var pa = sc.previousAnalysis;
-  if (!pa) sSec.appendChild(el('p', { class: 'muted' }, '직전 분석 기록 없음. 다음 분석에서 이번 분석의 토큰·시간을 세션 기록으로 측정합니다.'));
+  if (!pa) sSec.appendChild(el('p', { class: 'muted' }, '직전 분석 기록 없음. 다음 분석에서 기록이 수집되고 이 프로젝트에 귀속될 때 이번 분석의 토큰·시간을 측정합니다.'));
   else {
     sSec.appendChild(el('p', null, '직전 분석(' + pa.snapshotId + '): 걸린 시간 ' + (pa.wallClockMs === null ? '미확인' : (Math.round(pa.wallClockMs / 100) / 10) + '초') + ' · LLM 토큰 ' + (pa.llmTokens
       ? '새 입력 ' + num(pa.llmTokens.freshInput) + ' + 캐시 쓰기 ' + num(pa.llmTokens.cacheWrite) + ' + 출력 ' + num(pa.llmTokens.output) + ' (캐시 읽기 ' + num(pa.llmTokens.cacheRead) + ' 별도, 환산 ' + num(pa.llmTokens.weighted) + ')'
-      : '미측정(그 구간의 귀속 세션 기록 없음)')));
-    if (pa.llmTokens) sSec.appendChild(el('p', { class: 'muted' }, 'prepare 시작~finalize 끝 구간에 이 프로젝트에 귀속된 메인 스레드 응답을 모두 셉니다. 같은 시간에 다른 작업을 했다면 함께 들어갑니다. 프로젝트 세션과 워커 워크트리 응답을 합한 값이라 세션 기록 실측의 두 위치 합계와 겹칩니다(따로 빼지 않음). 봇에서 실행한 분석은 여기에 잡히지 않습니다.'));
+      : '미측정: 분석 구간에 프로젝트·워커·귀속된 봇의 응답 기록이 없습니다. 대상 밖 작업 경로의 분석은 실행 세션을 식별할 수 없어 측정하지 않습니다. 기록 미수집·보존 기간 경과도 원인일 수 있습니다.')));
+    if (pa.llmTokens) sSec.appendChild(el('p', { class: 'muted' }, 'prepare 시작~finalize 끝 구간에 이 프로젝트에 귀속된 메인 스레드 응답을 모두 셉니다. 같은 시간에 다른 작업을 했다면 함께 들어갑니다. 프로젝트·워커·귀속된 봇의 응답을 합한 값으로 사용량 집계와 겹칩니다(따로 빼지 않음). 대상 밖 작업 경로의 분석은 실행 세션을 식별할 수 없어 제외합니다.'));
   }
 
   // ---------- 한계 ----------

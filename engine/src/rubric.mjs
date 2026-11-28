@@ -97,8 +97,8 @@ export function computeAxes(col, { scope }) {
     const reasons = [];
     let max = level ?? 0;
     // 0.2: 수집하지 않은 사용자·관리형 설정 파일이 실제로 있을 때만 넓힌다. 없으면 프로젝트 근거대로 좁게 둔다.
-    if (scope === 'project' && unscopedUser) { max = axisMax; reasons.push('user_scope_not_collected'); }
-    if (scope === 'project' && unscopedManaged && axis === 'safety_boundary') { max = axisMax; reasons.push('managed_settings_not_collected'); }
+    if (scope === 'project' && unscopedUser && max < axisMax) { max = axisMax; reasons.push('user_scope_not_collected'); }
+    if (scope === 'project' && unscopedManaged && axis === 'safety_boundary' && (level ?? 0) < axisMax) { max = axisMax; reasons.push('managed_settings_not_collected'); }
     if (unreadable) { max = axisMax; reasons.push('source_unreadable'); }
     if (outOfScope) { max = axisMax; reasons.push('source_out_of_scope'); }
     if (levelStatus === 'unknown') max = axisMax;
@@ -137,7 +137,7 @@ export function computeMaturity(axes, sessions, info = {}) {
       continue;
     }
     // ES(0.3)는 대역 지표가 Bash 제외 오류율이라 표본도 Bash를 뺀 도구 호출(서브에이전트 포함)이다.
-    const current = m.unit === 'sessions' ? samples.sessions ?? 0 : a.axis === 'execution_stability' ? samples.tool_calls_non_bash ?? 0 : samples.tool_calls_main ?? 0;
+    const current = m.unit === 'sessions' ? (a.axis === 'throughput' ? samples.active_sessions ?? samples.sessions ?? 0 : samples.sessions ?? 0) : a.axis === 'execution_stability' ? samples.tool_calls_non_bash ?? 0 : samples.tool_calls_main ?? 0;
     const progress = roundHalfEven(Math.min(1, current / m.required), 4);
     const rule = BAND_RULES[a.axis];
     const main = rule && metric(rule.metric);
