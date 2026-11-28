@@ -1,14 +1,10 @@
-<!--
-  결정 필요(오너): 프로젝트 이름. 현재 "Harness Lens"는 가칭이다(PRD §14.2).
-  이름이 바뀌면 제목, 설치 명령의 <owner>/<repo>, 플러그인·마켓플레이스 이름을 함께 고친다.
--->
-# Harness Lens (가칭)
+# Harness Lens
 
 > 하네스를 바꾸기 전에, 무엇을 얻고 무엇을 잃는지 근거와 함께 본다.
 
 Harness Lens는 AI 코딩 에이전트 하네스(Hooks, Skills, MCP, Subagents, 권한 규칙, CI·Git Hook 설정 등)의 구성과 변경을 **읽기 전용**으로 분석해, 기대 효과와 잠재적 손실을 근거와 함께 로컬 HTML 리포트로 보여주는 오픈소스 Agent Skill이다. 최적화 방향은 사람이 결정하고, Harness Lens는 판단 근거를 제공한다.
 
-**English summary.** Harness Lens is an open-source Agent Skill for Claude Code that reads your agent harness (hooks, skills, MCP servers, subagents, permission rules, CI and Git hook configs) without modifying it, and produces an offline HTML report of the trade-offs in your current setup and in each change, with evidence for every claim. It computes no overall score, runs no background process, sends nothing to any server of its own, and aggregates local Claude Code session logs as numbers only. Status: alpha, Claude Code only, Korean UI.
+**English summary.** Harness Lens is an open-source Agent Skill for Claude Code that reads your agent harness (hooks, skills, MCP servers, subagents, permission rules, CI and Git hook configs) without modifying it, and produces an offline HTML report of the trade-offs in your current setup and in each change, with evidence for every claim. It computes no overall score, runs no background process, sends nothing to any server of its own, and aggregates local Claude Code session logs as numbers only. Note that the interpreting LLM is your own agent's model: if it is a cloud model, the compact inventory and any original config files it opens during interpretation reach that provider. Status: alpha, Claude Code only, Korean UI, MIT License.
 
 ## 상태
 
@@ -26,7 +22,7 @@ Harness Lens는 AI 코딩 에이전트 하네스(Hooks, Skills, MCP, Subagents, 
 | 원칙 | 의미 |
 |---|---|
 | 임의 점수 금지 | 0~100 성능 점수, 단일 종합 점수, 하네스 간 순위를 만들지 않는다. 레이더 면적은 종합 점수가 아니다. 설정이 많다는 이유만으로 수준을 올리지 않는다(서술만으로는 최대 1). |
-| Read Only | 분석 대상 파일과 설정을 바꾸지 않는다. 쓰기는 `<프로젝트>/.harness-lens/`에만 하고, 첫 실행 때 그 안에 `.gitignore`(`*`)를 만들어 Git 추적에서 뺀다. Hook·MCP 서버·스크립트·`git`을 실행하지 않는다. |
+| Read Only | 분석 대상 파일과 설정을 바꾸지 않는다. 쓰기는 결과 디렉터리에만 한다. 기본값은 `<프로젝트>/.harness-lens/`이고, 사용자가 요청하면 `--out`으로 다른 위치(프로젝트 밖 포함)를 쓸 수 있다. 첫 실행 때 결과 디렉터리에 `.gitignore`(`*`)를 만든다. Hook·MCP 서버·스크립트·`git`을 실행하지 않는다. |
 | Local First | 엔진은 네트워크에 접속하지 않고 텔레메트리가 없다. 리포트는 외부 CDN·로그인·서버 없이 브라우저에서 열린다. |
 | 상주 프로세스 없음 | 백그라운드 프로세스와 상시 Hook이 0개다. 분석을 요청할 때만 실행된다. 평소 세션에는 Skill 이름·설명(목표 약 100토큰 이하)만 올라간다. |
 | 자동 최적화 없음 | 하네스를 자동으로 고치거나 다음 변경을 결정하지 않는다. |
@@ -92,7 +88,7 @@ Skill은 다음 순서로 진행한다.
 
 ### 재분석
 
-하네스를 바꾼 뒤(예: MCP 추가, Hook 수정, 리뷰 에이전트 제거) 같은 요청을 다시 하면 된다. 엔진이 직전 호환 스냅샷과 비교해 리포트에 **변경 내역**과 **변경 트레이드오프**를 더한다. 분석 기준(스키마·루브릭) 버전이 다른 스냅샷과는 비교 제한을 표시한다. 세션 기록은 증분으로 읽어 재분석이 빠르다(목표 5초 이내).
+하네스를 바꾼 뒤(예: MCP 추가, Hook 수정, 리뷰 에이전트 제거) 같은 요청을 다시 하면 된다. 엔진이 직전 호환 스냅샷과 비교해 리포트에 **변경 내역**과 **변경 트레이드오프**를 더한다. 분석 기준(스키마·루브릭) 버전이 다른 스냅샷과는 비교 제한을 표시한다. 세션 기록은 증분으로 읽는다. 재분석의 **엔진 실행 시간** 목표는 5초 이내이며, LLM이 해석을 쓰는 시간은 여기에 들어가지 않는다.
 
 검증에 실패한 결과는 `.harness-lens/runs/`에만 남고 스냅샷이 되지 않는다. 기존 정상 결과는 그대로다.
 
@@ -102,10 +98,14 @@ Skill은 다음 순서로 진행한다.
 
 ```sh
 E=skills/harness-analyze/scripts/harness-lens.mjs
-node $E prepare --project <프로젝트> --json     # 수집·수준 계산·비교 → runs/<runId>/
-# LLM(또는 사람)이 runs/<runId>/interpretation.json 작성 (예시: examples/interpretations/)
-node $E finalize --project <프로젝트> --run <runId> --json   # 검증 → 스냅샷 → report.html
+node $E prepare --project <프로젝트> --json
+# → runId와 interpretationPath(기본 <프로젝트>/.harness-lens/runs/<runId>/interpretation.json)를 돌려준다
+# 그 interpretationPath에 해석을 쓴다 (형식 예시: examples/interpretations/)
+node $E finalize --project <프로젝트> --run <runId> --agent claude-code --json   # 검증 → 스냅샷 → report.html
 ```
+
+- `--agent`는 해석을 쓴 주체로 `meta.analyzer.agent`에 기록된다. 빼면 `unknown`으로 남는다. Claude Code가 아니라 사람이나 다른 도구가 해석을 썼다면 실제 주체를 적는다.
+- `--out`으로 결과 디렉터리를 바꿨다면 `prepare`와 `finalize`에 같은 값을 준다.
 
 서브커맨드·옵션·종료 코드·`.harness-lens/` 구조는 [엔진 CLI 명세](./docs/spec/engine-cli.md)에 있다.
 
@@ -128,7 +128,9 @@ node $E finalize --project <프로젝트> --run <runId> --json   # 검증 → �
 
 상태는 색만이 아니라 텍스트와 선 스타일로 구분한다. 다크 모드를 지원한다.
 
-<!-- 자리표시: 공개 전 실제 프로젝트(비밀정보 없는) 리포트 스크린샷으로 교체할지 결정 필요. 아래는 저장소 픽스처로 만든 화면이다. -->
+<!-- 자리표시: 샘플 프로젝트 화면 예정. 자체 샘플 프로젝트로 새 스크린샷을 만들어 아래 이미지를 교체한다. -->
+
+> 샘플 프로젝트 화면 예정. 아래는 임시로 저장소 픽스처로 만든 화면이다.
 
 | 첫 분석 | 재분석과 변경 비교 |
 |---|---|
@@ -144,8 +146,8 @@ node $E finalize --project <프로젝트> --run <runId> --json   # 검증 → �
 
 리포트의 모든 축은 둘 중 하나다.
 
-- **예측(구조 수준)**: 설정 파일에서 관찰한 사실을 루브릭에 대어 계산한 0~3 순서형 수준이다. 0 미구성 / 1 서술(지침 문장) / 2 절차(Skill·Agent·CI·Git Hook 명령) / 3 하네스 강제(차단 Hook, 권한 규칙, 관리형 설정, sandbox 등). **실제 성능 측정이 아니다.** 레이더에는 점선과 빈 원으로 그린다.
-- **실측(대역)**: Claude Code 세션 기록에서 집계한 지표를 0~3 대역으로 옮긴 값이다. 실선과 채운 점으로 그리고, 직전 예측을 흐리게 겹쳐 차이를 보여준다. 변은 양 끝 축이 모두 실측일 때만 실선이다.
+- **예측(구조 수준)**: 설정 파일에서 관찰한 사실을 루브릭에 대어 계산한 0~3 순서형 수준이다. 0 미구성 / 1 서술(지침 문장) / 2 절차(Skill·Agent·CI·Git Hook 명령) / 3 하네스 강제(차단 Hook, 활성 Git Hook의 실패 종료 표지, 권한 규칙, 관리형 설정, sandbox 등). 축별 예외가 있다: 안전 경계는 Hook·권한 규칙이 2이고 sandbox·관리형 설정·`disableBypassPermissionsMode`만 3이며, 처리 속도는 3을 비워 두고 0~2만 쓴다. **실제 성능 측정이 아니다.** 레이더에는 점선과 빈 원으로 그린다.
+- **실측(대역)**: Claude Code 세션 기록에서 집계한 지표를 0~3 대역으로 옮긴 값이다. 실선과 채운 점으로 그리고, 같은 구성에서 계산한 구조 수준을 흐리게 겹쳐 차이를 보여준다(과거 예측의 적중 여부를 보여주는 그래프가 아니다. 이전 스냅샷의 수준은 별도 표지로 그린다). 변은 양 끝 축이 모두 실측일 때만 실선이다.
 
 현재 구성이 시작된 뒤(`configSince`)의 표본이 요구량에 닿으면 실측으로 바뀐다. 예측 축에는 "실측까지: 세션 20회 · 40%"처럼 필요한 데이터와 진행도가 붙는다.
 
@@ -169,15 +171,19 @@ node $E finalize --project <프로젝트> --run <runId> --json   # 검증 → �
 - **세션 기록**(`$CLAUDE_CONFIG_DIR/projects` 또는 `~/.claude/projects`)은 엔진이 로컬에서 허용 목록 필드의 **숫자만** 집계한다. 대화·코드 원문은 스냅샷·리포트·LLM 입력 어디에도 들어가지 않는다. 집계값은 `.harness-lens/sessions/`에 누적돼 원본 기록이 정리된 뒤에도 추이를 유지한다.
 - **세션 귀속**: 기록의 `cwd`로 이 프로젝트(워크트리 포함)의 세션만 합산한다. 다른 프로젝트의 사용량은 리포트에 싣지 않고 제외한 세션 수만 보고한다. 귀속이 불확실한 세션은 "미귀속"으로 따로 표시한다. 경로는 출력에 해시로만 남긴다.
 - **비밀정보 제거**: API 키, 토큰, 환경 변수 값, MCP 인증 헤더 등은 수집 직후와 출력 직전 두 번 제거한다. 제거한 종류와 개수만 남기고 값은 남기지 않는다.
-- **자체 전송 없음**: Harness Lens는 자체 서버가 없고 엔진은 네트워크에 접속하지 않는다. 단, 분석 해석은 **사용자 에이전트의 LLM**이 하므로, 클라우드 LLM을 쓰면 압축 인벤토리(구조 사실·짧은 발췌·집계 수치, 비밀정보 제거 후)가 그 제공자에게 전달된다. 첫 분석 때 이 사실을 한 번 알린다. LLM 사용량 한도와 비용은 사용자의 기존 서비스 기준이 적용된다.
+- **자체 전송 없음**: Harness Lens는 자체 서버가 없고 엔진은 네트워크에 접속하지 않는다. 단, 해석은 **사용자 에이전트의 LLM**이 쓴다. 클라우드 LLM을 쓰면 다음이 그 제공자(사용자의 기존 LLM 서비스)에게 전달된다. 첫 분석 때 이 사실을 한 번 알린다. LLM 사용량 한도와 비용은 사용자의 기존 서비스 기준이 적용된다.
+  - **압축 인벤토리**: 구조 사실·짧은 발췌·집계 수치. 엔진이 비밀정보를 제거한 뒤 만든다.
+  - **LLM이 직접 여는 원본 설정 파일**: 분석 프로토콜은 finding 하나를 쓰는 데 꼭 필요할 때 LLM이 원본 파일을 열도록 허용한다. 수집 때 읽은(`status: "read"`) 경로만, 한 분석에 최대 5개까지이고, 민감 파일로 건너뛴 경로(`skipped_sensitive`)와 범위 밖 경로는 열지 않는다. 이 경우 LLM은 엔진을 거치지 않고 파일을 그대로 읽으므로 **엔진의 비밀정보 제거가 적용되지 않는다.** 예를 들어 `.claude/settings.json`이나 `.mcp.json`의 `env`·인증 헤더 값이 파일에 그대로 적혀 있으면 그 원문이 모델에 전달될 수 있다. 비밀값은 설정 파일에 직접 쓰지 말고 환경 변수 참조로 두기를 권한다.
+  - 세션 기록 원문은 여기에 해당하지 않는다. 프로토콜은 LLM이 세션 기록 파일을 여는 것을 금지하고 엔진 집계만 쓴다.
 - **프롬프트 인젝션 방어**: 분석 대상 파일의 문장은 데이터로만 다룬다. 분석 도구를 겨냥한 지시문을 발견하면 따르지 않고 finding으로 기록한다.
-- 결과를 공유하려면 `.harness-lens/.gitignore`를 직접 지운다. 그 전까지 결과는 Git에 올라가지 않는다.
+- 결과 디렉터리의 `.gitignore`(`*`)는 새 결과 파일이 일반적인 `git add`에 섞이지 않게 막는다. 이미 Git이 추적 중인 파일이나 `git add -f`로 강제 추가한 파일은 막지 못한다. 결과를 공유하려면 이 `.gitignore`를 직접 지운다.
 
 ## 한계
 
-- **MVP 1 범위**다. 수집 대상은 프로젝트 지침(`CLAUDE.md`·`@import`), Claude Code 설정·Hooks·Skills·Agents·MCP, 활성 플러그인 구조, CI 설정(GitHub Actions·GitLab CI·CircleCI·Azure Pipelines·Jenkinsfile), Git hooks(`.husky/`·`.githooks/`·`.git/hooks/`·`.pre-commit-config.yaml`)다. 상세 경로와 읽기 경계는 [엔진 CLI 명세 §6](./docs/spec/engine-cli.md#6-수집-대상과-읽기-경계).
+- **MVP 1 범위**다. 수집 대상은 프로젝트 지침(`CLAUDE.md`·`@import`), Claude Code 설정·Hooks·Skills·Agents·MCP, CI 설정(GitHub Actions·GitLab CI·CircleCI·Azure Pipelines·Jenkinsfile), Git hooks(`.husky/`·`.githooks/`·`.git/hooks/`·`.pre-commit-config.yaml`)다. 상세 경로와 읽기 경계는 [엔진 CLI 명세 §6](./docs/spec/engine-cli.md#6-수집-대상과-읽기-경계).
+- **플러그인은 이름만 식별한다.** 설정의 `enabledPlugins`에서 활성화된 플러그인 이름만 구성 요소로 남기고, 플러그인 매니페스트·skills·agents·hooks 등 내부 구조는 읽지 않는다. 리포트 한계에 `plugin_contents_not_collected`로 표시된다. 따라서 플러그인이 더하는 Hook·Skill은 축 수준에 반영되지 않는다.
 - **Claude Code만 지원**한다. Codex 등 다른 에이전트 어댑터는 MVP 2다.
-- **Windows 실기기 미확인.** 엔진은 win32를 허용하지만 실기기에서 검증하지 않았다. Windows에서는 Git Hook 실행 비트를 추정하지 않으며(`git_hook_executable_unconfirmed`), `npx skills`의 symlink 동작도 확인하지 않았다. CI는 Linux(Node 20·22)에서만 돈다.
+- **Windows 실기기 미확인.** 엔진은 win32를 허용하지만 실기기에서 검증하지 않았다. Windows에서는 Git Hook 실행 비트를 추정하지 않으며(`git_hook_executable_unconfirmed`), `npx skills`의 symlink 동작도 확인하지 않았다. CI는 Linux(Node 20·22)와 macOS·Windows(Node 22)에서 테스트를 돌리지만, 이것은 CI 러너에서의 테스트이며 실사용 환경 검증을 대신하지 않는다.
 - 정적 분석은 설정이 실제로 실행될 때의 효과를 보장하지 않는다. 차단 Hook 판정도 문자열 탐지다.
 - 세션 기록 형식은 Claude Code의 공식 계약이 아니다. 형식이 바뀌면 일부 지표가 빠지고 사유가 표시된다.
 - 프로젝트·전역 설정의 실제 유효 설정 병합은 확정하지 않는다. `project` 범위에서 수집하지 않은 사용자 설정이 있으면 해당 축의 가능 범위를 넓혀 표시한다.
@@ -227,6 +233,4 @@ node $E finalize --project <프로젝트> --run <runId> --json   # 검증 → �
 
 ## 라이선스
 
-<!-- 결정 필요(오너): 오픈소스 라이선스. Claude Code 플러그인 디렉터리 제출 시 LICENSE 파일이 필수다(PRD §14.2). -->
-
-**미정(결정 필요).** 출시 전에 확정하며, 그때까지 `LICENSE` 파일은 없다. 라이선스가 정해지기 전에는 재배포·수정 허용 범위가 정해지지 않은 상태다.
+[MIT License](./LICENSE).
