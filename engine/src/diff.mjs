@@ -14,6 +14,7 @@ export function diffAnalyses(prev, cur) {
   const limitations = [];
   let comparability = 'full';
   const reasonAll = [];
+  const collectorChanged = prev.meta.engineInfo.version !== cur.meta.engineInfo.version;
   const limit = (code, message) => {
     if (comparability === 'full') comparability = 'limited';
     limitations.push({ code, message });
@@ -35,6 +36,7 @@ export function diffAnalyses(prev, cur) {
   }
 
   const prevComps = new Map(prev.engine.inventory.components.map((c) => [c.id, c]));
+  if (collectorChanged) limit('collector_version_changed', '엔진 버전이 달라 수집 종류·해시 방식의 변경과 대상 파일 변경을 구분할 수 없다. 구성 변경 후보는 미확인으로 표시한다.');
   const curComps = new Map(cur.engine.inventory.components.map((c) => [c.id, c]));
   const prevBlind = blindPaths(prev);
   const curBlind = blindPaths(cur);
@@ -42,7 +44,7 @@ export function diffAnalyses(prev, cur) {
   const outOfProject = (c) => c.origin === 'user' || c.origin === 'managed';
   const changes = [];
   const push = (c, change) => changes.push({
-    changeId: changeId(from, to, c.id, change), componentId: c.id, kind: c.kind, name: c.name, change, paths: c.paths,
+    changeId: changeId(from, to, c.id, collectorChanged ? 'unknown' : change), componentId: c.id, kind: c.kind, name: c.name, change: collectorChanged ? 'unknown' : change, paths: c.paths,
   });
   for (const c of curComps.values()) {
     const p = prevComps.get(c.id);

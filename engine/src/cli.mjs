@@ -295,6 +295,12 @@ export function compactInventory(draft, kbKeys) {
     compact.compaction.omitted.push('name_equal_first_path', 'axis_source_evidenceIds',
       'evidence_path_equal_first_component_path', 'read_sources_in_components');
     if (readSourceRefs.length) compact.compaction.readSourceRefs = readSourceRefs;
+    for (const change of compact.engine.comparison?.componentChanges ?? []) {
+      const c = byId.get(change.componentId);
+      if (c && change.name === (c.name ?? c.paths?.[0])) delete change.name;
+      if (c && JSON.stringify(change.paths) === JSON.stringify(c.paths)) delete change.paths;
+    }
+    compact.compaction.omitted.push('comparison_component_duplicates');
     return compact;
   };
   // 6,000은 실패 상한이다. 수집량 증가에 대비해 압축은 10% 여유를 목표로 한다.
@@ -315,7 +321,18 @@ export function compactInventory(draft, kbKeys) {
     for (const key of ['command', 'description', 'headings']) delete c.attributes[key];
   }
   lean.compaction.omitted.push('descriptive_component_attributes');
-  return serializeCompact(lean);
+  text = serializeCompact(lean);
+  if (estimateTokens(text) <= target) return text;
+  // 축 지표·ID는 유지하고 참고용 세부 집계만 순서대로 생략한다.
+  for (const key of ['tokens', 'contextPerTurn', 'toolUsage', 'clientVersions', 'dedup']) {
+    if (!(key in lean.engine.sessions)) continue;
+    delete lean.engine.sessions[key];
+    lean.compaction.omitted.push(`sessions.${key}`);
+    text = serializeCompact(lean);
+    if (estimateTokens(text) <= target) return text;
+  }
+  if (estimateTokens(text) <= BUDGETS.llm_input_inventory_tokens.target) return text;
+  throw new EngineError(EXIT.BUDGET, '압축 인벤토리가 6,000토큰 상한을 초과했습니다. 범위를 줄여 다시 준비하세요.');
 }
 
 function interpretationTemplate(axes, comparison) {
@@ -391,6 +408,10 @@ function cmdPrepare(ctx) {
       ctx.log(`Harness Lens: 이전 스냅샷 ${prevId}과 비교 중…`);
       draft.engine.comparison = ctx.time('diff', () => diffAnalyses(prevSnap, draft));
     }
+    if (prevSnap && !agg.previousTokens) draft.engine.limitations.push({
+      code: 'analysis_tokens_unmeasured',
+      message: `직전 분석 토큰 미측정: ${sessions.status === 'disabled' ? '세션 집계가 꺼져 있다.' : sessions.status === 'unavailable' ? '세션 기록을 수집하지 못했다.' : '분석 구간에 프로젝트·워커·귀속된 봇의 응답 기록이 없다.'} 대상 밖 작업 경로의 분석은 실행 세션을 식별할 수 없어 측정하지 않는다. 기록 미수집·보존 기간 경과도 원인일 수 있다.`,
+    });
     const finishSelfCost = (inventoryTokens) => {
       const prepareMs = Math.round(performance.now() - t0);
       const currentRun = [...ctx.timings, { subcommand: 'prepare', durationMs: prepareMs, maxRssBytes: process.resourceUsage().maxRSS * 1024 }];

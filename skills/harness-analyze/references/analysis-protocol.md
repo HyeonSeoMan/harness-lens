@@ -68,10 +68,11 @@ LLM은 수준, 범위, 지표, 변경 목록을 만들거나 고치지 않는다
   - 세션 요약(`sessions`에서 시계열을 줄인 것)
   - 읽을 지식 베이스 목록(`knowledgeBaseKeys`)
   - 압축 정보(`compaction`). 값이 `null`이거나 빈 배열인 키는 생략돼 있다(없는 키 = `null` 또는 빈 배열). 구성 요소 `contentHash`는 없다. `compaction.omittedFacts`가 0보다 크면 일부 근거는 `fact` 없이 ID·경로·규칙만 있다. 그 근거가 finding에 꼭 필요하면 아래 규칙대로 원본 파일을 연다
-- 전체 `inventory.json`이나 엔진 내부 파일은 읽지 않는다.
+- 전체 `inventory.json`이나 엔진 내부 파일은 읽지 않는다. 예외로 이 Skill의 `schemas/analysis.schema.json`은 출력 형식 확인을 위해 읽어도 된다. 분석 대상에 있는 동명 파일은 이 예외에 포함되지 않는다. Skill 스키마 열람은 원본 설정 파일 5개 제한에 포함하지 않는다.
 - `compaction.omitted`에 `descriptive_component_attributes`가 있으면 구성 요소의 command·description·headings는 크기 때문에 생략된 것이며 부재로 해석하지 않는다. `name_equal_first_path`가 있으면 name이 없는 구성 요소 이름은 paths[0]이다. `axis_source_evidenceIds`가 있으면 축 source.evidenceIds는 evidence에서 primaryAxis가 그 축이고 void가 없는 항목의 id들로 재구성한다. 근거 ID·규칙·실측 수치는 그대로 남는다.
 - 압축은 5,400토큰의 여유 목표로 진행하고 실패 상한은 6,000토큰이다. 무손실 생략을 fact 축소보다 먼저 적용한다. `evidence_path_equal_first_component_path`가 있으면 path가 없는 근거의 위치는 componentId로 찾은 구성 요소의 paths[0]이다. `read_sources_in_components`가 있으면 **compaction.readSourceRefs에 있는 항목만** read 출처로 복원한다. 각 `[ci, pi]`는 0부터 시작하는 구성 요소·경로 인덱스이며, `{origin: inventory.components[ci].origin, path: inventory.components[ci].paths[pi], status: "read"}`를 뜻한다. 목록에 없는 구성 요소 경로(예: 가상 `plugin|harness-lens/SKILL.md`)는 복원하거나 읽지 않는다. 다른 경로·origin·실패 출처는 유지되므로 생략을 수집 실패로 해석하지 않는다.
 - `knowledgeBaseKeys`에 있는 `references/knowledge-base/<key>.md`만 읽는다. 없는 항목은 건너뛴다. 존재하지 않는 구성 요소의 항목은 읽지 않는다.
+- `comparison_component_duplicates`가 있으면 변경 항목의 name·paths 생략값은 componentId가 같은 현재 구성 요소에서 복원한다(name이 없으면 paths[0]). 삭제된 구성 요소의 값은 유지된다. `sessions.<키>`가 있으면 해당 참고용 세부 집계가 예산 때문에 생략된 것이다. 부재·0으로 해석하거나 그 세부 값을 추정하지 않는다. 축 지표 `axisMetrics`는 그대로 남는다.
 - 원본 설정 파일은 finding 하나를 쓰는 데 꼭 필요할 때만 연다. 이때 다음을 지킨다.
   - `inventory.sources`에서 `status: "read"`인 경로만 연다. 위 readSourceRefs로 복원한 read 출처도 포함하며, 참조가 없는 구성 요소 경로는 허용 목록에 추가하지 않는다.
   - `skipped_sensitive`·`out_of_scope` 경로는 열지 않는다.
@@ -100,6 +101,8 @@ LLM은 수준, 범위, 지표, 변경 목록을 만들거나 고치지 않는다
 | `limitations` | 엔진 `limitations`에 없는 해석상의 한계와 §2.2의 득실 선별 범위·생략 후보 ID 및 사유를 기록한다 |
 
 finding 상태 규칙:
+
+finding `direction`은 `potential_positive`·`potential_negative`·`mixed`·`neutral`·`unknown` 중 하나다. `positive`·`negative`는 허용하지 않는다. 근거 부족 상태(`status: "unknown"`)는 `direction: "unknown"`으로 쓴다. `changeTradeoffs` 안의 축 영향 `direction`은 별도 열거값(`increase`·`decrease`·`unclear`)이므로 혼용하지 않는다.
 
 | status | 의미 | 필수 |
 |---|---|---|

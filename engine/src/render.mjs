@@ -30,7 +30,7 @@ export function renderReport(analysis) {
 <style>${REPORT_CSS}</style>
 </head>
 <body>
-<main id="app"><p>이 리포트는 JavaScript로 그립니다. 브라우저에서 스크립트를 허용하면 내용을 볼 수 있습니다. 원본 데이터는 같은 폴더의 analysis.json에 있습니다.</p></main>
+<main id="app"><p>이 리포트는 JavaScript로 그립니다. 브라우저에서 스크립트를 허용하면 내용을 볼 수 있습니다. 결과 루트에서 열었다면 원본 데이터는 snapshots/${escapeHtml(safe.meta.snapshotId)}/analysis.json에 있습니다. 스냅샷 폴더에서 열었다면 같은 폴더의 analysis.json을 확인하세요.</p></main>
 <script type="application/json" id="hl-data">${serializeForScript({ analysis: safe })}</script>
 <script>${script}</script>
 </body>

@@ -313,6 +313,9 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
   const sinceFiles = [...sinceSessions.values()].flat();
   const sinceSubs = files.filter(([fh, f]) => f.kind === 'subagent' && sinceSessions.has(attr.subs.get(fh)?.key));
   const n = sinceSessions.size;
+  // 짧다는 이유로 버리지 않는다. 도구 작업이 전혀 없는 대화는 작업 수행 지표 표본에서 제외한다.
+  const activeSessions = new Map([...sinceSessions].filter(([, list]) => list.some((f) => f.c.toolUse > 0)));
+  const activeFiles = [...activeSessions.values()].flat();
   const fsum = (list, k) => list.reduce((s, f) => s + f.c[k], 0);
   const mainTool = fsum(sinceFiles, 'toolUse');
   const subTool = fsum(sinceFiles, 'subToolUse') + sinceSubs.reduce((s, [, f]) => s + f.c.subToolUse, 0);
@@ -340,9 +343,9 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
   push('execution_stability', 'tool_error_recovery_rate', mainErr ? r4(fsum(sinceFiles, 'recovered') / mainErr) : NaN, 'ratio', mainErr);
   push('execution_stability', 'hook_errors_per_session', r4(fsum(sinceFiles, 'hookErrors') / n), 'per_session', n);
   push('execution_stability', 'api_retries_per_session', r4(fsum(sinceFiles, 'apiRetries') / n), 'per_session', n);
-  const durations = sortNum(sinceFiles.flatMap((f) => f.durations));
+  const durations = sortNum(activeFiles.flatMap((f) => f.durations));
   push('throughput', 'turn_duration_p50_ms', quantile(durations, 0.5), 'ms', durations.length);
-  const sessionDur = sortNum([...sinceSessions.values()].map((list) => {
+  const sessionDur = sortNum([...activeSessions.values()].map((list) => {
     const a = list.map((f) => f.firstTs).filter((x) => x !== null);
     const b = list.map((f) => f.lastTs).filter((x) => x !== null);
     return a.length ? b.reduce((x, y) => Math.max(x, y)) - a.reduce((x, y) => Math.min(x, y)) : null;
@@ -377,9 +380,9 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
   push('context_efficiency', 'context_p90_window_ratio', sr.length ? r4(quantile(sr, 0.9)) : NaN, 'ratio', sr.length);
   push('context_efficiency', 'context_p90_tokens', quantile(sc, 0.9), 'tokens', sc.length);
   push('context_efficiency', 'compactions_per_session', r4(fsum(sinceFiles, 'compactions') / n), 'per_session', n);
-  const gaps = sortNum(sinceFiles.flatMap((f) => (f.openGap !== null ? [...f.gaps, f.openGap] : f.gaps)));
+  const gaps = sortNum(activeFiles.flatMap((f) => (f.openGap !== null ? [...f.gaps, f.openGap] : f.gaps)));
   push('autonomy', 'tool_calls_between_prompts_p50', quantile(gaps, 0.5), 'count', gaps.length);
-  push('autonomy', 'human_prompts_per_session', r4(fsum(sinceFiles, 'humanPrompts') / n), 'per_session', n);
+  push('autonomy', 'human_prompts_per_session', r4(fsum(activeFiles, 'humanPrompts') / activeSessions.size), 'per_session', activeSessions.size);
   push('verification_gate_strength', 'hook_blocks_per_session', r4(fsum(sinceFiles, 'hookBlocks') / n), 'per_session', n);
   // CE 참고 지표(0.3, 대역 없음): 위치별 환산값 비중. 누적 집계 전체(configSince와 무관)라 sinceConfig: false.
   for (const l of ['bot', 'worker']) {
@@ -388,7 +391,7 @@ export function summarize(state, env, { configSinceMs, incremental, scan }) {
   }
   base.axisMetrics = metrics;
   base.toolUsage = [...toolCats.keys()].sort(compareCodeUnits).map((tool) => ({ tool, calls: toolCats.get(tool)[0], errors: toolCats.get(tool)[1] }));
-  info.samples = { sessions: n, tool_calls_all: allTool, tool_calls_non_bash: nbCalls, tool_calls_main: mainTool };
+  info.samples = { sessions: n, active_sessions: activeSessions.size, tool_calls_all: allTool, tool_calls_non_bash: nbCalls, tool_calls_main: mainTool };
   info.sinceSessions = n;
 
   if (skippedRatio > 0.05) { base.status = 'partial'; base.reason = 'session_lines_skipped'; }
@@ -406,7 +409,7 @@ export function analysisWindowTokens(state, env, startMs, endMs) {
     const t = rs.t(i);
     if (rs.side(i) || t < startMs || t > endMs) continue;
     const loc = responseLocation(rs, i, attr);
-    if (loc !== 'direct' && loc !== 'worker') continue;
+    if (loc !== 'direct' && loc !== 'worker' && loc !== 'bot') continue;
     const p = parts.get(rs.model(i)) ?? zero5();
     add5(p, rs.vec(i));
     parts.set(rs.model(i), p);

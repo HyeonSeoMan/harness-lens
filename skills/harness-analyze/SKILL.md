@@ -5,7 +5,7 @@ description: 하네스 구성(Hooks·Skills·MCP·Agents)을 읽기 전용으로
 
 # Harness Analyze
 
-> 상태: alpha. 엔진 v0.4.0, 루브릭 0.4(정적 분석, 세션 기록 실측 집계, 스냅샷 비교, HTML 리포트).
+> 상태: alpha. 엔진 v0.4.1, 루브릭 0.4(정적 분석, 세션 기록 실측 집계, 스냅샷 비교, HTML 리포트).
 
 1. 이 파일과 같은 디렉터리의 `scripts/harness-lens.mjs`가 엔진이다. 없으면 "Harness Lens 엔진이 설치되지 않았다"고 한 줄로 알리고 종료한다. 파일을 읽거나 바꾸지 않는다.
 2. 있으면 `references/analysis-protocol.md`를 읽고 그 절차를 처음부터 끝까지 따른다. 요약하면 다음과 같다.

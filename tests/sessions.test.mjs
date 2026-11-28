@@ -252,8 +252,8 @@ test('성숙도: 표본이 요구량에 닿은 축만 실측으로 바뀌고, �
   const tp = few.find((a) => a.axis === 'throughput');
   assert.equal(tp.maturity.state, 'predicted');
   assert.equal(tp.maturity.blockedReason, 'insufficient_samples');
-  assert.equal(tp.maturity.current, 12 + 4);
-  assert.equal(tp.maturity.progress, 0.8);
+  assert.equal(tp.maturity.current, 12 + 2, '도구 없는 대화 2개는 작업 표본에서 제외');
+  assert.equal(tp.maturity.progress, 0.7);
 
   writeSyntheticLogs(logs.configDir, { project: p.project, sessions: 30, prefix: 'more' });
   // 0.3: 실측 상태가 된 축(throughput 수준 0)은 빈 영역에서 빠진다.
